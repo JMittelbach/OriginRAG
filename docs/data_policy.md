@@ -36,6 +36,10 @@ Setup or the first application launch copies the bundled example catalogue into
 `data/metadata/` only if no local catalogue exists. Existing files are not replaced.
 Importers update this ignored copy, never the bundled catalogue.
 
+When updating an older checkout that still tracks `data/metadata/*.tsv`, back
+up any personal changes to those tables before pulling. Do not resolve a Git
+rename or merge conflict by moving personal entries into `assets/catalogue/`.
+
 `./setup.sh` also enables commit and push checks unless existing Git hooks
 would be replaced. Existing installations can enable them with
 `python3 scripts/install_git_hooks.py`. These checks reject recognised local-data

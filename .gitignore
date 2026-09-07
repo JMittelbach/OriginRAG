@@ -42,6 +42,7 @@ faiss/
 /bib/papers/*
 !/bib/papers/.gitkeep
 *.pdf
+*.[pP][dD][fF]
 *.jsonl
 *.bib
 *.log

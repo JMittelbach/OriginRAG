@@ -18,7 +18,7 @@ PRIVATE = [
     "outputs/chat_sessions/a/chat.json", "outputs/answers/export.txt", "runtime/server.json",
     ".env", ".env.production", "config/paths.yaml", "config/preferences.local.yaml",
     "users.sqlite", "users.sqlite-wal", "users.sqlite3-shm", "private.db",
-    "my-export.pdf", "chat.json", "sessions/a.json", "exports/papers.csv", "my.bib", "private.key",
+    "my-export.pdf", "my-export.PDF", "chat.json", "sessions/a.json", "exports/papers.csv", "my.bib", "private.key",
 ]
 
 
@@ -97,6 +97,29 @@ def test_installed_hook_blocks_actual_commit(repository, monkeypatch):
     result = run(repository, "commit", "-m", "Must be blocked")
     assert result.returncode != 0
     assert "Local data must not be committed" in result.stderr
+
+
+def test_push_hook_blocks_upload_of_deleted_private_history(repository, monkeypatch, tmp_path):
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    run(repository, "remote", "add", "origin", str(remote), check=True)
+    run(repository, "push", "origin", "HEAD:refs/heads/main", check=True)
+    secret = repository / ".env"
+    secret.write_text("SYNTHETIC_TEST_KEY=not-a-real-key\n")
+    run(repository, "add", "-f", ".env", check=True)
+    run(repository, "-c", "core.hooksPath=/dev/null", "commit", "-m", "Synthetic private history", check=True)
+    run(repository, "rm", ".env", check=True)
+    run(repository, "-c", "core.hooksPath=/dev/null", "commit", "-m", "Remove synthetic private file", check=True)
+    shutil.copytree(ROOT / ".githooks", repository / ".githooks")
+    (repository / "scripts").mkdir()
+    shutil.copy2(ROOT / "scripts/check_private_files.py", repository / "scripts/check_private_files.py")
+    monkeypatch.setattr(install_git_hooks, "ROOT", repository)
+    install_git_hooks.main()
+    before = run(remote, "rev-parse", "refs/heads/main", check=True).stdout
+    result = run(repository, "push", "origin", "HEAD:refs/heads/main")
+    assert result.returncode != 0
+    assert "Local data must not be committed or pushed" in result.stderr
+    assert run(remote, "rev-parse", "refs/heads/main", check=True).stdout == before
 
 
 def test_example_catalogue_is_copied_not_shared_or_overwritten(tmp_path):
