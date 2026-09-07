@@ -11,6 +11,7 @@ import socket
 import ssl
 import threading
 import time
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote, urlencode, urljoin, urlsplit
@@ -27,7 +28,17 @@ class ImportBusy(ValueError):
 
 
 class ManualUploadRequired(ValueError):
-    pass
+    def __init__(self, message, *, reason="no_pdf", download_url=""):
+        super().__init__(message)
+        self.reason = reason
+        self.download_url = download_url
+
+
+class PublicDownloadError(ValueError):
+    def __init__(self, status, url):
+        super().__init__(f"Public download returned HTTP {status}")
+        self.status = status
+        self.url = url
 
 
 def public_target(url: str) -> tuple[str, str, str]:
@@ -79,7 +90,7 @@ def fetch_public(url: str, *, max_bytes: int, deadline: float) -> bytes:
                 url = urljoin(url, location)
                 continue
             if response.status != 200:
-                raise ValueError("Public download unavailable")
+                raise PublicDownloadError(response.status, url)
             length = response.getheader("Content-Length")
             if length and (int(length) < 0 or int(length) > max_bytes):
                 raise ValueError("Download exceeds the size limit")
@@ -107,12 +118,58 @@ def metadata(url: str, deadline: float) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def pmc_cloud_candidates(pmcid: str, doi: str, deadline: float):
+    if not re.fullmatch(r"PMC[0-9]+", pmcid):
+        return
+    root = "https://pmc-oa-opendata.s3.amazonaws.com/"
+    query = urlencode({"list-type": "2", "prefix": f"metadata/{pmcid}.", "max-keys": "100"})
+    raw = fetch_public(root + "?" + query, max_bytes=500_000, deadline=deadline)
+    if b"<!DOCTYPE" in raw.upper() or b"<!ENTITY" in raw.upper():
+        return
+    listing = ET.fromstring(raw)
+    ns = {"s": "http://s3.amazonaws.com/doc/2006-03-01/"}
+    if listing.findtext("s:IsTruncated", namespaces=ns) != "false":
+        return
+    versions = []
+    for entry in listing.findall("s:Contents/s:Key", ns):
+        match = re.fullmatch(r"metadata/" + pmcid + r"\.([0-9]+)\.json", entry.text or "")
+        if match:
+            versions.append((int(match[1]), entry.text))
+    if not versions:
+        return
+    version, key = max(versions)
+    record = metadata(root + key, deadline)
+    if (record.get("pmcid") != pmcid or record.get("version") != version
+            or normalize_doi(record.get("doi")) != doi or record.get("is_pmc_openaccess") is not True
+            or record.get("is_retracted") is not False):
+        return
+    url = urlsplit(str(record.get("pdf_url") or ""))
+    if url.scheme != "s3" or url.netloc != "pmc-oa-opendata":
+        return
+    if url.path != f"/{pmcid}.{version}/{pmcid}.{version}.pdf":
+        return
+    yield root + url.path.lstrip("/") + ("?" + url.query if url.query else "")
+
+
+def cc_licence(record: dict) -> bool:
+    for item in record.get("license") or []:
+        if not isinstance(item, dict):
+            continue
+        url = urlsplit(str(item.get("URL") or ""))
+        if url.scheme == "https" and url.hostname == "creativecommons.org" and url.path.startswith(("/licenses/", "/publicdomain/")):
+            return True
+    return False
+
+
 def oa_candidates(doi: str, deadline: float):
+    open_access = False
+    checked_pmcids = set()
     email = os.environ.get("ORIGINRAG_UNPAYWALL_EMAIL", "").strip()
     if email:
         try:
             data = metadata("https://api.unpaywall.org/v2/" + quote(doi, safe="") + "?" + urlencode({"email": email}), deadline)
             if normalize_doi(data.get("doi")) == doi and data.get("is_oa") is True:
+                open_access = True
                 locations = [data.get("best_oa_location")] + (data.get("oa_locations") or [])
                 for item in locations:
                     if isinstance(item, dict) and item.get("url_for_pdf"):
@@ -126,7 +183,19 @@ def oa_candidates(doi: str, deadline: float):
             url += "?" + urlencode({"api_key": key})
         data = metadata(url, deadline)
         if normalize_doi(data.get("doi")) == doi:
+            open_access = open_access or (data.get("open_access") or {}).get("is_oa") is True
             locations = [data.get("best_oa_location")] + (data.get("locations") or [])
+            for item in locations:
+                if not isinstance(item, dict) or item.get("is_oa") is not True:
+                    continue
+                landing = urlsplit(str(item.get("landing_page_url") or ""))
+                match = re.fullmatch(r"/articles/(PMC[0-9]+)/?", landing.path)
+                if landing.hostname == "pmc.ncbi.nlm.nih.gov" and match and len(checked_pmcids) < 2 and match[1] not in checked_pmcids:
+                    checked_pmcids.add(match[1])
+                    try:
+                        yield from pmc_cloud_candidates(match[1], doi, deadline)
+                    except Exception:
+                        pass
             for item in locations:
                 if isinstance(item, dict) and item.get("is_oa") is True and item.get("pdf_url"):
                     yield str(item["pdf_url"])
@@ -136,14 +205,33 @@ def oa_candidates(doi: str, deadline: float):
         params = {"query": f'DOI:"{doi}"', "format": "json", "resultType": "core", "pageSize": "3"}
         data = metadata("https://www.ebi.ac.uk/europepmc/webservices/rest/search?" + urlencode(params), deadline)
         for item in (data.get("resultList") or {}).get("result", []):
-            if normalize_doi(item.get("doi")) != doi or item.get("isOpenAccess") != "Y":
+            if normalize_doi(item.get("doi")) != doi:
                 continue
+            pmcid = str(item.get("pmcid") or "")
+            if re.fullmatch(r"PMC\d+", pmcid) and pmcid not in checked_pmcids and len(checked_pmcids) < 2:
+                checked_pmcids.add(pmcid)
+                try:
+                    yield from pmc_cloud_candidates(pmcid, doi, deadline)
+                except Exception:
+                    pass
+            if item.get("isOpenAccess") != "Y":
+                continue
+            open_access = True
             for link in (item.get("fullTextUrlList") or {}).get("fullTextUrl", []):
                 if str(link.get("documentStyle", "")).lower() == "pdf" and link.get("availabilityCode") in {"OA", "F"}:
                     yield str(link.get("url") or "")
-            pmcid = str(item.get("pmcid") or "")
             if re.fullmatch(r"PMC\d+", pmcid):
                 yield f"https://europepmc.org/articles/{pmcid}?pdf=render"
+    except Exception:
+        pass
+    try:
+        data = metadata("https://api.crossref.org/works/" + quote(doi, safe=""), deadline).get("message") or {}
+        if normalize_doi(data.get("DOI")) == doi and (open_access or cc_licence(data)):
+            links = [item for item in (data.get("link") or []) if isinstance(item, dict) and item.get("content-type") == "application/pdf"]
+            links.sort(key=lambda item: item.get("content-version") != "vor")
+            for item in links[:4]:
+                if item.get("URL"):
+                    yield str(item["URL"])
     except Exception:
         pass
 
@@ -153,12 +241,18 @@ def download_open_pdf(doi: str, progress) -> bytes:
 
     deadline = time.monotonic() + 70
     seen = set()
+    blocked_hosts = set()
+    blocked_url = ""
+    identity_failed = False
+    unavailable = False
     for url in oa_candidates(doi, deadline):
         if url in seen:
             continue
         if len(seen) >= 4 or time.monotonic() >= deadline:
             break
         seen.add(url)
+        if urlsplit(url).hostname in blocked_hosts:
+            continue
         progress("downloading")
         try:
             data = fetch_public(url, max_bytes=MAX_PDF_BYTES, deadline=deadline)
@@ -170,10 +264,23 @@ def download_open_pdf(doi: str, progress) -> bytes:
                 first_page = pdf[0].get_text()[:12000].lower()
                 pattern = re.escape(doi) + r"(?=$|[\s\).,;])"
                 if not re.search(pattern, first_page):
+                    identity_failed = True
                     continue
             return data
+        except PublicDownloadError as exc:
+            if exc.status in {401, 403}:
+                blocked_hosts.add(urlsplit(exc.url).hostname)
+                blocked_url = blocked_url or exc.url
+            else:
+                unavailable = True
         except Exception:
             continue
+    if blocked_url:
+        raise ManualUploadRequired("The source requires a browser for this download (HTTP 401/403). Open the PDF in your browser, then upload it here. This is not necessarily a paywall.", reason="browser_required", download_url=blocked_url)
+    if identity_failed:
+        raise ManualUploadRequired("A PDF was found, but its DOI could not be matched to this paper. Upload the correct article PDF for review.", reason="identity_unverified")
+    if unavailable:
+        raise ManualUploadRequired("A PDF link was found, but its source is currently unavailable. Try again later or upload your copy.", reason="source_unavailable")
     raise ManualUploadRequired("No accessible PDF with matching DOI could be verified. Open the publication and upload a legally accessible PDF instead.")
 
 
@@ -240,6 +347,8 @@ class PaperImports:
             else:
                 self.update(job_id, "review_required", "Library processing needs attention. Check the library update report or upload the PDF manually")
         except ManualUploadRequired as exc:
+            with self.lock:
+                self.jobs[job_id].update(reason=exc.reason, download_url=exc.download_url)
             self.update(job_id, "manual_upload", str(exc))
         except Exception:
             self.update(job_id, "error", "Import could not complete. Check the library status and try again, or upload the PDF manually")
