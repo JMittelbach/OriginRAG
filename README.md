@@ -22,6 +22,11 @@ has not been established.
 
 ## Install
 
+Personal PDFs, chats, bibliography updates and indexes stay in ignored local
+directories. They are not included by normal Git commits. Setup also enables
+checks against accidentally committing or pushing local data. See the
+[data policy](docs/data_policy.md).
+
 Requires **macOS or Linux, Git, Bash and Python 3.11**. The recommended setup
 uses Conda or Miniforge:
 

@@ -72,6 +72,11 @@ read_env_value() {
 }
 
 activate_python_environment() {
+  select_python_environment
+  "$ORIGINRAG_PYTHON" scripts/init_local_data.py
+}
+
+select_python_environment() {
 
 
   local requested_env="${ORIGINRAG_CONDA_ENV:-${PFEMPIRE_CONDA_ENV:-}}"

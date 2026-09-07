@@ -37,6 +37,12 @@ jobs:
       - name: Lint
         run: .venv/bin/python -m ruff check .
 
+      - name: Check for tracked local data
+        run: .venv/bin/python scripts/check_private_files.py
+
+      - name: Initialise local example catalogue
+        run: .venv/bin/python scripts/init_local_data.py
+
       - name: Run test suite
         run: .venv/bin/python -m pytest -q
 

@@ -94,6 +94,9 @@ if [ ! -f .env ]; then
   fi
 fi
 
+conda run -n "$ENV_NAME" python scripts/init_local_data.py
+conda run -n "$ENV_NAME" python scripts/install_git_hooks.py
+
 if [ "$RUN_CHECKS" -eq 1 ]; then
   echo "Running environment checks."
   conda run -n "$ENV_NAME" python scripts/check_environment.py

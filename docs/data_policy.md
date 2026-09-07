@@ -7,7 +7,7 @@ OriginRAG separates reproducible project files from local research data.
 - Source code
 - Tests
 - Configuration files
-- Bibliographic metadata without publisher full text
+- The bundled example catalogue in `assets/catalogue/` (metadata only)
 - User installation, web, and data-policy documentation
 
 ## Not Committed
@@ -24,6 +24,31 @@ OriginRAG separates reproducible project files from local research data.
 - Generated answers and model prompts
 - Account databases, session files, and runtime logs
 - Internal experiment, review, and manuscript working files
+- Personal bibliographic metadata and import/discovery reports
+
+## Personal use and Git
+
+The complete `data/`, `bib/` and `outputs/` working directories are ignored,
+apart from shipped placeholder files and the bibliography README. This includes
+personal paper lists, downloaded PDFs, extracted text, indexes, chats, uploads,
+answers and account data. Local `.env` files and `config/paths.yaml` are ignored.
+Setup or the first application launch copies the bundled example catalogue into
+`data/metadata/` only if no local catalogue exists. Existing files are not replaced.
+Importers update this ignored copy, never the bundled catalogue.
+
+`./setup.sh` also enables commit and push checks unless existing Git hooks
+would be replaced. Existing installations can enable them with
+`python3 scripts/install_git_hooks.py`. These checks reject recognised local-data
+paths even if someone used `git add -f`. The push check also examines outgoing
+commits, including files added and removed before the latest commit. CI provides
+an additional check, but CI runs after upload and is not a privacy boundary.
+
+Keep custom exports inside `outputs/` and custom corpora inside `bib/` or outside
+the checkout. Arbitrarily renamed data in source directories cannot reliably be
+recognised. Git ignores and hooks are accidental-disclosure safeguards, not
+access controls: they can be bypassed, and do not remove data already in Git
+history. Review staged changes before committing. Personal content must not be
+copied into the bundled example catalogue, tests or public documentation.
 
 ## Local Bibliography
 

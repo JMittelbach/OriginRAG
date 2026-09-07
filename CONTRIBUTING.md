@@ -30,6 +30,24 @@ make check
 A Python 3.11 virtual environment with `pip install -e '.[dev]'` is also
 supported. See the [Getting started guide](docs/getting_started.md).
 
+Enable the local-data commit and push checks (automatic with `./setup.sh`):
+
+```bash
+python3 scripts/install_git_hooks.py
+python3 scripts/check_private_files.py
+```
+
+Existing custom hooks are preserved. If you use your own hooks, call
+`python3 scripts/check_private_files.py` from `pre-commit` and
+`python3 scripts/check_private_files.py --push "$1"` from `pre-push`, forwarding
+Git's original standard input to the latter. The checks must succeed before
+continuing. Do not use `--no-verify` to bypass a local-data warning.
+
+Personal PDFs belong in `bib/`, local metadata and indexes in `data/`, and chats
+or exports in `outputs/`. These directories are ignored. The files under
+`assets/catalogue/` are shipped examples, not your working bibliography.
+See the [data policy](docs/data_policy.md) for scope and limitations.
+
 ## Tests and style
 
 Before proposing a change, run:
