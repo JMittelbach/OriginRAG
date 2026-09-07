@@ -25,15 +25,6 @@ OriginRAG separates reproducible project files from local research data.
 - Account databases, session files, and runtime logs
 - Internal experiment, review, and manuscript working files
 
-## Separate paper archive
-
-Selected paper-reproduction materials are prepared as a separate versioned
-archive, with an explicit file allowlist and SHA-256 inventory. It contains
-synthetic inputs, derived results, author-curated mappings and figure/build
-instructions. Corpus-dependent experiments retain input identities and access
-instructions; publisher passages, PDFs, account data and operational sessions
-are not included. See [Paper reproduction](paper_reproduction.md).
-
 ## Local Bibliography
 
 The local PDF library can live inside the repo tree for convenience, but its contents are ignored by Git:

@@ -136,7 +136,6 @@ redistribution rights to third-party papers.
 - [Getting started](docs/getting_started.md): setup, library, terminal commands and troubleshooting
 - [Web application](docs/web_chat.md): accounts, queue, sources and evidence display
 - [Data policy](docs/data_policy.md): local storage and safe transfer
-- [Paper reproduction](docs/paper_reproduction.md): separately distributed experiments and case-study materials
 - [Contributing](CONTRIBUTING.md) · [Citation metadata](CITATION.cff) · [MIT License](LICENSE)
 
 To run the software checks:
