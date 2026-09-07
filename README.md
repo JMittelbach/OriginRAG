@@ -95,7 +95,8 @@ Recent conversation context supports follow-up questions; previous answers
 are not treated as scientific evidence. Use `--no-animation` for a static
 terminal interface or `--plain` for plain text.
 
-For later additions, use **Add papers** in the signed-in web app. While the
+For later additions, use **Add papers** in the web app. Local use needs no
+account; sign in when using an authenticated shared server. While the
 service is running, uploads are automatically checked, named, categorised,
 and indexed in the background. Accepted papers become searchable when the
 library update completes; uncertain files are flagged for review.

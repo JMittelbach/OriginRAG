@@ -89,6 +89,14 @@ def test_local_import_token_and_complete_indexing_without_login(tmp_path, monkey
         _, _, raw, _ = http_request(port, "GET", "/api/paper-imports")
         assert json.loads(raw)["jobs"][0]["state"] == "imported", raw
         assert (tmp_path / "data/chunks/EXISTING_1.jsonl").exists()
+        upload_headers = {"X-OriginRAG-Local-Token": token, "Content-Type": "application/pdf",
+                          "X-Paper-Filename": "local-copy.pdf", "X-Paper-DOI": "10.1234/test", "X-Paper-Defer-Sync": "1"}
+        status, _, raw, _ = http_request(port, "POST", "/api/library-upload", body=pdf_bytes(), headers=upload_headers)
+        assert status == 202, raw
+        assert list(source.parent.glob("*.pdf"))
+        assert http_request(port, "POST", "/api/library-sync", headers={"X-OriginRAG-Local-Token": token})[0] == 202
+        report = library.run_pending_now()
+        assert report["duplicates"] == 1
     finally:
         server.shutdown()
         server.server_close()

@@ -10,6 +10,8 @@ def local_browser_request(server_address, client_address, headers) -> bool:
         if len(hosts) != 1:
             return False
         host = hosts[0]
+        if any(character.isspace() for character in host) or len(headers.get_all("Origin") or []) > 1:
+            return False
         parsed = urlsplit("http://" + host)
         if parsed.hostname not in {"localhost", "127.0.0.1", "::1"} or parsed.username or parsed.password:
             return False

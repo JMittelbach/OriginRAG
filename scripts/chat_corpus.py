@@ -435,7 +435,7 @@ def print_chat_help(ui: TerminalUI | None = None, *, topic: str = "") -> None:
     ]
     imports = [
         ("Add papers in the web app", [
-            ("Add papers", "Sign in and upload PDFs while the service is running"),
+            ("Add papers", "Upload PDFs while the service runs; no account needed locally"),
             ("Automatic import", "Checks, names, sorts and indexes accepted papers"),
             ("Library updated", "New papers are searchable; no restart needed"),
         ]),

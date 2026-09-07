@@ -447,7 +447,7 @@ def test_import_help_distinguishes_live_uploads_from_shell_updates(topic):
     chat_corpus.print_chat_help(ui, topic=topic)
     text = " ".join(ui.console.export_text().split())
     for phrase in (
-        "Add papers", "Sign in", "Automatic import", "no restart needed",
+        "Add papers", "no account needed locally", "Automatic import", "no restart needed",
         "./originrag import-local --source-dir DIR --apply",
         "./originrag bib", "./originrag prepare-corpus",
         "./originrag scrape-download 10", "no continuous watch or indexing",

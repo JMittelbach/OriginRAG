@@ -54,6 +54,12 @@ def browser_page(tmp_path):
             code = 202
         elif path == "/api/paper-imports":
             payload = {"jobs": state["imports"]}
+        elif path in {"/api/library-upload", "/api/library-sync"}:
+            assert request.method == "POST"
+            assert state["local_imports"]
+            assert request.headers.get("x-originrag-local-token") == "local-test-token"
+            payload = {"state": "queued", "status": "queued"}
+            code = 202
         elif path.startswith("/api/discover-journals"):
             payload = {"items": [
                 {"title": "Nature", "publisher": "Springer Nature", "issns": ["0028-0836", "1476-4687"]},
@@ -226,6 +232,7 @@ def test_local_import_without_account_or_cookie(browser_page):
     page.reload()
     page.locator("#guideSkip").click()
     page.locator("#paperUploadButton").wait_for(state="visible")
+    assert page.locator("#libraryButton").is_visible()
     page.locator("#discoveryButton").click()
     page.locator("#discoveryQuery").fill("graph algorithms")
     page.locator("#discoverySearch").click()
@@ -233,3 +240,9 @@ def test_local_import_without_account_or_cookie(browser_page):
     page.wait_for_function("document.querySelector('#paperImportJobs').textContent.includes('Waiting to import')")
     assert "/api/paper-import" in requests
     assert not any("/login" in path for path in requests)
+    page.locator("#discoveryClose").click()
+    page.locator("#paperUploadButton").click()
+    page.locator("#paperFileInput").set_input_files({"name": "example.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.7 synthetic test"})
+    page.wait_for_function("document.querySelector('#paperUploadList').textContent.includes('Queued')")
+    assert "/api/library-upload" in requests
+    assert "/api/library-sync" in requests

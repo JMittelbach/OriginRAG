@@ -143,7 +143,8 @@ but is not a semantic classifier for arbitrary unregistered files. Prefer
 
 ### Add papers while the server is running
 
-In the signed-in web app, **Add papers** starts a background import. Accepted
+In the web app, **Add papers** starts a background import. Local use needs no
+account; authenticated shared servers require sign-in. Accepted
 PDFs are checked for identity and duplicates, named, categorised, converted to
 text and indexed. The running service refreshes its library and retrieval
 caches after import; no manual reindex or restart is needed. Wait for the
@@ -172,7 +173,7 @@ open-access PDF of the first result and imports it after confirmation.
 categorised and indexed through the same importer as web uploads. `/help`
 lists the filters and commands; `/exit` returns to chat or the shell.
 These local imports require the web service and other corpus-writing jobs
-to be stopped. Use the signed-in web app for live additions instead.
+to be stopped. Use the web app for live additions instead.
 
 For configured discovery profiles:
 

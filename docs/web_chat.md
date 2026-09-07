@@ -21,11 +21,21 @@ Completion is remembered for this account in this browser. Clearing browser
 storage shows the tour again.
 
 If the library is empty, or contains only bibliographic records, the quick tour
-explains what is missing. In authenticated mode, **Add papers** accepts PDFs.
+explains what is missing. **Add papers** accepts PDFs locally without an account,
+or after signing in when the server uses authentication.
 Accepted uploads are checked, named, categorised and indexed automatically.
 Check the update status for duplicates, rejected files or files needing review.
-Anonymous sessions show instructions for asking the host to enable uploads or
-import the PDFs. A catalogue entry alone is not full text available for chat.
+Open the local URL printed by `./web`: **Find papers → Add to library** works
+without `--auth` too. A catalogue entry alone is not full text available for chat.
+
+Account-free imports require both the listener and the client connection to
+use loopback. The server validates the local Host, port, Origin and browser
+fetch metadata and requires a random per-server request token for downloads,
+uploads and library updates. Foreign-site requests and unauthenticated network
+bindings cannot import. This is a single-user mode, not isolation from other
+local OS users or SSH users with access to the same loopback service. Use
+`--auth` for shared deployments. Restart the web process and reload the browser
+after upgrading from a version that required sign-in for all imports.
 
 **Find papers** searches external literature by any topic, independently of the
 local malaria-oriented discovery profiles. Topic examples cover sciences,

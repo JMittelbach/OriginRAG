@@ -8671,11 +8671,11 @@ INDEX_HTML = r"""<!doctype html>
           .map((job) => `${job.job_id}:${job.state}:${job.queue_position || 0}`)
           .join("|");
         const s = data.settings || {};
+        libraryButton.hidden = false;
         if (data.user) {
           userBadge.textContent = data.user.display_name;
           userBadge.hidden = false;
           logoutButton.hidden = false;
-          libraryButton.hidden = false;
         }
         paperUploadButton.hidden = !data.library_access?.enabled;
         for (const key of ["backend", "preset"]) {

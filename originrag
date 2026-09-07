@@ -41,7 +41,7 @@ Usage:
   ./originrag watch           One OA discovery/metadata pass; no watcher or indexing
 
 Live library updates:
-  Sign in to the web app and use Add papers. Accepted uploads are automatically
+  Use Add papers in the web app; no account is needed locally. Uploads are automatically
   named, categorised and indexed while the service runs. In chat: /help import
   For shell imports/index updates, stop the web service and restart afterwards.
 
