@@ -18,6 +18,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import ask_corpus  # noqa: E402
 import browse_library  # noqa: E402
+import find_papers  # noqa: E402
 from originrag.analysis.chat import answer_context, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
 from originrag.analysis.terminal_sessions import SessionStore, snapshot_result, visible_answer  # noqa: E402
 from originrag.utils.terminal_ui import TerminalUI  # noqa: E402
@@ -172,6 +173,16 @@ def run_chat(ui: TerminalUI, store: SessionStore, state: ChatState) -> int:
                 continue
             if user_text.split(maxsplit=1)[0].lower() == "/library":
                 open_library(user_text, state, ui)
+                continue
+            if name == "/find":
+                try:
+                    standard = all((REPO_ROOT / Path(value).expanduser()).resolve() == (REPO_ROOT / expected).resolve()
+                                   for value, expected in ((state.papers, "data/metadata/papers.tsv"), (state.chunks_dir, "data/chunks")))
+                    find_papers.main(shlex.split(user_text)[1:], ui=ui, allow_import=standard)
+                except (SystemExit, KeyboardInterrupt):
+                    pass
+                except (OSError, ValueError) as exc:
+                    ui.message(f"Could not open paper finder: {exc}", error=True)
                 continue
             if user_text.lower() in {"/sources", "/details"}:
                 if last_result is None:
@@ -387,6 +398,7 @@ def print_chat_help(ui: TerminalUI | None = None, *, topic: str = "") -> None:
         ("Your papers", [
             ("/library", "Open the library and type to search"),
             ("/library Turner 2013", "Search by author, title or DOI; no model call"),
+            ("/find", "Find new papers, choose journals and add PDFs"),
             ("/sources", "Selected papers from your last answer"),
             ("/help import", "Add papers and update your library"),
         ]),
@@ -434,6 +446,8 @@ def print_chat_help(ui: TerminalUI | None = None, *, topic: str = "") -> None:
             ("./originrag prepare-corpus", "Extract text and rebuild the search index"),
         ]),
         ("Open-access discovery - run in your shell", [
+            ("./originrag find-papers", "Search any topic, select journals and import PDFs"),
+            ("/find", "The same paper finder inside terminal chat"),
             ("./originrag scrape", "Find candidate papers without downloading"),
             ("./originrag scrape-download 10", "Download up to 10 available OA papers and index them"),
             ("./originrag watch", "One discovery/metadata pass; no continuous watch or indexing"),

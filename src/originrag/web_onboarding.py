@@ -19,6 +19,11 @@ STYLE = """
     .discovery-item { border-top: 1px solid var(--line); padding: 14px 0; }
     .discovery-item a { color: var(--accent); line-height: 1.5; }
     .discovery-item p { font-size: 12px; margin: 5px 0; }
+    .journal-options { max-height: 190px; overflow-y: auto; }
+    .journal-options label { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
+    .journal-options input { width: auto; flex: none; margin-top: 4px; }
+    .journal-selected { display: flex; flex-wrap: wrap; gap: 6px; }
+    .journal-selected button { overflow-wrap: anywhere; max-width: 100%; font-size: 12px; }
     @media (max-width: 480px) { .guide-dialog { padding: 18px; } }
 """
 
@@ -51,6 +56,11 @@ MARKUP = """
       </select>
       <label for="discoveryQuery">Research topic or keywords</label>
       <input id="discoveryQuery" type="search" minlength="2" maxlength="240" required placeholder="Any topic, in your own words" />
+      <label for="journalQuery">Only these journals (optional)</label>
+      <input id="journalQuery" type="search" maxlength="120" placeholder="Type a journal name or ISSN" aria-describedby="journalStatus" autocomplete="off" />
+      <p id="journalStatus" role="status">Search and tick up to five journals. Leave empty to search all journals.</p>
+      <div id="journalSelected" class="journal-selected" aria-label="Selected journals"></div>
+      <div id="journalOptions" class="journal-options" role="group" aria-label="Journal matches"></div>
       <label for="discoveryKind">Publication type</label>
       <select id="discoveryKind"><option value="journal-article">Journal articles</option><option value="proceedings-article">Conference papers</option><option value="posted-content">Posted content (including preprints)</option><option value="all">All types, including books and chapters</option></select>
       <div class="discovery-filters">
@@ -79,6 +89,54 @@ SCRIPT = r"""
   const importJobs = new Map(), importButtons = new Map();
   const activeImports = new Set(["queued", "finding", "downloading", "indexing"]);
   let importPollBusy = false;
+  const selectedJournals = new Map();
+  let journalTimer = null, journalController = null, journalSerial = 0;
+  function renderSelectedJournals() {
+    const list = el("journalSelected"); list.replaceChildren();
+    for (const [key, journal] of selectedJournals) {
+      const button = document.createElement("button"); button.type = "button";
+      button.textContent = `${journal.title} ×`; button.setAttribute("aria-label", `Remove ${journal.title}`);
+      button.addEventListener("click", () => {
+        selectedJournals.delete(key); renderSelectedJournals();
+        for (const checkbox of el("journalOptions").querySelectorAll("input")) checkbox.checked = selectedJournals.has(checkbox.value);
+        el("journalQuery").focus();
+      }); list.append(button);
+    }
+    el("discoveryQuery").required = selectedJournals.size === 0;
+    el("journalStatus").textContent = selectedJournals.size ? `Search restricted to ${selectedJournals.size} selected ${selectedJournals.size === 1 ? "journal" : "journals"}. Topic is optional.` : "No journal restriction. Tick a match to apply it.";
+  }
+  el("journalQuery").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); el("journalOptions").querySelector("input")?.focus(); }
+  });
+  el("journalQuery").addEventListener("input", () => {
+    clearTimeout(journalTimer); journalController?.abort();
+    const serial = ++journalSerial, query = el("journalQuery").value.trim();
+    el("journalOptions").replaceChildren();
+    if (query.length < 2) { renderSelectedJournals(); return; }
+    el("journalStatus").textContent = "Looking up journals… Tick a match to apply a restriction.";
+    journalTimer = setTimeout(async () => {
+      journalController = new AbortController();
+      try {
+        const response = await fetch(`/api/discover-journals?${new URLSearchParams({query})}`, {signal: journalController.signal});
+        const data = await response.json();
+        if (serial !== journalSerial) return;
+        if (!response.ok) throw new Error(data.error || "Journal lookup unavailable.");
+        el("journalStatus").textContent = data.items.length ? "Tick the journals to include. Similar names can refer to different journals." : "No journals found. Try the full title or ISSN. Existing selections are unchanged.";
+        for (const journal of data.items) {
+          const key = journal.issns.join(","), label = document.createElement("label");
+          const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.value = key;
+          checkbox.checked = selectedJournals.has(key);
+          checkbox.addEventListener("change", () => {
+            if (checkbox.checked && selectedJournals.size >= 5) { checkbox.checked = false; el("journalStatus").textContent = "Choose up to five journals."; return; }
+            if (checkbox.checked) selectedJournals.set(key, journal); else selectedJournals.delete(key);
+            renderSelectedJournals();
+          });
+          const text = document.createElement("span"); text.textContent = [journal.title, journal.publisher, journal.issns.join(" / ")].filter(Boolean).join(" · ");
+          label.append(checkbox, text); el("journalOptions").append(label);
+        }
+      } catch (error) { if (serial === journalSerial && error.name !== "AbortError") el("journalStatus").textContent = error.message + " Existing selections are unchanged."; }
+    }, 500);
+  });
   const steps = [
     ["Your papers, one place", "Add papers uploads PDFs to the shared library. Accepted files are checked for identifiers and duplicates, named and sorted, then indexed automatically. Watch the update status. Scanned or unrecognised files may need attention."],
     ["Find your next paper", "Find papers searches external literature by any topic. Use Add to library on a result to import an open-access PDF automatically, or upload your own copy when needed. Library searches the collection by author, title or DOI."],
@@ -133,6 +191,7 @@ SCRIPT = r"""
   }
   function closeDiscovery() { discovery.close(); }
   discovery.addEventListener("close", () => {
+    clearTimeout(journalTimer); journalSerial++; journalController?.abort();
     if (el("discoverySearch").disabled) el("discoveryStatus").textContent = "Search cancelled.";
     latestSearch++; searchController?.abort(); el("discoverySearch").disabled = false;
     if (returnFocus?.isConnected) returnFocus.focus();
@@ -200,11 +259,16 @@ SCRIPT = r"""
   el("discoveryYear").max = String(new Date().getFullYear());
   el("discoveryForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (el("journalQuery").value.trim() && selectedJournals.size === 0) {
+      el("journalStatus").textContent = "Tick a matching journal, or clear this field to search without a journal restriction.";
+      el("journalQuery").focus(); return;
+    }
     const serial = ++latestSearch;
     searchController?.abort(); searchController = new AbortController();
     el("discoverySearch").disabled = true;
     el("discoveryResults").replaceChildren(); importButtons.clear(); el("discoveryStatus").textContent = "Searching literature…";
     const params = new URLSearchParams({query: el("discoveryQuery").value.trim(), since: el("discoveryYear").value, order: el("discoveryOrder").value, kind: el("discoveryKind").value});
+    for (const issn of new Set([...selectedJournals.values()].flatMap((journal) => journal.issns))) params.append("issn", issn);
     try {
       const response = await fetch(`/api/discover-papers?${params}`, {signal: searchController.signal});
       const data = await response.json();

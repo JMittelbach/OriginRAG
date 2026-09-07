@@ -88,3 +88,56 @@ def test_rate_and_concurrency_limits_and_release_after_failure(monkeypatch):
     for number in range(150):
         service.search(str(number), query="graphs")
     assert len(service.last_requests) == 128
+
+
+def test_journal_lookup_normalises_identifiers_and_caches(monkeypatch):
+    requests = fake_response(monkeypatch, [
+        {"title": "Nature", "publisher": "Springer Nature", "ISSN": ["1476-4687", "0028-0836"]},
+        {"title": "Duplicate", "ISSN": ["0028-0836", "1476-4687"]},
+        {"title": "Invalid", "ISSN": ["1234-5678", "https://localhost"]},
+        {"title": "Bad data", "ISSN": "0028-0836"},
+    ])
+    service = discovery.TopicDiscovery()
+    result = service.journals("alice", "Nature")
+    assert len(result["items"]) == 1
+    assert result["items"][0]["issns"] == ["0028-0836", "1476-4687"]
+    assert service.journals("bob", " nature ") == result
+    assert len(requests) == 1
+    assert urlparse(requests[0][0].full_url).path == "/journals"
+    with pytest.raises(ValueError):
+        service.journals("bob", "x")
+
+
+def test_exact_multi_journal_filter_is_not_fuzzy_title_matching(monkeypatch):
+    requests = fake_response(monkeypatch, [work(ISSN=["0028-0836"]),
+        work(DOI="10.1234/second", ISSN=["0036-8075"]),
+        work(DOI="10.1234/outsider", ISSN=["2041-1723"]),
+        work(DOI="10.1234/malformed", ISSN=[{}]), work(DOI="10.1234/missing")])
+    result = discovery.search_topic("graphs", issns=["0028-0836", "0036-8075"])
+    assert [i["doi"] for i in result["items"]] == ["10.1234/test", "10.1234/second"]
+    params = parse_qs(urlparse(requests[0][0].full_url).query)
+    assert ",issn:0028-0836,issn:0036-8075" in params["filter"][0]
+    assert "query.container-title" not in params
+
+
+def test_journal_only_browsing_uses_publication_order(monkeypatch):
+    requests = fake_response(monkeypatch, [work(ISSN=["0028-0836"])])
+    assert discovery.search_topic("", issns=["0028-0836"])["items"]
+    assert parse_qs(urlparse(requests[0][0].full_url).query)["sort"] == ["published"]
+
+
+def test_exact_journal_name_precedes_similar_names(monkeypatch):
+    fake_response(monkeypatch, [
+        {"title": "Naturen", "ISSN": ["0028-0887"]},
+        {"title": "Nature Medicine", "ISSN": ["1078-8956"]},
+        {"title": "Nature", "ISSN": ["0028-0836"]},
+    ])
+    assert discovery.search_journals("nature")["items"][0]["title"] == "Nature"
+
+
+@pytest.mark.parametrize("issns", ["0028-0836", ["1234-5678"], ["0028-0836,type:all"], [None], ["0028-0836"] * 21])
+def test_invalid_journal_restrictions_never_broaden_search(monkeypatch, issns):
+    requests = fake_response(monkeypatch, [])
+    with pytest.raises(ValueError):
+        discovery.search_topic("history", issns=issns)
+    assert not requests

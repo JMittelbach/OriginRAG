@@ -8,7 +8,7 @@ if [ "$#" -eq 0 ]; then
 fi
 
 case "$1" in
-  ask|console|chat|library|browse|search-papers|papers|discover|import|import-papers|setup-model|sync-bib|watch|web|help|-h|--help)
+  ask|console|chat|library|browse|search-papers|papers|find-papers|scrape|scrape-download|import-local|prepare-corpus|discover|import|import-papers|setup-model|sync-bib|watch|web|help|-h|--help)
     exec "$ROOT_DIR/originrag" "$@"
     ;;
   *)

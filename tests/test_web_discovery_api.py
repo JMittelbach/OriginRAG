@@ -23,6 +23,19 @@ def test_discovery_api_requires_login_and_reports_availability(tmp_path, monkeyp
         return {"items": [{"doi": "10.1234/test", "title": "History"}], "downloaded": False}
 
     monkeypatch.setattr(web_chat.TopicDiscovery, "search", search)
+    journal_calls = []
+
+    def journals(self, owner, query):
+        journal_calls.append((owner, query))
+        if query == "invalid":
+            raise ValueError("Invalid query")
+        if query == "busy":
+            raise DiscoveryBusy("Try again")
+        if query == "offline":
+            raise DiscoveryUnavailable("Service unavailable")
+        return {"items": [{"title": "Nature", "issns": ["0028-0836"]}]}
+
+    monkeypatch.setattr(web_chat.TopicDiscovery, "journals", journals)
     monkeypatch.setattr(web_chat, "library_catalog", lambda: ({"doi": "10.1234/TEST"},))
     auth = AuthStore(tmp_path / "auth.sqlite")
     user = auth.create_user("alice", "quiet-lantern-river-orbit-47")
@@ -40,13 +53,24 @@ def test_discovery_api_requires_login_and_reports_availability(tmp_path, monkeyp
         status, _, _, _ = http_request(port, "GET", "/api/discover-papers?query=history")
         assert status == 401
         assert calls == []
+        assert http_request(port, "GET", "/api/discover-journals?query=Nature")[0] == 401
+        assert not journal_calls
         headers, _ = login_headers(port, "alice", "quiet-lantern-river-orbit-47")
+        status, _, raw, _ = http_request(port, "GET", "/api/discover-journals?query=Nature", headers=headers)
+        assert status == 200
+        assert json.loads(raw)["items"][0]["issns"] == ["0028-0836"]
+        assert journal_calls == [(user.user_id, "Nature")]
         status, _, body, _ = http_request(port, "GET", "/api/discover-papers?query=history&since=2020&order=newest", headers=headers)
         assert status == 200
         assert json.loads(body)["items"][0]["in_library"] is True
-        assert calls[0] == (user.user_id, {"query": "history", "since": "2020", "order": "newest", "kind": "journal-article"})
+        assert calls[0] == (user.user_id, {"query": "history", "since": "2020", "order": "newest", "kind": "journal-article", "issns": []})
+        status, _, _, _ = http_request(port, "GET", "/api/discover-papers?query=history&issn=0028-0836&issn=1476-4687", headers=headers)
+        assert status == 200
+        assert calls[-1][1]["issns"] == ["0028-0836", "1476-4687"]
         for query, expected in (("invalid", 400), ("busy", 429), ("offline", 502)):
             status, _, _, _ = http_request(port, "GET", f"/api/discover-papers?query={query}", headers=headers)
+            assert status == expected
+            status, _, _, _ = http_request(port, "GET", f"/api/discover-journals?query={query}", headers=headers)
             assert status == expected
     finally:
         server.shutdown()

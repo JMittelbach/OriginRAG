@@ -158,7 +158,23 @@ the active service's index.
 
 ### Discover open-access papers
 
-Candidate discovery is explicit:
+Search any topic and choose journals interactively:
+
+```bash
+./terminal find-papers "graph theory"
+```
+
+This is also available through `/find` inside terminal chat. In the finder,
+use `/journals Nature`, then `/select 1` to restrict the search. Type a topic,
+or `/search` to browse the selected journals. `/add 1` looks for a verified
+open-access PDF of the first result and imports it after confirmation.
+`/import "/path/to/paper.pdf"` imports your own copy. Accepted PDFs are named,
+categorised and indexed through the same importer as web uploads. `/help`
+lists the filters and commands; `/exit` returns to chat or the shell.
+These local imports require the web service and other corpus-writing jobs
+to be stopped. Use the signed-in web app for live additions instead.
+
+For configured discovery profiles:
 
 ```bash
 ./originrag scrape

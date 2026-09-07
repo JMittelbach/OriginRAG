@@ -1702,6 +1702,17 @@ def build_handler(
             if parsed.path == "/api/library-stats":
                 self.respond_json(library_catalog_stats())
                 return
+            if parsed.path == "/api/discover-journals":
+                params = parse_qs(parsed.query)
+                try:
+                    self.respond_json(topic_discovery.journals(owner_key, (params.get("query") or [""])[0]))
+                except ValueError as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except DiscoveryBusy as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.TOO_MANY_REQUESTS)
+                except DiscoveryUnavailable as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_GATEWAY)
+                return
             if parsed.path == "/api/discover-papers":
                 params = parse_qs(parsed.query)
                 try:
@@ -1711,11 +1722,13 @@ def build_handler(
                         since=(params.get("since") or [""])[0],
                         order=(params.get("order") or ["relevance"])[0],
                         kind=(params.get("kind") or ["journal-article"])[0],
+                        issns=params.get("issn", []),
                     )
-                    known = {normalize_doi(str(item.get("doi") or "")) for item in library_catalog()}
+                    catalogue = library_catalog()
+                    known = {normalize_doi(str(item.get("doi") or "")) for item in catalogue}
                     for item in result["items"]:
                         item["in_library"] = normalize_doi(item["doi"]) in known
-                    ready = {normalize_doi(str(item.get("doi") or "")) for item in library_catalog() if item.get("searchable") and item.get("local_pdf")}
+                    ready = {normalize_doi(str(item.get("doi") or "")) for item in catalogue if item.get("searchable") and item.get("local_pdf")}
                     for item in result["items"]:
                         item["fulltext_ready"] = normalize_doi(item["doi"]) in ready
                     self.respond_json(result)

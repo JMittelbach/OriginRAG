@@ -37,6 +37,15 @@ The [Crossref search API](https://www.crossref.org/documentation/retrieve-metada
 receives only the search query and filters, not the local library or chats.
 Coverage varies by discipline and registered publication metadata.
 
+To restrict a search, type a journal name or ISSN under **Only these journals**
+and tick up to five matches. Selected journals appear as removable buttons.
+The search includes only records carrying one of their ISSNs, including print
+and electronic identifiers. Leave the topic empty to browse their recent
+papers. Names come from Crossref's journal directory, with a one-hour cache;
+no local journal database needs to be installed. Journals missing from that
+directory cannot be selected by name. This filter does not assess journal
+quality or peer-review status.
+
 Search returns up to 12 bibliographic records. In an upload-enabled account,
 click **Add to library** on a result to find and import an open-access PDF.
 The DOI is sent to OpenAlex and Europe PMC. If the host configures

@@ -22,9 +22,19 @@ class DiscoveryUnavailable(RuntimeError):
     pass
 
 
-def search_topic(query: str, *, since: str = "", order: str = "relevance", kind: str = "journal-article", limit: int = 12) -> dict:
+def valid_issn(value: str) -> bool:
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{3}[0-9X]", value):
+        return False
+    digits = value.replace("-", "")
+    return sum((10 if digit == "X" else int(digit)) * (8 - index) for index, digit in enumerate(digits)) % 11 == 0
+
+
+def search_topic(query: str, *, since: str = "", order: str = "relevance", kind: str = "journal-article", limit: int = 12, issns=()) -> dict:
+    if not isinstance(issns, (list, tuple)) or len(issns) > 20 or any(not isinstance(i, str) or not valid_issn(i) for i in issns):
+        raise ValueError("Choose up to 20 valid journal ISSNs.")
+    issns = sorted(set(issns))
     query = " ".join(str(query).split())
-    if not 2 <= len(query) <= 240:
+    if not (2 <= len(query) <= 240 or (not query and issns)):
         raise ValueError("Enter a topic between 2 and 240 characters.")
     if order not in {"relevance", "newest"}:
         raise ValueError("Choose relevance or newest.")
@@ -37,34 +47,25 @@ def search_topic(query: str, *, since: str = "", order: str = "relevance", kind:
     params = {
         "query": query,
         "rows": str(limit),
-        "sort": "published" if order == "newest" else "relevance",
+        "sort": "published" if order == "newest" or not query else "relevance",
         "order": "desc",
-        "select": "DOI,title,author,published,container-title,type",
+        "select": "DOI,title,author,published,container-title,type,ISSN",
         "filter": f"until-pub-date:{date.today().isoformat()}",
     }
     if since:
         params["filter"] += f",from-pub-date:{since}-01-01"
     if kind != "all":
         params["filter"] += f",type:{kind}"
-    request = Request(
-        CROSSREF_WORKS_URL + "?" + urlencode(params),
-        headers={"User-Agent": "OriginRAG/0.1 (scientific literature discovery)", "Accept": "application/json"},
-    )
-    try:
-        with urlopen(request, timeout=15) as response:
-            raw = response.read(MAX_RESPONSE_BYTES + 1)
-        if len(raw) > MAX_RESPONSE_BYTES:
-            raise ValueError("response too large")
-        payload = json.loads(raw)
-        works = payload["message"]["items"]
-        if not isinstance(works, list):
-            raise ValueError("invalid response")
-    except Exception as exc:
-        raise DiscoveryUnavailable("The literature service is unavailable. Please try again shortly.") from exc
+    for issn in issns:
+        params["filter"] += f",issn:{issn}"
+    works = _request_items(CROSSREF_WORKS_URL, params)
     items = []
     seen = set()
     for work in works[:limit]:
         if not isinstance(work, dict):
+            continue
+        work_issns = work.get("ISSN") or []
+        if issns and (not isinstance(work_issns, list) or not any(isinstance(i, str) and i in issns for i in work_issns)):
             continue
         doi = str(work.get("DOI") or "").strip().lower()
         if not re.fullmatch(r"10\.\d{4,9}/[^\s<>]+", doi) or doi in seen:
@@ -84,7 +85,52 @@ def search_topic(query: str, *, since: str = "", order: str = "relevance", kind:
             "doi": doi, "url": "https://doi.org/" + quote(doi, safe="/"),
             "type": str(work.get("type") or "")[:80],
         })
-    return {"items": items, "query": query, "source": "Crossref", "downloaded": False}
+    return {"items": items, "query": query, "source": "Crossref", "downloaded": False, "issns": issns}
+
+
+def _request_items(endpoint: str, params: dict) -> list:
+    request = Request(
+        endpoint + "?" + urlencode(params),
+        headers={"User-Agent": "OriginRAG/0.1 (scientific literature discovery)", "Accept": "application/json"},
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise ValueError("response too large")
+        payload = json.loads(raw)
+        works = payload["message"]["items"]
+        if not isinstance(works, list):
+            raise ValueError("invalid response")
+    except Exception as exc:
+        raise DiscoveryUnavailable("The literature service is unavailable. Please try again shortly.") from exc
+    return works
+
+
+def search_journals(query: str) -> dict:
+    query = " ".join(str(query).split())
+    if not 2 <= len(query) <= 120:
+        raise ValueError("Enter a journal name or ISSN between 2 and 120 characters.")
+    records = _request_items("https://api.crossref.org/journals", {"query": query, "rows": "20"})
+    items = []
+    seen = set()
+    for record in records[:20]:
+        if not isinstance(record, dict):
+            continue
+        raw_issns = record.get("ISSN") or []
+        if not isinstance(raw_issns, list):
+            continue
+        issns = sorted({i.upper() for i in raw_issns if isinstance(i, str) and valid_issn(i.upper())})[:4]
+        title = str(record.get("title") or "")[:500]
+        key = tuple(issns)
+        if not issns or not title or key in seen:
+            continue
+        seen.add(key)
+        items.append({"title": title, "publisher": str(record.get("publisher") or "")[:200], "issns": issns})
+    key = query.casefold()
+    items.sort(key=lambda item: (item["title"].casefold() != key and query.upper() not in item["issns"],
+                                 not item["title"].casefold().startswith(key)))
+    return {"items": items[:12], "source": "Crossref"}
 
 
 def _first_text(value: object) -> str:
@@ -98,11 +144,30 @@ class TopicDiscovery:
         self.slots = threading.BoundedSemaphore(2)
         self.lock = threading.Lock()
         self.last_requests: OrderedDict[str, float] = OrderedDict()
+        self.journal_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 
     def search(self, owner: str, **kwargs) -> dict:
+        return self._run(owner, search_topic, 2, **kwargs)
+
+    def journals(self, owner: str, query: str) -> dict:
+        key = " ".join(query.split()).casefold()
+        with self.lock:
+            cached = self.journal_cache.get(key)
+            if cached and time.monotonic() - cached[0] < 3600:
+                self.journal_cache.move_to_end(key)
+                return cached[1]
+        result = self._run("journals:" + owner, search_journals, .4, query=query)
+        with self.lock:
+            self.journal_cache[key] = (time.monotonic(), result)
+            self.journal_cache.move_to_end(key)
+            while len(self.journal_cache) > 128:
+                self.journal_cache.popitem(last=False)
+        return result
+
+    def _run(self, owner, function, interval, **kwargs) -> dict:
         with self.lock:
             now = time.monotonic()
-            if now - self.last_requests.get(owner, -float("inf")) < 2:
+            if now - self.last_requests.get(owner, -float("inf")) < interval:
                 raise DiscoveryBusy("Please wait a moment before searching again.")
             self.last_requests[owner] = now
             self.last_requests.move_to_end(owner)
@@ -111,6 +176,6 @@ class TopicDiscovery:
         if not self.slots.acquire(blocking=False):
             raise DiscoveryBusy("Two literature searches are already running. Please try again shortly.")
         try:
-            return search_topic(**kwargs)
+            return function(**kwargs)
         finally:
             self.slots.release()

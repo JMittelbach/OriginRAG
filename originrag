@@ -30,6 +30,7 @@ Usage:
   ./originrag import-local --source-dir DIR [--apply]
                              Review or import local scholarly PDFs
   ./originrag scrape          Find candidate papers without downloading PDFs
+  ./originrag find-papers     Search any topic, select journals and import PDFs
   ./originrag scrape-download 50
                              Download/import 50 DOI-backed OA candidates
   ./originrag discover        Find recent open-access malaria papers
@@ -315,6 +316,10 @@ case "$cmd" in
       exit 1
     fi
     "$ORIGINRAG_PYTHON" scripts/check_llm_setup.py --model "$(preferred_model)" "$@"
+    ;;
+  find-papers)
+    activate_python_environment
+    exec "$ORIGINRAG_PYTHON" scripts/find_papers.py "$@"
     ;;
   scrape)
     activate_python_environment

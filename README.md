@@ -11,7 +11,7 @@ It keeps relevant reports available while assessing how much independent
 support they provide, including when their relationships are uncertain.
 
 - **Search and browse** by title, author or DOI without a language model.
-- **Find new papers** on any topic and add open-access PDFs directly to your library.
+- **Find new papers** on any topic, optionally restrict by journal, and add open-access PDFs to your library.
 - **Chat with your papers** using a local model through Ollama.
 - **Inspect the evidence:** follow citations, read source passages and review
   possible study overlap.
@@ -82,6 +82,10 @@ Use `./terminal` for terminal chat, or ask a single question:
 
 In terminal chat, `/library` opens your papers, `/chats` opens saved
 conversations, `/new` starts a new one and `/help` opens the command guide.
+Use `/find` to search new papers, choose journals and import PDFs, or start
+`./terminal find-papers` directly. Inside the finder, `/help` lists commands
+and `/exit` returns to chat. Local imports require the web service and other
+corpus-writing jobs to be stopped; use the web app for live imports.
 Recent conversation context supports follow-up questions; previous answers
 are not treated as scientific evidence. Use `--no-animation` for a static
 terminal interface or `--plain` for plain text.

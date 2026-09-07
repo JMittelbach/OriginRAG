@@ -49,6 +49,11 @@ def browser_page(tmp_path):
             code = 202
         elif path == "/api/paper-imports":
             payload = {"jobs": state["imports"]}
+        elif path.startswith("/api/discover-journals"):
+            payload = {"items": [
+                {"title": "Nature", "publisher": "Springer Nature", "issns": ["0028-0836", "1476-4687"]},
+                {"title": "Science", "publisher": "AAAS", "issns": ["0036-8075"]},
+            ]}
         elif path.startswith("/api/discover-papers"):
             if state["error"]:
                 payload = {"error": "The literature service is unavailable."}
@@ -95,6 +100,37 @@ def test_first_visit_replay_and_account_specific_completion(browser_page):
     page.wait_for_selector("#welcomeGuide[open]")
     page.locator("#guideSkip").click()
     assert not any(path.startswith("/api/discover-papers") for path in requests)
+
+
+def test_journal_multi_selection_keyboard_and_removal(browser_page):
+    from urllib.parse import parse_qs, urlparse
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    page.locator("#discoveryButton").click()
+    page.locator("#journalQuery").fill("Nature")
+    page.locator("#journalOptions input").first.wait_for()
+    page.locator("#journalQuery").press("Enter")
+    page.keyboard.press("Space")
+    page.locator("#journalOptions input").nth(1).check()
+    assert page.locator("#journalSelected button").count() == 2
+    assert not page.locator("#discoveryQuery").evaluate("el => el.required")
+    page.locator("#discoverySearch").click()
+    page.locator(".discovery-item").wait_for()
+    request = next(path for path in reversed(requests) if path.startswith("/api/discover-papers"))
+    assert set(parse_qs(urlparse(request).query)["issn"]) == {"0028-0836", "1476-4687", "0036-8075"}
+    page.get_by_role("button", name="Remove Nature", exact=True).click()
+    page.get_by_role("button", name="Remove Science", exact=True).click()
+    assert page.locator("#discoveryQuery").evaluate("el => el.required")
+    assert page.locator("#journalOptions input:checked").count() == 0
+    page.locator("#discoveryQuery").fill("graph theory")
+    before = len([path for path in requests if path.startswith("/api/discover-papers")])
+    page.locator("#discoverySearch").click()
+    assert "Tick a matching journal" in page.locator("#journalStatus").inner_text()
+    assert len([path for path in requests if path.startswith("/api/discover-papers")]) == before
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.locator("#journalOptions input").first.check()
+    assert page.locator("#discoveryDialog").evaluate("el => el.scrollWidth <= el.clientWidth")
+    page.screenshot(path=str(tmp / "journal-picker-mobile.png"))
 
 
 def test_search_empty_state_updates_mobile_and_themes(browser_page):
