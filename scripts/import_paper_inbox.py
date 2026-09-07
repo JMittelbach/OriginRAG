@@ -129,8 +129,10 @@ def import_inbox(
     previous_corpus_fingerprint = corpus_fingerprint(chunks_dir, papers_path)
     paper_rows, paper_fields = read_tsv(papers_path)
     registry_rows, registry_fields = read_tsv(registry_path)
-    known_dois = {normalize_doi(row.get("doi")) for row in registry_rows if normalize_doi(row.get("doi"))}
-    known_titles = {normalize_title(row.get("title")) for row in registry_rows if row.get("title")}
+    metadata_only = metadata_only_records(paper_rows + registry_rows)
+    upgrade_ids = {row["paper_id"] for row in metadata_only.values()}
+    known_dois = {normalize_doi(row.get("doi")) for row in registry_rows if normalize_doi(row.get("doi"))} - metadata_only.keys()
+    known_titles = {normalize_title(row.get("title")) for row in registry_rows if row.get("title") and row.get("paper_id") not in upgrade_ids}
     known_ids = {row.get("paper_id", "") for row in paper_rows + registry_rows}
     known_keys = {row.get("bib_key", "") for row in registry_rows}
     known_hashes = load_known_pdf_hashes()
@@ -169,6 +171,7 @@ def import_inbox(
                 known_titles=known_titles,
                 known_ids=known_ids,
                 known_keys=known_keys,
+                metadata_only=metadata_only,
             )
         except DuplicatePaper as exc:
             duplicates.append((source, str(exc)))
@@ -230,8 +233,8 @@ def import_inbox(
         moved_sources: list[tuple[Path, Path]] = []
         try:
             for candidate in accepted:
-                paper_rows.append(paper_metadata_row(candidate, paper_fields))
-                registry_rows.append(registry_metadata_row(candidate, registry_fields))
+                upsert_import_row(paper_rows, paper_metadata_row(candidate, paper_fields))
+                upsert_import_row(registry_rows, registry_metadata_row(candidate, registry_fields))
             write_tsv_atomic(papers_path, paper_rows, paper_fields)
             write_tsv_atomic(registry_path, registry_rows, registry_fields)
             write_bibtex_atomic(
@@ -646,6 +649,40 @@ def category_from_import_path(local_pdf_relpath: str) -> str:
     return f"topic_{topic_match.group(1)}" if topic_match else "other"
 
 
+def metadata_only_records(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+    by_doi: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        doi = normalize_doi(row.get("doi"))
+        if doi:
+            by_doi.setdefault(doi, []).append(row)
+    eligible = {}
+    for doi, entries in by_doi.items():
+        ids = {row.get("paper_id", "") for row in entries}
+        if len(ids) != 1:
+            continue
+        paper_id = next(iter(ids))
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", paper_id):
+            continue
+        assets = [REPO_ROOT / "data/chunks" / f"{paper_id}.jsonl", REPO_ROOT / "data/extracted_text" / f"{paper_id}.json"]
+        assets.extend(REPO_ROOT / "bib" / row["local_pdf_relpath"] for row in entries if row.get("local_pdf_relpath"))
+        if any(path.exists() for path in assets):
+            continue
+        eligible[doi] = {key: value for row in entries for key, value in row.items() if value}
+    return eligible
+
+
+def upsert_import_row(rows: list[dict[str, str]], update: dict[str, str]) -> None:
+    existing = next((row for row in rows if row.get("paper_id") == update["paper_id"]), None)
+    if existing is None:
+        rows.append(update)
+    else:
+        for key, value in update.items():
+            if value:
+                if key == "notes" and existing.get(key):
+                    value = existing[key] + "; " + value
+                existing[key] = value
+
+
 def inspect_candidate(
     source: Path,
     *,
@@ -655,6 +692,7 @@ def inspect_candidate(
     known_titles: set[str],
     known_ids: set[str],
     known_keys: set[str],
+    metadata_only: dict[str, dict[str, str]] | None = None,
 ) -> Candidate:
     if source.stat().st_size > MAX_PDF_BYTES:
         raise ValueError("PDF exceeds the 250 MB inbox limit")
@@ -702,6 +740,10 @@ def inspect_candidate(
     )
     paper_id = unique_token(f"USR_{digest[:12].upper()}", known_ids)
     bib_key = unique_token(make_bib_key(author, year, title), known_keys)
+    existing = (metadata_only or {}).get(doi)
+    if existing:
+        paper_id = existing["paper_id"]
+        bib_key = existing.get("bib_key") or bib_key
     filename = safe_filename(f"{author}{year}{' '.join(title.split()[:6])}") + ".pdf"
     target_relpath = unique_pdf_relpath(category, filename)
     pages = extract_pdf_text(source)

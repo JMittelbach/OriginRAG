@@ -37,9 +37,36 @@ The [Crossref search API](https://www.crossref.org/documentation/retrieve-metada
 receives only the search query and filters, not the local library or chats.
 Coverage varies by discipline and registered publication metadata.
 
-Search returns up to 12 bibliographic records, not downloaded PDFs. Open a
-publication to obtain a legally accessible copy, then use **Add papers**.
-Existing catalogue entries are marked. The search does not bypass paywalls,
+Search returns up to 12 bibliographic records. In an upload-enabled account,
+click **Add to library** on a result to find and import an open-access PDF.
+The DOI is sent to OpenAlex and Europe PMC. If the host configures
+`ORIGINRAG_UNPAYWALL_EMAIL`, Unpaywall is also consulted. An optional
+`ORIGINRAG_OPENALEX_API_KEY` increases OpenAlex's available request budget.
+Provider terms and usage limits apply. See [OpenAlex authentication](https://help.openalex.org/api/authentication/)
+and the [Unpaywall API](https://unpaywall.org/api).
+
+The import continues on the server when the dialog or browser tab is closed.
+Reopen **Find papers** to see recent import progress. Two downloads can run at
+once, with at most eight active or queued imports and a 40 MB limit per PDF.
+Downloads use public HTTPS addresses only, with revalidated redirects and
+connections pinned to a checked public IP. An accessible PDF must also contain
+the requested DOI on its first page. Scanned copies, alternate versions or
+PDFs that fail this check require manual upload rather than automatic acceptance.
+
+Accepted PDFs go through the same identifier, duplicate, naming and indexing
+checks as uploads. A metadata-only record is supplemented while retaining its
+paper ID and citation key. Existing assets are not overwritten. A downloaded
+file is not reported as ready until library processing succeeds.
+
+If no suitable copy can be obtained, **Upload PDF** provides the manual route.
+An unavailable copy does not necessarily mean the paper is paywalled: provider
+outages, download restrictions and identity-check failures can also cause this.
+Import status is held for the running server process, not across a restart.
+Already indexed papers and staged inbox files remain on disk; unfinished
+downloads are not automatically restarted. Recent statuses are bounded to
+128 jobs and are visible only to the account that requested them.
+
+Existing catalogue entries are marked. The search/import does not bypass paywalls,
 determine peer-review status or imply that a result supports the current answer.
 It uses no language model. Network failures are shown without blocking chat.
 

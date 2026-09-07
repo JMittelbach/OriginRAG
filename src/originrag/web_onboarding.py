@@ -61,7 +61,9 @@ MARKUP = """
     </form>
     <p id="discoveryStatus" role="status"></p>
     <div id="discoveryResults"></div>
-    <p>Results are bibliographic records, not downloaded PDFs. Open a paper to find an accessible copy, then use Add papers. Some publications require institutional access. Coverage varies by field.</p>
+    <section id="paperImportJobs" aria-label="Paper imports" aria-live="polite"></section>
+    <p>Results are bibliographic records, not downloaded PDFs. Choose Add to library to look for an open-access PDF and index it automatically. If no matching accessible copy can be verified, upload a legally obtained PDF instead. Coverage varies by field.</p>
+    <p>Adding a paper sends its DOI to OpenAlex and Europe PMC, and to Unpaywall if configured by the host. Only verified public HTTPS download locations are contacted. Your library and chats are not sent.</p>
     <button type="button" id="discoveryUpload">Add PDFs to library</button>
     <p id="discoveryUploadHint" hidden>Web uploads are not available in this session. Ask the host to enable uploads, or use ./originrag import-local followed by ./originrag prepare-corpus with the web service stopped.</p>
   </dialog>
@@ -74,9 +76,12 @@ SCRIPT = r"""
   const guide = el("welcomeGuide"), discovery = el("discoveryDialog");
   let storageKey = null, step = 0, stats = null, uploadAvailable = false;
   let returnFocus = null, searchController = null, latestSearch = 0;
+  const importJobs = new Map(), importButtons = new Map();
+  const activeImports = new Set(["queued", "finding", "downloading", "indexing"]);
+  let importPollBusy = false;
   const steps = [
     ["Your papers, one place", "Add papers uploads PDFs to the shared library. Accepted files are checked for identifiers and duplicates, named and sorted, then indexed automatically. Watch the update status. Scanned or unrecognised files may need attention."],
-    ["Find your next paper", "Find papers searches external literature by any topic, with year and sorting options. Open a result to obtain an accessible PDF, then add it here. Library searches the papers already in this collection by author, title or DOI."],
+    ["Find your next paper", "Find papers searches external literature by any topic. Use Add to library on a result to import an open-access PDF automatically, or upload your own copy when needed. Library searches the collection by author, title or DOI."],
     ["Ask and continue", "Type a question in the chat, then ask follow-up questions in the same conversation. Saved chats are in the sidebar. The queue shows who is waiting, and running work continues when you switch chats."],
     ["Follow the evidence", "Open citations to inspect the source passages. Study overlap is checked automatically: several papers may reuse one study or dataset. An unknown independent-study count means the overlap is not yet resolved, not that every paper is independent."],
     ["Make it yours", "Choose a light or dark theme and wallpaper in Appearance. Answer style adjusts how replies are written. Use ? to reopen this tour whenever you need it."]
@@ -124,6 +129,7 @@ SCRIPT = r"""
     el("discoveryUpload").hidden = !uploadAvailable;
     el("discoveryUploadHint").hidden = uploadAvailable;
     discovery.showModal(); el("discoveryQuery").focus();
+    pollImports();
   }
   function closeDiscovery() { discovery.close(); }
   discovery.addEventListener("close", () => {
@@ -135,6 +141,50 @@ SCRIPT = r"""
   el("discoveryClose").addEventListener("click", closeDiscovery);
   const openUpload = () => { if (uploadAvailable) el("paperUploadButton").click(); };
   el("discoveryUpload").addEventListener("click", () => { closeDiscovery(); openUpload(); });
+  function updateImportButton(doi) {
+    const pair = importButtons.get(doi), job = importJobs.get(doi);
+    if (!pair || !job) return;
+    const {button, availability} = pair;
+    const active = activeImports.has(job.state);
+    button.disabled = active || job.state === "imported";
+    button.textContent = active ? "Importing…" : job.state === "imported" ? "In library" : "Try import again";
+    availability.textContent = job.message || job.state;
+  }
+  async function pollImports() {
+    if (!uploadAvailable || importPollBusy) return;
+    importPollBusy = true;
+    try {
+      const response = await fetch("/api/paper-imports");
+      if (!response.ok) return;
+      const data = await response.json();
+      const list = el("paperImportJobs"); list.replaceChildren();
+      for (const job of data.jobs || []) {
+        importJobs.set(job.doi, job); updateImportButton(job.doi);
+      }
+      for (const job of [...importJobs.values()].slice(-8)) {
+        const row = document.createElement("p"); row.textContent = `${job.doi} · ${job.message || job.state}`;
+        list.append(row);
+        if (["manual_upload", "review_required", "error"].includes(job.state)) {
+          const upload = document.createElement("button"); upload.type = "button"; upload.textContent = "Upload PDF";
+          upload.addEventListener("click", () => { el("paperDoi").value = job.doi; closeDiscovery(); openUpload(); });
+          list.append(upload);
+        }
+      }
+    } catch {} finally { importPollBusy = false; }
+  }
+  async function addPaper(paper, button, availability) {
+    button.disabled = true; button.textContent = "Requesting import…";
+    try {
+      const response = await fetch("/api/paper-import", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({doi: paper.doi})});
+      const job = await response.json();
+      if (!response.ok) throw new Error(job.error || "Import unavailable");
+      importJobs.set(paper.doi, job); updateImportButton(paper.doi); pollImports();
+    } catch (error) {
+      availability.textContent = `${error.message} You can use Add PDFs to library instead.`;
+      button.disabled = false; button.textContent = "Add to library";
+    }
+  }
+  window.setInterval(() => { if (discovery.open) pollImports(); }, 1500);
   el("discoveryExample").addEventListener("change", (event) => {
     if (event.target.value) el("discoveryQuery").value = event.target.value;
     el("discoveryQuery").focus();
@@ -145,7 +195,7 @@ SCRIPT = r"""
     const serial = ++latestSearch;
     searchController?.abort(); searchController = new AbortController();
     el("discoverySearch").disabled = true;
-    el("discoveryResults").replaceChildren(); el("discoveryStatus").textContent = "Searching literature…";
+    el("discoveryResults").replaceChildren(); importButtons.clear(); el("discoveryStatus").textContent = "Searching literature…";
     const params = new URLSearchParams({query: el("discoveryQuery").value.trim(), since: el("discoveryYear").value, order: el("discoveryOrder").value, kind: el("discoveryKind").value});
     try {
       const response = await fetch(`/api/discover-papers?${params}`, {signal: searchController.signal});
@@ -164,6 +214,14 @@ SCRIPT = r"""
         const availability = document.createElement("p");
         availability.textContent = paper.in_library ? "Already in the catalogue · open Library to check full-text availability" : "Open publication · access may require a subscription";
         row.append(title, detail, availability); el("discoveryResults").append(row);
+        if (uploadAvailable) {
+          const button = document.createElement("button"); button.type = "button";
+          button.textContent = paper.fulltext_ready ? "In library" : "Add to library";
+          button.disabled = Boolean(paper.fulltext_ready);
+          button.addEventListener("click", () => addPaper(paper, button, availability));
+          row.append(button); importButtons.set(paper.doi, {button, availability});
+          updateImportButton(paper.doi);
+        }
       }
     } catch (error) {
       if (serial === latestSearch) el("discoveryStatus").textContent = error.name === "AbortError" ? "Search cancelled." : error.message;

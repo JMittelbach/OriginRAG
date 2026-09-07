@@ -13,7 +13,7 @@ import web_chat  # noqa: E402
 
 @pytest.fixture
 def browser_page(tmp_path):
-    state = {"user_id": "alice", "total": 0, "searchable": 0, "local_pdf": 0, "error": False}
+    state = {"user_id": "alice", "total": 0, "searchable": 0, "local_pdf": 0, "error": False, "imports": []}
     requests = []
     base = "http://127.0.0.1:39843"
 
@@ -38,6 +38,16 @@ def browser_page(tmp_path):
             payload["user"] = {"user_id": state["user_id"], "display_name": "Test user"}
         elif path == "/api/library-stats":
             payload.update({key: state[key] for key in ("total", "searchable", "local_pdf")})
+        elif path == "/api/paper-import":
+            assert request.method == "POST"
+            assert request.post_data_json == {"doi": "10.1234/test"}
+            assert request.headers.get("x-csrf-token") == "test-csrf"
+            job = {"job_id": "job1", "doi": "10.1234/test", "state": "queued", "message": "Waiting to import"}
+            state["imports"] = [job]
+            payload = job
+            code = 202
+        elif path == "/api/paper-imports":
+            payload = {"jobs": state["imports"]}
         elif path.startswith("/api/discover-papers"):
             if state["error"]:
                 payload = {"error": "The literature service is unavailable."}
@@ -49,6 +59,7 @@ def browser_page(tmp_path):
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch()
         context = browser.new_context(viewport={"width": 1280, "height": 900})
+        context.add_cookies([{"name": "pfempire_csrf", "value": "test-csrf", "url": base}])
         context.route("**/*", route_request)
         page = context.new_page()
         errors = []
@@ -90,6 +101,26 @@ def test_search_empty_state_updates_mobile_and_themes(browser_page):
     page.locator("#guideSkip").click()
     assert page.locator("header .header-left #discoveryButton").count() == 1
     assert page.locator(".library-start").count() == 0
+
+
+def test_direct_import_status_survives_dialog_and_page_reload(browser_page):
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    page.locator("#discoveryButton").click()
+    page.locator("#discoveryQuery").fill("graph algorithms")
+    page.locator("#discoverySearch").click()
+    page.locator(".discovery-item").get_by_role("button", name="Add to library").click()
+    page.wait_for_function("document.querySelector('.discovery-item button').textContent === 'Importing…'")
+    page.locator("#discoveryClose").click()
+    page.reload()
+    page.wait_for_load_state("networkidle")
+    page.locator("#discoveryButton").click()
+    page.wait_for_function("document.getElementById('paperImportJobs').textContent.includes('Waiting to import')")
+    state["imports"][0].update(state="manual_upload", message="No matching accessible PDF found")
+    page.locator("#paperImportJobs").get_by_role("button", name="Upload PDF").wait_for()
+    page.locator("#paperImportJobs").get_by_role("button", name="Upload PDF").click()
+    assert page.locator("#paperDoi").input_value() == "10.1234/test"
+    assert page.locator("#paperUploadBackdrop").evaluate("el => el.classList.contains('open')")
     find_box = page.locator("#discoveryButton").bounding_box()
     appearance_box = page.locator("#appearanceButton").bounding_box()
     assert find_box["x"] < appearance_box["x"]

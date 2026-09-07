@@ -63,6 +63,7 @@ from originrag.utils.io import write_json  # noqa: E402
 from originrag.web_appearance import with_appearance  # noqa: E402
 from originrag.web_onboarding import with_onboarding  # noqa: E402
 from originrag.discovery.topic_search import TopicDiscovery, DiscoveryBusy, DiscoveryUnavailable  # noqa: E402
+from originrag.discovery.oa_import import PaperImports, ImportBusy  # noqa: E402
 from originrag.web_auth import (  # noqa: E402
     AuthStore,
     AuthenticatedUser,
@@ -652,6 +653,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\nbye")
     finally:
         handler.turn_job_manager.shutdown()
+        handler.paper_import_manager.shutdown()
         server.server_close()
     return 0
 
@@ -1585,6 +1587,7 @@ def build_handler(
 
     anonymous_review_lock = threading.Lock()
     topic_discovery = TopicDiscovery()
+    paper_imports = PaperImports(library_manager)
     corpus_lock = library_manager.corpus_lock if library_manager else threading.RLock()
     turn_jobs = TurnJobManager(
         max_concurrent_turns,
@@ -1674,6 +1677,9 @@ def build_handler(
                 else:
                     self.respond_json(library_manager.status())
                 return
+            if parsed.path == "/api/paper-imports":
+                self.respond_json({"jobs": paper_imports.snapshot(owner_key)})
+                return
             if parsed.path == "/api/library":
                 params = parse_qs(parsed.query)
                 try:
@@ -1709,6 +1715,9 @@ def build_handler(
                     known = {normalize_doi(str(item.get("doi") or "")) for item in library_catalog()}
                     for item in result["items"]:
                         item["in_library"] = normalize_doi(item["doi"]) in known
+                    ready = {normalize_doi(str(item.get("doi") or "")) for item in library_catalog() if item.get("searchable") and item.get("local_pdf")}
+                    for item in result["items"]:
+                        item["fulltext_ready"] = normalize_doi(item["doi"]) in ready
                     self.respond_json(result)
                 except ValueError as exc:
                     self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
@@ -1866,6 +1875,21 @@ def build_handler(
                     self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                     return
                 self.respond_json(response)
+                return
+            if parsed.path == "/api/paper-import":
+                if not auth_store or not user or not library_manager:
+                    self.respond_json({"error": "Sign in to an upload-enabled session to add papers"}, status=HTTPStatus.FORBIDDEN)
+                    return
+                try:
+                    payload = self.read_json_body()
+                    if set(payload) != {"doi"} or not isinstance(payload["doi"], str):
+                        raise ValueError("Supply a DOI only, not a download URL")
+                    job = paper_imports.enqueue(owner_key, payload["doi"])
+                    self.respond_json(job, status=HTTPStatus.ACCEPTED)
+                except ImportBusy as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.TOO_MANY_REQUESTS)
+                except ValueError as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
             if parsed.path == "/api/library-upload":
                 if not auth_store or not user or not library_manager:
@@ -2222,6 +2246,7 @@ def build_handler(
             return
 
     OriginRAGWebHandler.turn_job_manager = turn_jobs
+    OriginRAGWebHandler.paper_import_manager = paper_imports
     return OriginRAGWebHandler
 
 
