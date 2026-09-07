@@ -1,0 +1,358 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
+
+
+ORIGINRAG_PYTHON="${ORIGINRAG_PYTHON:-${PFEMPIRE_PYTHON:-}}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./terminal                Start terminal chat with local Qwen
+  ./terminal --demo         Preview the terminal interface without a model
+  ./web                     Start browser UI with local Qwen
+  ./originrag                  Start terminal chat with local Qwen
+  ./originrag --version        Print the project version
+  ./originrag doctor           Check the corpus, installation, Ollama, and model
+  ./originrag console          Start terminal chat with local Qwen
+  ./originrag web              Start browser UI with local Qwen
+  ./originrag users ...        Manage invite-only local web accounts
+  ./originrag ask "question"   Ask one question and write outputs/answers
+  ./originrag setup-model      Pull/configure the preferred local Qwen model
+  ./originrag sync-bib ...     Sync the local PDF library with rsync
+  ./originrag bib              Refresh bib inventory, registry, keys, and reports
+  ./originrag library [query]  Browse papers; filter with --author or --title
+  ./originrag prepare-corpus   Extract PDFs, build chunks, and rebuild the index
+  ./originrag search-papers "query"
+                             Search local paper metadata without Qwen
+  ./originrag import-local --source-dir DIR [--apply]
+                             Review or import local scholarly PDFs
+  ./originrag scrape          Find candidate papers without downloading PDFs
+  ./originrag scrape-download 50
+                             Download/import 50 DOI-backed OA candidates
+  ./originrag discover        Find recent open-access malaria papers
+  ./originrag import-papers   Download OA PDFs from paper_requests.tsv
+  ./originrag trace-sources --paper-id ID "claim text"
+                             Trace a claim to cited works and library status
+  ./originrag export-traces  Archive/verify trace reports and the local audit DB
+  ./originrag watch           One OA discovery/metadata pass; no watcher or indexing
+
+Live library updates:
+  Sign in to the web app and use Add papers. Accepted uploads are automatically
+  named, categorised and indexed while the service runs. In chat: /help import
+  For shell imports/index updates, stop the web service and restart afterwards.
+
+Examples:
+  ./setup.sh
+  ./originrag setup-model
+  ./originrag doctor
+  ./originrag search-papers "EPCR-binding PfEMP1"
+  ./terminal
+  ./web
+  ./originrag ask "Find gaps in sex differences and malaria immunity."
+  ./originrag scrape
+  ./originrag scrape-download 50
+EOF
+}
+
+print_version() {
+  local version
+  version="$(awk -F'"' '/^version = / {print $2; exit}' pyproject.toml)"
+  echo "OriginRAG ${version:-unknown}"
+}
+
+read_env_value() {
+  local key="$1"
+  if [ -f .env ]; then
+    awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' .env
+  fi
+}
+
+activate_python_environment() {
+
+
+  local requested_env="${ORIGINRAG_CONDA_ENV:-${PFEMPIRE_CONDA_ENV:-}}"
+  local env_name
+
+  if [ -n "${ORIGINRAG_PYTHON:-}" ] && [ -x "$ORIGINRAG_PYTHON" ]; then
+    if "$ORIGINRAG_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+      return
+    fi
+    echo "ORIGINRAG_PYTHON is missing OriginRAG dependencies: $ORIGINRAG_PYTHON" >&2
+    echo "Repair with: \"$ORIGINRAG_PYTHON\" -m pip install -e '.[dev]'" >&2
+    exit 1
+  fi
+  if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    ORIGINRAG_PYTHON="$VIRTUAL_ENV/bin/python"
+    if "$ORIGINRAG_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+      return
+    fi
+    echo "The active virtual environment is missing OriginRAG dependencies." >&2
+    echo "Repair with: python -m pip install -e '.[dev]'" >&2
+    exit 1
+  fi
+  if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
+    ORIGINRAG_PYTHON="$ROOT_DIR/.venv/bin/python"
+    if "$ORIGINRAG_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+      return
+    fi
+  fi
+  if ! command -v conda >/dev/null 2>&1; then
+    echo "No usable Python environment was found." >&2
+    echo "Run ./setup.sh, activate a Python 3.11 virtual environment, or set ORIGINRAG_PYTHON." >&2
+    exit 1
+  fi
+
+  eval "$(conda shell.bash hook)"
+  if [ -n "$requested_env" ]; then
+    env_name="$requested_env"
+  elif conda env list | awk '{print $1}' | grep -qx "originrag"; then
+    env_name="originrag"
+  elif conda env list | awk '{print $1}' | grep -qx "pfempire"; then
+    env_name="pfempire"
+  elif conda env list | awk '{print $1}' | grep -qx "hyporag"; then
+    env_name="hyporag"
+  else
+    env_name="originrag"
+  fi
+  conda activate "$env_name"
+  hash -r
+  ORIGINRAG_PYTHON="$CONDA_PREFIX/bin/python"
+  if [ ! -x "$ORIGINRAG_PYTHON" ]; then
+    echo "Conda environment '$env_name' has no executable Python at $ORIGINRAG_PYTHON." >&2
+    exit 1
+  fi
+  if ! "$ORIGINRAG_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+    echo "Conda environment '$env_name' is missing OriginRAG dependencies (PyYAML)." >&2
+    echo "Checked interpreter: $ORIGINRAG_PYTHON" >&2
+    echo "Repair with: conda run -n '$env_name' python -m pip install -e ." >&2
+    exit 1
+  fi
+}
+
+preferred_model() {
+  local model="${ORIGINRAG_QWEN_MODEL:-${PFEMPIRE_QWEN_MODEL:-}}"
+  if [ -z "$model" ]; then
+    model="$(read_env_value ORIGINRAG_QWEN_MODEL || true)"
+  fi
+  if [ -z "$model" ]; then
+    model="$(read_env_value PFEMPIRE_QWEN_MODEL || true)"
+  fi
+  echo "${model:-qwen3:30b}"
+}
+
+installed_model() {
+  local requested="$1"
+  local candidate
+  local installed
+  installed="$(ollama list 2>/dev/null | awk 'NR > 1 {print $1}')"
+  if printf '%s\n' "$installed" | grep -qx "$requested"; then
+    echo "$requested"
+    return 0
+  fi
+
+
+  for candidate in qwen3:32b qwen3:30b qwen2.5:14b-instruct; do
+    if printf '%s\n' "$installed" | grep -qx "$candidate"; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+configure_local_model() {
+  local requested
+  local selected
+  requested="$(preferred_model)"
+  if ! selected="$(installed_model "$requested")"; then
+    echo "No supported OriginRAG answer model is installed." >&2
+    echo "Expected $requested, qwen3:32b, qwen3:30b, or qwen2.5:14b-instruct." >&2
+    echo "Install one with: ollama pull qwen3:32b" >&2
+    exit 1
+  fi
+  if [ "$selected" != "$requested" ]; then
+    echo "Configured model $requested is unavailable; using installed $selected."
+  fi
+  export PFEMPIRE_OLLAMA_MODEL="$selected"
+  export PFEMPIRE_OLLAMA_PLANNER_MODEL="$selected"
+  export PFEMPIRE_OLLAMA_ANSWER_MODEL="$selected"
+  export PFEMPIRE_QWEN_MODEL="$selected"
+  export PFEMPIRE_QUEUE_MODEL="$selected"
+  export ORIGINRAG_OLLAMA_MODEL="$selected"
+  export ORIGINRAG_OLLAMA_PLANNER_MODEL="$selected"
+  export ORIGINRAG_OLLAMA_ANSWER_MODEL="$selected"
+  export ORIGINRAG_QWEN_MODEL="$selected"
+  export ORIGINRAG_QUEUE_MODEL="$selected"
+}
+
+report_accelerator() {
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    local gpu
+    gpu="$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null | head -n 1 || true)"
+    if [ -n "$gpu" ]; then
+      echo "NVIDIA accelerator detected: $gpu"
+      return
+    fi
+  fi
+  echo "No NVIDIA accelerator detected. Ollama may run on CPU and answer slowly."
+}
+
+ensure_ollama_server() {
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "ollama was not found. Install it, then run: ./originrag setup-model" >&2
+    exit 1
+  fi
+  if ollama list >/dev/null 2>&1; then
+    return
+  fi
+  local log_path="outputs/runtime/ollama.log"
+  if ! mkdir -p outputs/runtime 2>/dev/null; then
+    log_path="/tmp/originrag_ollama.log"
+  fi
+  echo "Starting local Ollama server in the background..."
+  nohup ollama serve > "$log_path" 2>&1 &
+  local attempt
+  for attempt in $(seq 1 20); do
+    if ollama list >/dev/null 2>&1; then
+      return
+    fi
+    sleep 1
+  done
+  echo "Ollama did not become ready. Check $log_path or start Ollama manually." >&2
+  exit 1
+}
+
+cmd="${1:-console}"
+if [[ "$cmd" == "help" || "$cmd" == "-h" || "$cmd" == "--help" ]]; then
+  usage
+  exit 0
+elif [[ "$cmd" == "version" || "$cmd" == "--version" ]]; then
+  print_version
+  exit 0
+elif [[ "$cmd" == -* ]]; then
+  cmd="console"
+else
+  shift || true
+fi
+
+case "$cmd" in
+  console|chat)
+    activate_python_environment
+    for argument in "$@"; do
+      case "$argument" in
+        --demo|--help|-h)
+          exec "$ORIGINRAG_PYTHON" scripts/chat_corpus.py "$@"
+          ;;
+      esac
+    done
+    ensure_ollama_server
+    configure_local_model
+    report_accelerator
+    exec "$ORIGINRAG_PYTHON" scripts/chat_corpus.py --backend qwen --preset pro --task auto "$@"
+    ;;
+  web)
+    activate_python_environment
+    ensure_ollama_server
+    configure_local_model
+    report_accelerator
+    exec "$ORIGINRAG_PYTHON" scripts/start_web_chat.py "$@"
+    ;;
+  users)
+    activate_python_environment
+    exec "$ORIGINRAG_PYTHON" scripts/manage_web_users.py "$@"
+    ;;
+  ask)
+    if [ "$#" -lt 1 ]; then
+      echo "Missing question. Example: ./originrag ask \"What evidence links PfEMP1 to severe malaria?\"" >&2
+      exit 2
+    fi
+    activate_python_environment
+    ensure_ollama_server
+    configure_local_model
+    report_accelerator
+    exec "$ORIGINRAG_PYTHON" scripts/ask_corpus.py "$1" --backend qwen --preset pro --task answer "${@:2}"
+    ;;
+  setup-model|model)
+    exec bash scripts/setup_local_qwen.sh "$@"
+    ;;
+  sync-bib)
+    exec bash scripts/sync_bib_rsync.sh "$@"
+    ;;
+  bib)
+    activate_python_environment
+    exec bash scripts/bib_workflow.sh refresh "$@"
+    ;;
+  library|browse)
+    activate_python_environment
+    exec "$ORIGINRAG_PYTHON" scripts/browse_library.py "$@"
+    ;;
+  prepare-corpus|index-corpus)
+    activate_python_environment
+    exec bash scripts/bib_workflow.sh prepare "$@"
+    ;;
+  search-papers|papers)
+    if [ "$#" -lt 1 ]; then
+      echo "Missing query. Example: ./originrag search-papers \"EPCR-binding PfEMP1\"" >&2
+      exit 2
+    fi
+    activate_python_environment
+    exec "$ORIGINRAG_PYTHON" scripts/search_papers.py "$@"
+    ;;
+  import-local)
+    activate_python_environment
+    exec "$ORIGINRAG_PYTHON" scripts/import_local_papers.py "$@"
+    ;;
+  doctor)
+    activate_python_environment
+    "$ORIGINRAG_PYTHON" scripts/check_environment.py
+    if ! command -v ollama >/dev/null 2>&1; then
+      echo ""
+      echo "Ollama: missing (required only for generated answers)." >&2
+      echo "Install Ollama, then run: ./originrag setup-model" >&2
+      exit 1
+    fi
+    "$ORIGINRAG_PYTHON" scripts/check_llm_setup.py --model "$(preferred_model)" "$@"
+    ;;
+  scrape)
+    activate_python_environment
+    exec bash scripts/bib_workflow.sh discover "$@"
+    ;;
+  scrape-download)
+    activate_python_environment
+    exec bash scripts/bib_workflow.sh download "$@"
+    ;;
+  discover)
+    activate_python_environment
+    exec "$ORIGINRAG_PYTHON" scripts/discover_open_access_papers.py "$@"
+    ;;
+  import-papers|import)
+    activate_python_environment
+    exec "$ORIGINRAG_PYTHON" scripts/import_requested_papers.py "$@"
+    ;;
+  trace-sources|sources-trace)
+    activate_python_environment
+    exec "$ORIGINRAG_PYTHON" scripts/trace_claim_sources.py "$@"
+    ;;
+  export-traces|archive-traces)
+    activate_python_environment
+    exec "$ORIGINRAG_PYTHON" scripts/export_claim_source_trace_bundle.py "$@"
+    ;;
+  watch)
+    activate_python_environment
+    exec bash scripts/literature_watch.sh "$@"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  version|--version)
+    print_version
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

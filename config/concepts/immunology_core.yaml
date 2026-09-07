@@ -1,0 +1,77 @@
+concepts:
+  - id: t_cells
+    name: T cells
+    type: cell_type
+    aliases: ["T lymphocytes"]
+  - id: cd4_t_cells
+    name: CD4 T cells
+    type: cell_type
+    aliases: ["CD4+ T cells", "helper T cells"]
+  - id: cd8_t_cells
+    name: CD8 T cells
+    type: cell_type
+    aliases: ["CD8+ T cells", "cytotoxic T cells"]
+  - id: treg
+    name: Treg
+    type: cell_type
+    aliases: ["regulatory T cells", "Tregs"]
+  - id: foxp3
+    name: FOXP3
+    type: gene
+    aliases: ["forkhead box P3"]
+  - id: th1
+    name: Th1
+    type: immune_state
+    aliases: ["T helper 1"]
+  - id: ifn_gamma
+    name: IFN-gamma
+    type: pathway
+    aliases: ["IFNG", "interferon gamma"]
+  - id: monocytes
+    name: monocytes
+    type: cell_type
+    aliases: ["monocyte"]
+  - id: inflammatory_monocytes
+    name: inflammatory monocytes
+    type: cell_type
+    aliases: ["classical monocytes"]
+  - id: b_cells
+    name: B cells
+    type: cell_type
+    aliases: ["B lymphocytes"]
+  - id: atypical_memory_b_cells
+    name: atypical memory B cells
+    type: cell_type
+    aliases: ["atypical memory B-cells", "atMBC"]
+  - id: antibodies
+    name: antibodies
+    type: immune_state
+    aliases: ["antibody", "humoral immunity"]
+  - id: igg
+    name: IgG
+    type: immune_state
+    aliases: ["immunoglobulin G"]
+  - id: fc_afucosylation
+    name: Fc afucosylation
+    type: immune_state
+    aliases: ["afucosylated IgG"]
+  - id: cytokines
+    name: cytokines
+    type: pathway
+    aliases: ["cytokine"]
+  - id: interferon
+    name: interferon
+    type: pathway
+    aliases: ["IFN response", "interferon response"]
+  - id: immune_tolerance
+    name: immune tolerance
+    type: immune_state
+    aliases: ["tolerance"]
+  - id: exhaustion
+    name: exhaustion
+    type: immune_state
+    aliases: ["T cell exhaustion", "immune exhaustion"]
+  - id: antigen_presentation
+    name: antigen presentation
+    type: pathway
+    aliases: ["MHC presentation"]

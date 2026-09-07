@@ -1,0 +1,10 @@
+bib_dir_env: PFEMPIRE_BIB_DIR
+default_domain: malaria
+
+repo_paths:
+  metadata_dir: data/metadata
+  extracted_text_dir: data/extracted_text
+  chunks_dir: data/chunks
+  vector_index_dir: data/vector_index
+  outputs_dir: outputs
+

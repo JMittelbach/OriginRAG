@@ -1,0 +1,69 @@
+concepts:
+  - id: geneformer
+    name: Geneformer
+    type: tool
+    aliases: []
+  - id: scgpt
+    name: scGPT
+    type: tool
+    aliases: ["single-cell GPT"]
+  - id: scbert
+    name: scBERT
+    type: tool
+    aliases: []
+  - id: saturn
+    name: SATURN
+    type: tool
+    aliases: []
+  - id: nicheformer
+    name: Nicheformer
+    type: tool
+    aliases: []
+  - id: celltypist
+    name: CellTypist
+    type: tool
+    aliases: []
+  - id: singler
+    name: SingleR
+    type: tool
+    aliases: []
+  - id: scpred
+    name: scPred
+    type: tool
+    aliases: []
+  - id: scvi
+    name: scVI
+    type: tool
+    aliases: ["single-cell variational inference"]
+  - id: scanvi
+    name: scANVI
+    type: tool
+    aliases: []
+  - id: scarches
+    name: scArches
+    type: tool
+    aliases: []
+  - id: scanpy
+    name: Scanpy
+    type: tool
+    aliases: []
+  - id: seurat
+    name: Seurat
+    type: tool
+    aliases: []
+  - id: meme
+    name: MEME
+    type: tool
+    aliases: ["MEME Suite"]
+  - id: fimo
+    name: FIMO
+    type: tool
+    aliases: []
+  - id: varia
+    name: Varia
+    type: tool
+    aliases: []
+  - id: upsml
+    name: upsML
+    type: tool
+    aliases: ["upstream group classifier"]

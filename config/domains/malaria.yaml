@@ -1,0 +1,14 @@
+domain_id: malaria
+display_name: Malaria
+description: >
+  First OriginRAG domain focused on malaria research, including parasite biology,
+  host immunity, clinical severity, asymptomatic infection, omics, datasets,
+  and computational hypothesis generation.
+
+core_questions:
+  - How do parasite-side features such as var/PfEMP1 relate to clinical malaria phenotypes?
+  - Which host immune states distinguish severe, uncomplicated, and asymptomatic malaria?
+  - Are sex-specific host responses underexplored in malaria severity and immunity?
+  - How can scRNA-seq, bulk RNA-seq, host genetics, parasite transcriptomics, and clinical metadata be integrated?
+  - Which testable PhD hypotheses emerge from gaps between parasite biology, host immunity, and clinical phenotypes?
+

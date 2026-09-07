@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "$#" -eq 0 ]; then
+  exec "$ROOT_DIR/originrag" console
+fi
+
+case "$1" in
+  ask|console|chat|library|browse|search-papers|papers|discover|import|import-papers|setup-model|sync-bib|watch|web|help|-h|--help)
+    exec "$ROOT_DIR/originrag" "$@"
+    ;;
+  *)
+    exec "$ROOT_DIR/originrag" console "$@"
+    ;;
+esac

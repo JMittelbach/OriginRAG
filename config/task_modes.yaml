@@ -1,0 +1,80 @@
+task_modes:
+  evidence_qa:
+    description: "Answer a focused scientific question using retrieved evidence."
+    preferred_sections: ["results", "discussion", "abstract"]
+    excluded_sections: ["references"]
+    max_chunks: 12
+    max_per_paper: 2
+    output_schema: "evidence_answer"
+
+  literature_review:
+    description: "Synthesize a mini-review across multiple papers."
+    preferred_sections: ["abstract", "introduction", "discussion", "results"]
+    excluded_sections: ["references"]
+    max_chunks: 25
+    max_per_paper: 3
+    output_schema: "mini_review"
+
+  mechanism_mapping:
+    description: "Map molecular/cellular mechanisms and evidence links."
+    preferred_sections: ["results", "discussion", "methods"]
+    excluded_sections: ["references"]
+    max_chunks: 20
+    max_per_paper: 3
+    output_schema: "mechanism_map"
+
+  contradiction_finder:
+    description: "Find conflicting or divergent claims."
+    preferred_sections: ["results", "discussion"]
+    excluded_sections: ["references"]
+    max_chunks: 30
+    max_per_paper: 3
+    output_schema: "contradiction_table"
+
+  gap_finder:
+    description: "Find underexplored intersections and missing evidence."
+    preferred_sections: ["discussion", "results", "limitations", "abstract"]
+    excluded_sections: ["references"]
+    max_chunks: 30
+    max_per_paper: 3
+    output_schema: "gap_report"
+
+  dataset_finder:
+    description: "Find datasets, cohorts, assays, omics data, labels, and access details."
+    preferred_sections: ["methods", "data_availability", "supplement", "results"]
+    excluded_sections: ["references"]
+    max_chunks: 25
+    max_per_paper: 3
+    output_schema: "dataset_table"
+
+  method_comparison:
+    description: "Compare computational or experimental methods."
+    preferred_sections: ["methods", "results", "discussion"]
+    excluded_sections: ["references"]
+    max_chunks: 25
+    max_per_paper: 3
+    output_schema: "method_comparison"
+
+  therapeutic_target_finder:
+    description: "Find candidate targets, drug/vaccine angles, perturbation evidence."
+    preferred_sections: ["results", "discussion", "methods"]
+    excluded_sections: ["references"]
+    max_chunks: 25
+    max_per_paper: 3
+    output_schema: "target_report"
+
+  hypothesis_generator:
+    description: "Generate testable research hypotheses from evidence and gaps."
+    preferred_sections: ["results", "discussion", "methods"]
+    excluded_sections: ["references"]
+    max_chunks: 30
+    max_per_paper: 3
+    output_schema: "hypothesis_cards"
+
+  hypothesis_critic:
+    description: "Critique hypotheses for evidence, feasibility, risk, novelty, and data needs."
+    preferred_sections: ["results", "methods", "discussion"]
+    excluded_sections: ["references"]
+    max_chunks: 30
+    max_per_paper: 3
+    output_schema: "hypothesis_critique"

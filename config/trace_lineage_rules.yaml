@@ -1,0 +1,20 @@
+lineage:
+  cluster_threshold: 0.80
+  weights:
+    same_publication_version: 1.00
+    same_doi_family: 1.00
+    same_preprint_family: 0.98
+    same_trial_id: 0.95
+    same_dataset_accession: 0.90
+    overlapping_samples: 0.90
+    same_cohort: 0.85
+    same_parasite_isolates: 0.85
+    follow_up_analysis: 0.80
+    secondary_analysis: 0.80
+    shared_atlas: 0.70
+    same_site_and_period: 0.45
+    high_author_overlap: 0.30
+    high_title_similarity: 0.25
+    citation_relationship: 0.05
+    same_method_only: 0.02
+  warning: Provisional development weights. Do not tune on held-out test questions.

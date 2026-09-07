@@ -1,0 +1,23 @@
+facet_defaults:
+  coverage_threshold: 0.60
+  minimum_items: 1
+  review_status: suggested
+task_modes:
+  evidence_qa:
+    preferred_scales: [molecular, clinical, population]
+    required_polarities: [support]
+  mechanism_mapping:
+    preferred_scales: [molecular, cellular, tissue, clinical]
+    required_polarities: [support]
+  contradiction_finder:
+    preferred_scales: [molecular, clinical, population]
+    required_polarities: [support, contradiction]
+  dataset_finder:
+    preferred_scales: [methodological, population]
+    required_polarities: [support]
+  method_comparison:
+    preferred_scales: [methodological]
+    required_polarities: [support, limitation]
+  gap_finder:
+    preferred_scales: [molecular, cellular, clinical, population, methodological]
+    required_polarities: [limitation]

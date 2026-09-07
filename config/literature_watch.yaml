@@ -1,0 +1,86 @@
+sources:
+  - europepmc
+  - openalex
+  - biorxiv
+  - medrxiv
+
+
+
+
+
+
+queries:
+  - query_id: var_pfemp1_core
+    category: var_pfemp1
+    query: 'PfEMP1 OR "var gene" OR "var genes" OR "variant surface antigen"'
+  - query_id: var_gene_expression
+    category: var_pfemp1
+    query: '"var gene expression" OR "virulence gene expression" OR "variant surface antigen expression"'
+  - query_id: var_antigenic_variation
+    category: var_pfemp1
+    query: '"antigenic variation" "Plasmodium falciparum" OR "allelic exclusion" "Plasmodium falciparum"'
+  - query_id: pfemp1_domains_binding
+    category: var_pfemp1
+    query: 'PfEMP1 domain OR CIDR OR DBLalpha OR "DBL alpha" OR EPCR OR CD36 OR ICAM1'
+  - query_id: cytoadherence_sequestration
+    category: var_pfemp1
+    query: 'cytoadherence malaria OR sequestration malaria OR rosetting malaria OR "infected erythrocyte adhesion"'
+  - query_id: var2csa_molecular
+    category: var_pfemp1
+    query: 'VAR2CSA OR "chondroitin sulfate A" "Plasmodium falciparum" OR "CSA-adhering" "Plasmodium falciparum"'
+  - query_id: severe_malaria_pathogenesis_molecular
+    category: var_pfemp1
+    query: '"severe malaria" PfEMP1 OR "cerebral malaria" sequestration OR "parasite biomass" "severe malaria"'
+  - query_id: parasite_population_genomics
+    category: parasite_biology
+    query: '"Plasmodium falciparum" "population genomics" OR "Plasmodium falciparum" "population genetics"'
+  - query_id: parasite_evolution_recombination
+    category: parasite_biology
+    query: '"Plasmodium falciparum" evolution OR "Plasmodium falciparum" recombination OR "var gene" evolution'
+  - query_id: parasite_genome_transcriptome
+    category: parasite_biology
+    query: '"Plasmodium falciparum" genome OR "Plasmodium falciparum" transcriptome OR "parasite transcriptomics"'
+  - query_id: parasite_epigenetic_regulation
+    category: parasite_biology
+    query: '"Plasmodium falciparum" epigenetic OR "Plasmodium falciparum" chromatin OR "Plasmodium falciparum" histone'
+  - query_id: malaria_single_cell_omics
+    collection: malaria
+    category: malaria_omics
+    query: 'malaria "single-cell" OR malaria scRNA OR "Plasmodium falciparum" "single cell"'
+  - query_id: host_parasite_transcriptomics
+    collection: malaria
+    category: malaria_omics
+    query: '"host-parasite transcriptomics" malaria OR "dual RNA-seq" malaria OR malaria transcriptomics'
+  - query_id: molecular_resistance_markers
+    category: resistance_dx
+    query: 'kelch13 OR K13 malaria OR pfcrt OR pfmdr1 OR pfdhfr OR pfdhps OR "artemisinin resistance" "Plasmodium falciparum"'
+  - query_id: diagnostic_escape_molecular
+    category: resistance_dx
+    query: 'pfhrp2 deletion OR pfhrp3 deletion OR "diagnostic escape" malaria'
+  - query_id: host_immunity_molecular
+    category: host_immunity
+    query: '"Plasmodium falciparum" "immune response" transcriptomics OR malaria "B cell receptor" OR malaria "T cell" transcriptomics'
+  - query_id: sex_diff_molecular_immunity
+    collection: malaria
+    category: sex_diff
+    query: '"sex-specific" malaria immunity OR "sex differences" "Plasmodium falciparum" immunity OR "sexual dimorphism" malaria immunity'
+  - query_id: malaria_bioinformatics_tools
+    collection: malaria
+    category: malaria_tools
+    query: 'malaria bioinformatics OR "Plasmodium falciparum" pipeline OR "var gene" pipeline OR "malaria cell atlas"'
+  - query_id: scrna_annotation_methods
+    collection: scrna_annotation
+    category: scrna_annotation
+    query: '"single-cell annotation" OR "cell type annotation" "single-cell" OR scRNA-seq annotation'
+  - query_id: scrna_reference_mapping
+    collection: scrna_annotation
+    category: scrna_annotation
+    query: '"single-cell reference mapping" OR "cell atlas annotation" OR "reference mapping" scRNA'
+  - query_id: scrna_foundation_models
+    collection: scrna_annotation
+    category: scrna_annotation
+    query: '"single-cell foundation model" OR "scRNA foundation model" OR Geneformer OR scGPT OR CellFM OR SATURN'
+  - query_id: scrna_perturbation_methods
+    collection: scrna_annotation
+    category: scrna_annotation
+    query: '"single-cell perturbation" OR Perturb-seq OR scPerturb OR "gene perturbation" "single-cell"'

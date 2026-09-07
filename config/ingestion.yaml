@@ -1,0 +1,13 @@
+pdf_text_extraction:
+  engine: pymupdf
+  keep_page_numbers: true
+  keep_basic_layout: false
+  min_chars_per_page_warning: 500
+
+chunking:
+  target_chars: 2500
+  overlap_chars: 300
+  split_on_sections: true
+  preserve_paper_id: true
+  preserve_page_range: true
+

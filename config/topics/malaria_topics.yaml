@@ -1,0 +1,41 @@
+topics:
+  - var_pfemp1
+  - severe_malaria
+  - asymptomatic_reservoir
+  - malaria_immunology
+  - t_cells
+  - single_cell
+  - sex_differences
+  - host_parasite_interactions
+  - vaccine_immunity
+  - antimalarial_resistance
+  - diagnostic_escape
+  - vector_resistance
+  - datasets_and_tools
+
+methods:
+  - scRNA_seq
+  - bulk_RNA_seq
+  - parasite_transcriptomics
+  - host_genomics
+  - GWAS
+  - cohort_study
+  - clinical_phenotyping
+  - machine_learning
+  - spatial_transcriptomics
+  - flow_cytometry
+  - serology
+  - vaccine_trial
+  - diagnostic_assay
+
+systems:
+  - Plasmodium_falciparum
+  - Plasmodium_vivax
+  - human_host
+  - mosquito_vector
+  - pediatric_malaria
+  - pregnancy_malaria
+  - cerebral_malaria
+  - severe_anemia
+  - asymptomatic_carriage
+

@@ -1,0 +1,37 @@
+adaptive_retrieval:
+  default_task_mode: evidence_qa
+  default_strategy: multi_query
+  max_subqueries: 8
+  max_chunks: 12
+  max_per_paper: 2
+  max_candidate_papers: 20
+  max_candidate_chunks_per_query: 50
+
+  fusion:
+    method: rrf
+    rrf_k: 60
+    keyword_weight: 0.55
+    semantic_weight: 0.45
+    section_weight_enabled: true
+    quality_penalty_enabled: true
+
+  evidence_pack:
+    min_unique_papers_good: 5
+    min_unique_papers_usable: 3
+    max_fraction_low_quality_good: 0.20
+    max_fraction_low_quality_usable: 0.35
+    max_fraction_single_paper_good: 0.35
+    max_fraction_single_paper_usable: 0.50
+    preferred_sections:
+      - results
+      - discussion
+      - abstract
+    excluded_sections:
+      - references
+
+  correction:
+    retry_if_grade_below: usable
+    max_retries: 2
+    enable_query_broadening: true
+    enable_query_narrowing: true
+    enable_section_relaxation: true

@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: >-
+  If you use OriginRAG, cite this software record.
+title: OriginRAG
+type: software
+authors:
+  - family-names: Mittelbach
+    given-names: Jannes
+version: 0.1.0
+repository-code: https://github.com/JMittelbach/OriginRAG
+url: https://github.com/JMittelbach/OriginRAG
+abstract: >-
+  A local-first scientific literature retrieval system with origin-aware
+  evidence-sufficiency certification for reports that may share a study,
+  cohort, dataset, trial, or publication family.
+keywords:
+  - evidence synthesis
+  - retrieval-augmented generation
+  - scientific provenance
+  - study overlap
+  - malaria

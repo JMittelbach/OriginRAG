@@ -1,0 +1,57 @@
+concepts:
+  - id: scrna_seq
+    name: scRNA-seq
+    type: method
+    aliases: ["single-cell RNA-seq", "single cell RNA sequencing", "scRNAseq"]
+  - id: bulk_rna_seq
+    name: bulk RNA-seq
+    type: method
+    aliases: ["bulk RNA sequencing", "RNA-seq"]
+  - id: dual_rna_seq
+    name: dual RNA-seq
+    type: method
+    aliases: ["dual RNA sequencing", "host-parasite RNA-seq"]
+  - id: single_cell_atlas
+    name: single-cell atlas
+    type: dataset
+    aliases: ["single cell atlas"]
+  - id: spatial_transcriptomics
+    name: spatial transcriptomics
+    type: method
+    aliases: ["spatial RNA-seq"]
+  - id: proteomics
+    name: proteomics
+    type: method
+    aliases: ["proteome"]
+  - id: metabolomics
+    name: metabolomics
+    type: method
+    aliases: ["metabolome"]
+  - id: gwas
+    name: GWAS
+    type: method
+    aliases: ["genome-wide association study"]
+  - id: parasite_transcriptomics
+    name: parasite transcriptomics
+    type: method
+    aliases: ["parasite transcriptome"]
+  - id: var_expression_profiling
+    name: var expression profiling
+    type: method
+    aliases: ["var gene expression profiling", "var transcript profiling"]
+  - id: qpcr
+    name: qPCR
+    type: assay
+    aliases: ["quantitative PCR", "quantitative real-time PCR"]
+  - id: capture_array
+    name: capture array
+    type: assay
+    aliases: ["var capture array"]
+  - id: nanopore_sequencing
+    name: nanopore sequencing
+    type: method
+    aliases: ["Oxford Nanopore", "ONT sequencing"]
+  - id: amplicon_sequencing
+    name: amplicon sequencing
+    type: method
+    aliases: ["amplicon-seq"]

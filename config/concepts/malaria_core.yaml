@@ -1,0 +1,101 @@
+concepts:
+  - id: pfemp1
+    name: PfEMP1
+    type: protein
+    aliases: ["Plasmodium falciparum erythrocyte membrane protein 1", "P. falciparum erythrocyte membrane protein 1"]
+  - id: var_genes
+    name: var genes
+    type: gene
+    aliases: ["var gene", "var multigene family", "variant surface antigen genes"]
+  - id: var2csa
+    name: VAR2CSA
+    type: protein
+    aliases: ["var2csa"]
+  - id: cidralpha1
+    name: CIDRalpha1
+    type: domain
+    aliases: ["CIDR alpha 1", "CIDR-alpha1", "CIDRa1", "CIDRalpha1.1"]
+  - id: dblalpha
+    name: DBLalpha
+    type: domain
+    aliases: ["DBL alpha", "DBL-alpha", "DBLa"]
+  - id: dblbeta
+    name: DBLbeta
+    type: domain
+    aliases: ["DBL beta", "DBL-beta", "DBLb"]
+  - id: dc8
+    name: DC8
+    type: domain
+    aliases: ["domain cassette 8"]
+  - id: dc13
+    name: DC13
+    type: domain
+    aliases: ["domain cassette 13"]
+  - id: epcr
+    name: EPCR
+    type: receptor
+    aliases: ["endothelial protein C receptor", "PROCR"]
+  - id: icam1
+    name: ICAM1
+    type: receptor
+    aliases: ["ICAM-1", "intercellular adhesion molecule 1"]
+  - id: cd36
+    name: CD36
+    type: receptor
+    aliases: ["cluster of differentiation 36"]
+  - id: csa
+    name: CSA
+    type: receptor
+    aliases: ["chondroitin sulfate A", "chondroitin sulphate A"]
+  - id: rosetting
+    name: rosetting
+    type: phenotype
+    aliases: ["rosette formation"]
+  - id: cytoadherence
+    name: cytoadherence
+    type: phenotype
+    aliases: ["cytoadhesion", "adhesion"]
+  - id: sequestration
+    name: sequestration
+    type: phenotype
+    aliases: ["parasite sequestration"]
+  - id: cerebral_malaria
+    name: cerebral malaria
+    type: disease
+    aliases: ["CM"]
+  - id: severe_malaria
+    name: severe malaria
+    type: disease
+    aliases: ["SM"]
+  - id: severe_malarial_anemia
+    name: severe malarial anemia
+    type: disease
+    aliases: ["severe malarial anaemia", "SMA"]
+  - id: placental_malaria
+    name: placental malaria
+    type: disease
+    aliases: ["pregnancy-associated malaria", "pregnancy associated malaria"]
+  - id: asymptomatic_infection
+    name: asymptomatic infection
+    type: phenotype
+    aliases: ["asymptomatic carriage", "asymptomatic parasitaemia", "asymptomatic parasitemia"]
+  - id: gametocytes
+    name: gametocytes
+    type: phenotype
+    aliases: ["gametocyte"]
+  - id: artemisinin_resistance
+    name: artemisinin resistance
+    type: phenotype
+    aliases: ["artemisinin-resistant", "ART resistance"]
+  - id: kelch13
+    name: kelch13
+    type: gene
+    aliases: ["K13", "PfK13", "kelch 13"]
+  - id: pfhrp2
+    name: pfhrp2
+    type: gene
+    aliases: ["HRP2", "histidine-rich protein 2"]
+  - id: pfhrp3
+    name: pfhrp3
+    type: gene
+    aliases: ["HRP3", "histidine-rich protein 3"]
