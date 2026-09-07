@@ -38,6 +38,7 @@ import import_paper_inbox  # noqa: E402
 from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
 from originrag.analysis.faithfulness import citation_claim_blocks, direct_evidence_text  # noqa: E402
 from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
+from originrag.web_local_access import local_browser_request  # noqa: E402
 from originrag.provenance.library import (  # noqa: E402
     LibraryStatusResolver,
     normalize_doi,
@@ -1588,6 +1589,7 @@ def build_handler(
     anonymous_review_lock = threading.Lock()
     topic_discovery = TopicDiscovery()
     paper_imports = PaperImports(library_manager)
+    local_import_token = secrets.token_urlsafe(32)
     corpus_lock = library_manager.corpus_lock if library_manager else threading.RLock()
     turn_jobs = TurnJobManager(
         max_concurrent_turns,
@@ -1632,6 +1634,7 @@ def build_handler(
                     "settings": current_app.settings.__dict__,
                     "queue": turn_jobs.global_status(),
                     "jobs": turn_jobs.owner_jobs(owner_key),
+                    "library_access": self.library_access(user),
                 }
                 if user and auth_store:
                     payload["user"] = public_user(user)
@@ -1890,8 +1893,8 @@ def build_handler(
                 self.respond_json(response)
                 return
             if parsed.path == "/api/paper-import":
-                if not auth_store or not user or not library_manager:
-                    self.respond_json({"error": "Sign in to an upload-enabled session to add papers"}, status=HTTPStatus.FORBIDDEN)
+                if not self.can_write_library(user):
+                    self.respond_json({"error": "Library import is unavailable or the local request token is invalid. Reload the page, or sign in on a shared server."}, status=HTTPStatus.FORBIDDEN)
                     return
                 try:
                     payload = self.read_json_body()
@@ -1905,9 +1908,9 @@ def build_handler(
                     self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
             if parsed.path == "/api/library-upload":
-                if not auth_store or not user or not library_manager:
+                if not self.can_write_library(user):
                     self.respond_json(
-                        {"error": "authenticated library upload is unavailable"},
+                        {"error": "Library upload is unavailable. Reload the local page or sign in on a shared server."},
                         status=HTTPStatus.FORBIDDEN,
                     )
                     return
@@ -1926,7 +1929,7 @@ def build_handler(
                         content_length=length,
                         filename=unquote(str(self.headers.get("X-Paper-Filename") or "paper.pdf")),
                         doi=str(self.headers.get("X-Paper-DOI") or ""),
-                        uploaded_by=user.user_id,
+                        uploaded_by=owner_key,
                         schedule_import=(
                             str(self.headers.get("X-Paper-Defer-Sync") or "") != "1"
                         ),
@@ -1937,9 +1940,9 @@ def build_handler(
                 self.respond_json(response, status=HTTPStatus.ACCEPTED)
                 return
             if parsed.path == "/api/library-sync":
-                if not auth_store or not user or not library_manager:
+                if not self.can_write_library(user):
                     self.respond_json(
-                        {"error": "authenticated library update is unavailable"},
+                        {"error": "Library update is unavailable. Reload the local page or sign in on a shared server."},
                         status=HTTPStatus.FORBIDDEN,
                     )
                     return
@@ -2127,6 +2130,23 @@ def build_handler(
                     max_age=max(1, session.expires_at - int(datetime.now().timestamp())),
                 ),
             )
+
+        def library_access(self, user) -> dict:
+            if not library_manager:
+                return {"enabled": False, "mode": "unavailable"}
+            if auth_store:
+                return {"enabled": bool(user), "mode": "authenticated"}
+            local = local_browser_request(self.server.server_address, self.client_address, self.headers)
+            return {"enabled": local, "mode": "local" if local else "unavailable",
+                    "csrf_token": local_import_token if local else ""}
+
+        def can_write_library(self, user) -> bool:
+            if not self.library_access(user)["enabled"]:
+                return False
+            if auth_store:
+                return True
+            supplied = str(self.headers.get("X-OriginRAG-Local-Token") or "")
+            return bool(supplied) and hmac.compare_digest(supplied, local_import_token)
 
         def valid_csrf(self, session_token: str) -> bool:
             assert auth_store is not None
@@ -6315,6 +6335,7 @@ INDEX_HTML = r"""<!doctype html>
   </div>
   <script>
     const browserFetch = window.fetch.bind(window);
+    let localImportToken = "";
     function cookieValue(name) {
       const prefix = `${name}=`;
       const item = document.cookie.split("; ").find((value) => value.startsWith(prefix));
@@ -6323,12 +6344,20 @@ INDEX_HTML = r"""<!doctype html>
     window.fetch = async (resource, options = {}) => {
       const requestOptions = {...options, credentials: "same-origin"};
       const method = String(requestOptions.method || "GET").toUpperCase();
+      const target = new URL(typeof resource === "string" ? resource : resource.url, window.location.href);
+      const sameOrigin = target.origin === window.location.origin;
       if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
         requestOptions.headers = new Headers(requestOptions.headers || {});
         const csrfToken = cookieValue("pfempire_csrf");
-        if (csrfToken) requestOptions.headers.set("X-CSRF-Token", csrfToken);
+        if (csrfToken && sameOrigin) requestOptions.headers.set("X-CSRF-Token", csrfToken);
+        if (localImportToken && sameOrigin && ["/api/paper-import", "/api/library-upload", "/api/library-sync"].includes(target.pathname)) {
+          requestOptions.headers.set("X-OriginRAG-Local-Token", localImportToken);
+        }
       }
       const response = await browserFetch(resource, requestOptions);
+      if (sameOrigin && target.pathname === "/api/status" && response.ok) {
+        try { localImportToken = (await response.clone().json()).library_access?.csrf_token || ""; } catch { localImportToken = ""; }
+      }
       if (response.status === 401 && !String(resource).includes("/api/login")) {
         window.sessionStorage.removeItem("pfempire.currentSession");
         window.location.replace("/login");
@@ -8647,8 +8676,8 @@ INDEX_HTML = r"""<!doctype html>
           userBadge.hidden = false;
           logoutButton.hidden = false;
           libraryButton.hidden = false;
-          paperUploadButton.hidden = false;
         }
+        paperUploadButton.hidden = !data.library_access?.enabled;
         for (const key of ["backend", "preset"]) {
           const el = document.getElementById(key);
           if (el && s[key]) el.value = s[key];

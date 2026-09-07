@@ -75,7 +75,7 @@ MARKUP = """
     <p>Results are bibliographic records, not downloaded PDFs. Choose Add to library to look for an open-access PDF and index it automatically. If no matching accessible copy can be verified, upload a legally obtained PDF instead. Coverage varies by field.</p>
     <p>Adding a paper sends its DOI to OpenAlex and Europe PMC, and to Unpaywall if configured by the host. Only verified public HTTPS download locations are contacted. Your library and chats are not sent.</p>
     <button type="button" id="discoveryUpload">Add PDFs to library</button>
-    <p id="discoveryUploadHint" hidden>Web uploads are not available in this session. Ask the host to enable uploads, or use ./originrag import-local followed by ./originrag prepare-corpus with the web service stopped.</p>
+    <p id="discoveryUploadHint" hidden>Imports are unavailable in this session. For local use, open the address printed by ./web. Shared servers require sign-in.</p>
   </dialog>
 """
 
@@ -295,8 +295,8 @@ SCRIPT = r"""
           updateImportButton(paper.doi);
         } else {
           const button = document.createElement("button"); button.type = "button";
-          button.textContent = "Import requires sign-in"; button.disabled = true;
-          button.title = "Use an upload-enabled account. For a local installation, start ./web --auth.";
+          button.textContent = "Import unavailable"; button.disabled = true;
+          button.title = "Open the local address printed by ./web, or sign in on a shared server.";
           row.append(button);
         }
       }
@@ -310,7 +310,7 @@ SCRIPT = r"""
       const responses = await Promise.all([fetch("/api/status"), fetch("/api/library-stats"), fetch("/api/library-status")]);
       if (responses.some((response) => !response.ok)) return;
       const [status, data, library] = await Promise.all(responses.map((response) => response.json()));
-      uploadAvailable = Boolean(status.user) && library.state !== "unavailable";
+      uploadAvailable = Boolean(status.library_access?.enabled) && library.state !== "unavailable";
       updateLibraryState(data);
       storageKey = `originrag.quick-tour.v1.${status.user?.user_id || "local"}`;
       let seen = false;
