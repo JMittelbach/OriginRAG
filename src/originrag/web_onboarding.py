@@ -90,14 +90,13 @@ SCRIPT = r"""
   banner.setAttribute("aria-label", "Getting your library ready");
   const bannerText = document.createElement("p");
   const add = document.createElement("button"); add.type = "button"; add.textContent = "Add papers";
-  const find = document.createElement("button"); find.type = "button"; find.textContent = "Find papers";
-  banner.append(bannerText, add, find);
+  banner.append(bannerText, add);
   el("chat").before(banner);
   const findButton = document.createElement("button");
   findButton.type = "button"; findButton.id = "discoveryButton";
   findButton.className = "header-button"; findButton.textContent = "Find papers";
   findButton.setAttribute("aria-haspopup", "dialog"); findButton.setAttribute("aria-controls", "discoveryDialog");
-  el("paperUploadButton").before(findButton);
+  document.querySelector("header .header-left").append(findButton);
   const replay = document.createElement("button"); replay.type = "button";
   replay.id = "guideReplay"; replay.textContent = "Quick tour";
   el("aboutClose").before(replay);
@@ -152,7 +151,7 @@ SCRIPT = r"""
     latestSearch++; searchController?.abort(); el("discoverySearch").disabled = false;
     if (returnFocus?.isConnected) returnFocus.focus();
   });
-  findButton.addEventListener("click", openDiscovery); find.addEventListener("click", openDiscovery);
+  findButton.addEventListener("click", openDiscovery);
   el("discoveryClose").addEventListener("click", closeDiscovery);
   const openUpload = () => { if (uploadAvailable) el("paperUploadButton").click(); };
   add.addEventListener("click", openUpload);

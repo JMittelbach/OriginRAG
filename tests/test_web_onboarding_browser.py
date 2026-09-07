@@ -88,6 +88,12 @@ def test_first_visit_replay_and_account_specific_completion(browser_page):
 def test_search_empty_state_updates_mobile_and_themes(browser_page):
     page, state, requests, tmp = browser_page
     page.locator("#guideSkip").click()
+    assert page.locator("header .header-left #discoveryButton").count() == 1
+    assert page.locator(".library-start").get_by_role("button", name="Find papers").count() == 0
+    find_box = page.locator("#discoveryButton").bounding_box()
+    appearance_box = page.locator("#appearanceButton").bounding_box()
+    assert find_box["x"] < appearance_box["x"]
+    assert abs(find_box["y"] + find_box["height"] / 2 - appearance_box["y"] - appearance_box["height"] / 2) < 3
     page.evaluate("window.dispatchEvent(new CustomEvent('originrag:library-stats', {detail: {total: 40, searchable: 0, local_pdf: 0}}))")
     assert "no full-text papers" in page.locator(".library-start").inner_text()
     page.locator("#discoveryButton").click()

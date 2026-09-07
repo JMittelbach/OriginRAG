@@ -50,3 +50,9 @@ def test_discovery_does_not_treat_results_as_downloads_or_render_untrusted_html(
     assert 'url.hostname !== "doi.org"' in SCRIPT
     assert 'searchController?.abort()' in SCRIPT
     assert 'serial !== latestSearch' in SCRIPT
+
+
+def test_find_papers_is_only_in_the_top_left_header():
+    assert 'document.querySelector("header .header-left").append(findButton)' in SCRIPT
+    assert 'banner.append(bannerText, add);' in SCRIPT
+    assert 'const find = ' not in SCRIPT
