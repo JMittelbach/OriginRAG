@@ -6193,7 +6193,7 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <div class="composer-inner">
           <label class="sr-only" for="message">Research question</label>
-          <textarea id="message" placeholder="Ask a scientific question about your corpus..." required></textarea>
+          <textarea id="message" placeholder="Ask a question about your corpus..." required></textarea>
           <button id="send" type="submit" title="Send" aria-label="Send research question">↑</button>
         </div>
       </form>
