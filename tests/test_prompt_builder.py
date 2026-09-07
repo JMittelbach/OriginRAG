@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-import pfempire.analysis.llm_backends as llm_backends
-from pfempire.analysis.llm_backends import generate_answer
-from pfempire.analysis.llm_backends import clean_ollama_cli_output
-from pfempire.analysis.llm_backends import LLMResult
-from pfempire.analysis.prompts import build_answer_repair_prompt, build_citation_answer_prompt
-from pfempire.analysis.template_answers import build_template_answer
+import originrag.analysis.llm_backends as llm_backends
+from originrag.analysis.llm_backends import generate_answer
+from originrag.analysis.llm_backends import clean_ollama_cli_output
+from originrag.analysis.llm_backends import LLMResult
+from originrag.analysis.prompts import build_answer_repair_prompt, build_citation_answer_prompt
+from originrag.analysis.template_answers import build_template_answer
 
 
 def test_prompt_contains_evidence_labels_and_no_invented_citation_instruction() -> None:

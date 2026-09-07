@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-from pfempire.retrieval.adaptive import adaptive_retrieve, write_adaptive_outputs
+from originrag.retrieval.adaptive import adaptive_retrieve, write_adaptive_outputs
 
 
 def test_adaptive_retrieval_runs_on_tiny_synthetic_corpus(tmp_path: Path) -> None:

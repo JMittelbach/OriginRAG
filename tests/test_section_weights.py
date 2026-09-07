@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.retrieval.section_weights import get_section_weight
+from originrag.retrieval.section_weights import get_section_weight
 
 
 def test_evidence_mode_prefers_results_and_discussion_over_introduction() -> None:

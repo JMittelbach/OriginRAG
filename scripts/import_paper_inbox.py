@@ -23,10 +23,10 @@ if str(SRC_DIR) not in sys.path:
 
 import fitz  # noqa: E402
 
-from pfempire.ingestion.chunking import chunk_pages  # noqa: E402
-from pfempire.ingestion.pdf_text import extract_pdf_text  # noqa: E402
-from pfempire.provenance.library import normalize_doi, normalize_title  # noqa: E402
-from pfempire.retrieval.fts_index import (  # noqa: E402
+from originrag.ingestion.chunking import chunk_pages  # noqa: E402
+from originrag.ingestion.pdf_text import extract_pdf_text  # noqa: E402
+from originrag.provenance.library import normalize_doi, normalize_title  # noqa: E402
+from originrag.retrieval.fts_index import (  # noqa: E402
     RetrievalIndexError,
     build_fts_index,
     corpus_fingerprint,
@@ -34,7 +34,7 @@ from pfempire.retrieval.fts_index import (  # noqa: E402
     index_has_candidate_record_store,
     update_fts_index,
 )
-from pfempire.utils.io import write_json, write_jsonl  # noqa: E402
+from originrag.utils.io import write_json, write_jsonl  # noqa: E402
 
 
 MAX_PDF_BYTES = 250 * 1024 * 1024

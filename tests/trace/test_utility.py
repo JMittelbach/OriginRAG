@@ -1,6 +1,6 @@
-from pfempire.trace.utility import compute_utility
-from pfempire.trace.facets import facet_coverage
-from pfempire.trace.schemas import EvidenceFacet
+from originrag.trace.utility import compute_utility
+from originrag.trace.facets import facet_coverage
+from originrag.trace.schemas import EvidenceFacet
 from conftest import make_candidate
 
 

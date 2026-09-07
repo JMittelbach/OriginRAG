@@ -11,7 +11,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.analysis.evidence_quality import score_evidence_pack  # noqa: E402
+from originrag.analysis.evidence_quality import score_evidence_pack  # noqa: E402
 
 
 def main() -> int:

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pfempire.curation.corpus_hygiene import (
+from originrag.curation.corpus_hygiene import (
     PaperChunkStats,
     assess_paper,
     collect_chunk_stats,

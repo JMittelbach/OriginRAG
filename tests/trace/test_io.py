@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from pfempire.trace.io import read_jsonl, read_tsv, write_json, write_tsv
+from originrag.trace.io import read_jsonl, read_tsv, write_json, write_tsv
 
 
 def test_read_tsv_rejects_duplicate_headers_and_width_mismatch(tmp_path: Path) -> None:

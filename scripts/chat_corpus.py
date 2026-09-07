@@ -18,9 +18,9 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import ask_corpus  # noqa: E402
 import browse_library  # noqa: E402
-from pfempire.analysis.chat import answer_context, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
-from pfempire.analysis.terminal_sessions import SessionStore, snapshot_result, visible_answer  # noqa: E402
-from pfempire.utils.terminal_ui import TerminalUI  # noqa: E402
+from originrag.analysis.chat import answer_context, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
+from originrag.analysis.terminal_sessions import SessionStore, snapshot_result, visible_answer  # noqa: E402
+from originrag.utils.terminal_ui import TerminalUI  # noqa: E402
 
 
 @dataclass

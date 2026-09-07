@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.analysis.evidence_pack_grading import (
+from originrag.analysis.evidence_pack_grading import (
     chunks_matching_explicit_report,
     epistemic_causal_comparison_question,
     grade_evidence_pack,

@@ -1,4 +1,4 @@
-from pfempire.trace.utility import saturating_coverage
+from originrag.trace.utility import saturating_coverage
 from conftest import make_candidate
 
 def test_scale_triangulation_rewards_complement():

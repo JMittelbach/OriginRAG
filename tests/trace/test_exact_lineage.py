@@ -4,24 +4,24 @@ from itertools import combinations, product
 import pytest
 
 from conftest import make_candidate
-import pfempire.trace.exact_lineage as exact_lineage_module
-from pfempire.trace.exact_lineage import (
+import originrag.trace.exact_lineage as exact_lineage_module
+from originrag.trace.exact_lineage import (
     exact_partition_flow_analysis,
     verify_exact_partition_witnesses,
 )
-from pfempire.trace.flow import compute_evidence_flow
-from pfempire.trace.method_versions import (
+from originrag.trace.flow import compute_evidence_flow
+from originrag.trace.method_versions import (
     COMPLETE_BOX_PREFIX_EXACT_METHOD,
     COMPLETE_BOX_SUBSET_EXACT_METHOD,
     EXACT_PARTITION_ENUMERATION_METHOD,
     EXTENDED_CONSTRAINED_PARTITION_METHOD,
     ROBUST_LINEAGE_CERTIFICATE_VERSION,
 )
-from pfempire.trace.robust_lineage import (
+from originrag.trace.robust_lineage import (
     LineageDependenceInterval,
     robust_evidence_flow,
 )
-from pfempire.trace.schemas import EvidenceBlueprint, EvidenceFacet
+from originrag.trace.schemas import EvidenceBlueprint, EvidenceFacet
 
 
 def relation(

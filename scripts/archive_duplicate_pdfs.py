@@ -15,7 +15,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
+from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
 
 
 MANIFEST_FIELDS = [

@@ -1,14 +1,14 @@
 import pytest
 
-from pfempire.trace.evaluation import evaluate_selector
-from pfempire.trace.lineage_traps import (
+from originrag.trace.evaluation import evaluate_selector
+from originrag.trace.lineage_traps import (
     build_annotation_perturbation_scenarios,
     build_lineage_trap_scenarios,
     gold_independence_metrics,
     lineage_annotation_quality,
     trap_avoided,
 )
-from pfempire.trace.selector import SelectorConfig
+from originrag.trace.selector import SelectorConfig
 
 
 def config_for(scenario) -> SelectorConfig:

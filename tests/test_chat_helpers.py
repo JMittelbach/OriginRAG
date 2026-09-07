@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pfempire.analysis.chat import ChatTurnContext, build_chat_retrieval_question, is_followup_question, resolve_chat_task
+from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_question, is_followup_question, resolve_chat_task
 
 
 def test_resolve_chat_task_auto_detects_hypothesis() -> None:

@@ -10,9 +10,9 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.claims.audit import audit_claim_database, format_claim_audit_markdown  # noqa: E402
-from pfempire.claims.store import DEFAULT_DB_PATH  # noqa: E402
-from pfempire.utils.io import write_json  # noqa: E402
+from originrag.claims.audit import audit_claim_database, format_claim_audit_markdown  # noqa: E402
+from originrag.claims.store import DEFAULT_DB_PATH  # noqa: E402
+from originrag.utils.io import write_json  # noqa: E402
 
 
 def main() -> int:

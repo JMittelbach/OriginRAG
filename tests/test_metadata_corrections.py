@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from pfempire.retrieval.metadata import load_paper_metadata
+from originrag.retrieval.metadata import load_paper_metadata
 
 
 def test_metadata_correction_refreshes_placeholder_citations(tmp_path: Path) -> None:

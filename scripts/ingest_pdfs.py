@@ -10,10 +10,10 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.ingestion.pdf_text import extract_pdf_text  # noqa: E402
-from pfempire.paths import load_project_env, resolve_bib_path  # noqa: E402
-from pfempire.schema import PaperRecord  # noqa: E402
-from pfempire.utils.io import write_json  # noqa: E402
+from originrag.ingestion.pdf_text import extract_pdf_text  # noqa: E402
+from originrag.paths import load_project_env, resolve_bib_path  # noqa: E402
+from originrag.schema import PaperRecord  # noqa: E402
+from originrag.utils.io import write_json  # noqa: E402
 
 
 def main() -> int:

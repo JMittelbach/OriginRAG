@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from pfempire.retrieval.keyword import (
+from originrag.retrieval.keyword import (
     _make_snippet,
     _normalize_with_offsets,
     infer_query_category_boosts,
@@ -15,7 +15,7 @@ from pfempire.retrieval.keyword import (
     search_chunks,
     search_chunks_multi,
 )
-from pfempire.retrieval.metadata import load_paper_metadata
+from originrag.retrieval.metadata import load_paper_metadata
 
 
 def test_linear_snippet_normalization_matches_retrieval_normalization() -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.analysis.evidence_quality import score_evidence_pack
+from originrag.analysis.evidence_quality import score_evidence_pack
 
 
 def test_evidence_pack_with_multiple_clean_sources_is_good_or_usable() -> None:

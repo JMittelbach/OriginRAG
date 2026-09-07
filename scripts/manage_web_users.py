@@ -12,7 +12,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.web_auth import AuthStore, format_timestamp  # noqa: E402
+from originrag.web_auth import AuthStore, format_timestamp  # noqa: E402
 
 
 DEFAULT_AUTH_DB = Path(

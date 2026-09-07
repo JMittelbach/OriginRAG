@@ -1,8 +1,8 @@
-from pfempire.trace.blueprint import suggest_blueprint
-from pfempire.trace.facets import infer_direct_evidence_roles
-from pfempire.trace.flow import compute_evidence_flow, role_compatibility
-from pfempire.trace.robust_lineage import robust_evidence_flow
-from pfempire.trace.runtime import candidate_from_result
+from originrag.trace.blueprint import suggest_blueprint
+from originrag.trace.facets import infer_direct_evidence_roles
+from originrag.trace.flow import compute_evidence_flow, role_compatibility
+from originrag.trace.robust_lineage import robust_evidence_flow
+from originrag.trace.runtime import candidate_from_result
 
 
 SPP1_COVID_QUESTION = (

@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import pfempire.provenance.resolver as resolver_module
-from pfempire.provenance.library import LibraryStatusResolver
-from pfempire.provenance.resolver import (
+import originrag.provenance.resolver as resolver_module
+from originrag.provenance.library import LibraryStatusResolver
+from originrag.provenance.resolver import (
     enrich_reference_online,
     resolve_reference_against_library,
 )

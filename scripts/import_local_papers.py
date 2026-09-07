@@ -18,7 +18,7 @@ except ImportError:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
-from pfempire.paths import get_bib_dir  # noqa: E402
+from originrag.paths import get_bib_dir  # noqa: E402
 
 BIB_DIR = REPO_ROOT / "bib"
 MANIFEST_FIELDS = [
@@ -66,7 +66,7 @@ def main() -> int:
     args = parse_args()
     BIB_DIR = get_bib_dir().resolve()
     if fitz is None:
-        raise RuntimeError("PyMuPDF is required; activate the pfempire environment")
+        raise RuntimeError("PyMuPDF is required; activate the originrag environment")
     source_dir = Path(args.source_dir).expanduser().resolve()
     if args.apply and source_dir.is_relative_to(BIB_DIR.resolve()):
         raise SystemExit(

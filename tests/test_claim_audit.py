@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pfempire.claims.audit import audit_claim_database, format_claim_audit_markdown
-from pfempire.claims.store import initialize_claim_store, upsert_claims
+from originrag.claims.audit import audit_claim_database, format_claim_audit_markdown
+from originrag.claims.store import initialize_claim_store, upsert_claims
 
 
 def test_empty_claim_audit_reports_no_claims(tmp_path: Path) -> None:

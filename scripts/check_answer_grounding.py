@@ -10,8 +10,8 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.analysis.faithfulness import load_and_check, write_grounding_report  # noqa: E402
-from pfempire.utils.io import write_json  # noqa: E402
+from originrag.analysis.faithfulness import load_and_check, write_grounding_report  # noqa: E402
+from originrag.utils.io import write_json  # noqa: E402
 
 
 def main() -> int:

@@ -47,7 +47,7 @@ from sync_registry_to_papers import (  # noqa: E402
     stable_landing_url,
     update_existing_papers,
 )
-from pfempire.discovery.types import DiscoveryHit  # noqa: E402
+from originrag.discovery.types import DiscoveryHit  # noqa: E402
 
 
 def test_unrecognised_local_paper_is_not_assigned_to_single_cell_or_malaria():

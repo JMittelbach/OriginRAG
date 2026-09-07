@@ -4,7 +4,7 @@ import io
 import tarfile
 from pathlib import Path
 
-from pfempire.discovery import europepmc
+from originrag.discovery import europepmc
 
 
 def _tarball(files: dict[str, bytes]) -> bytes:

@@ -147,6 +147,3 @@ make check
 
 CI checks linting, tests, CLI startup, package building and wheel installation.
 It does not rerun all manuscript experiments.
-
-OriginRAG was previously named PfEMP1RE. The `pfempire` Python namespace,
-legacy launcher and older environment variables remain compatible.

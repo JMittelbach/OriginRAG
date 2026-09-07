@@ -1,4 +1,4 @@
-from pfempire.trace.counterfactual import paper_counterfactual_contributions
+from originrag.trace.counterfactual import paper_counterfactual_contributions
 from conftest import make_candidate
 
 def test_counterfactual_rows_are_paper_level_and_finite(blueprint):

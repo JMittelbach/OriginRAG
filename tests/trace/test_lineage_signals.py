@@ -1,4 +1,4 @@
-from pfempire.trace.lineage import (
+from originrag.trace.lineage import (
     build_lineage_edges,
     extract_data_origin_mentions,
     extract_identifiers,

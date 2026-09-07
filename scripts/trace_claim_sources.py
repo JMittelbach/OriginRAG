@@ -14,22 +14,22 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.db.database import DEFAULT_DB_PATH  # noqa: E402
-from pfempire.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
-from pfempire.provenance.library import LibraryStatusResolver  # noqa: E402
-from pfempire.provenance.references import (  # noqa: E402
+from originrag.db.database import DEFAULT_DB_PATH  # noqa: E402
+from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
+from originrag.provenance.library import LibraryStatusResolver  # noqa: E402
+from originrag.provenance.references import (  # noqa: E402
     extract_jats_citation_map,
     extract_pdf_citation_map,
     trace_claim_sources,
 )
-from pfempire.provenance.requests import queue_missing_sources  # noqa: E402
-from pfempire.provenance.resolver import (  # noqa: E402
+from originrag.provenance.requests import queue_missing_sources  # noqa: E402
+from originrag.provenance.resolver import (  # noqa: E402
     enrich_reference_online,
     resolve_reference_against_library,
     resolve_trace_against_library,
 )
-from pfempire.provenance.store import upsert_source_trace  # noqa: E402
-from pfempire.utils.io import write_json  # noqa: E402
+from originrag.provenance.store import upsert_source_trace  # noqa: E402
+from originrag.utils.io import write_json  # noqa: E402
 
 
 def main() -> int:

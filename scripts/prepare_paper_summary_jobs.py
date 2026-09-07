@@ -13,8 +13,8 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.retrieval.metadata import load_paper_metadata  # noqa: E402
-from pfempire.utils.io import write_jsonl  # noqa: E402
+from originrag.retrieval.metadata import load_paper_metadata  # noqa: E402
+from originrag.utils.io import write_jsonl  # noqa: E402
 
 
 SECTION_PRIORITY = ["abstract", "methods", "results", "discussion", "data_availability", "unknown"]

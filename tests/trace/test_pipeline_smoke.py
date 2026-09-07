@@ -1,4 +1,4 @@
-from pfempire.analysis.evidence_pack import build_evidence_pack
+from originrag.analysis.evidence_pack import build_evidence_pack
 
 
 def test_current_evidence_pack_remains_available():

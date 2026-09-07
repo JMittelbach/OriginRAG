@@ -53,7 +53,7 @@ from web_chat import (  # noqa: E402
     sessions_with_job_status,
     write_session_title,
 )
-from pfempire.web_auth import AuthStore  # noqa: E402
+from originrag.web_auth import AuthStore  # noqa: E402
 
 
 def test_library_catalog_merges_metadata_and_searches_without_model(tmp_path: Path) -> None:

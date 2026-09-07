@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.retrieval.fusion import reciprocal_rank_fusion
+from originrag.retrieval.fusion import reciprocal_rank_fusion
 
 
 def test_reciprocal_rank_fusion_combines_ranked_lists() -> None:

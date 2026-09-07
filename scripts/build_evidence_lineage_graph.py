@@ -8,10 +8,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
-from pfempire.trace.io import read_tsv, read_yaml, write_json, write_tsv  # noqa: E402
-from pfempire.trace.lineage import build_lineage_edges  # noqa: E402
-from pfempire.trace.method_versions import LINEAGE_GRAPH_SCHEMA_VERSION  # noqa: E402
-from pfempire.trace.schemas import EvidenceLineageEdge, LineageSignal  # noqa: E402
+from originrag.trace.io import read_tsv, read_yaml, write_json, write_tsv  # noqa: E402
+from originrag.trace.lineage import build_lineage_edges  # noqa: E402
+from originrag.trace.method_versions import LINEAGE_GRAPH_SCHEMA_VERSION  # noqa: E402
+from originrag.trace.schemas import EvidenceLineageEdge, LineageSignal  # noqa: E402
 
 
 OVERRIDE_AUDIT_FIELDS = [

@@ -20,7 +20,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.retrieval.fts_index import build_fts_index, ensure_current_index  # noqa: E402
+from originrag.retrieval.fts_index import build_fts_index, ensure_current_index  # noqa: E402
 
 from build_paper_registry import (  # noqa: E402
     FIELDS as REGISTRY_FIELDS,

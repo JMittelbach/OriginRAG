@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from pfempire.trace.schemas import (
+from originrag.trace.schemas import (
     EvidenceBlueprint,
     EvidenceFacet,
     EvidenceLineageEdge,

@@ -1,4 +1,4 @@
-from pfempire.trace.facets import facet_coverage
+from originrag.trace.facets import facet_coverage
 from conftest import make_candidate
 
 def test_facet_coverage_saturates(blueprint):

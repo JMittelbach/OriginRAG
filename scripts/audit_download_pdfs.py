@@ -31,7 +31,7 @@ FIELDNAMES = [
 def main() -> int:
     args = parse_args()
     if fitz is None:
-        print("PyMuPDF is required. Activate the pfempire environment first.")
+        print("PyMuPDF is required. Activate the originrag environment first.")
         return 2
     source_dir = Path(args.downloads).expanduser().resolve()
     bib_dir = Path(args.bib_dir).expanduser().resolve()

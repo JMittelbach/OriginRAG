@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pfempire.retrieval.query_plan_schema import validate_query_plan
-from pfempire.retrieval.query_plan_schema import looks_answer_like
+from originrag.retrieval.query_plan_schema import validate_query_plan
+from originrag.retrieval.query_plan_schema import looks_answer_like
 
 
 def test_scientific_identifiers_are_not_counted_as_sentences() -> None:

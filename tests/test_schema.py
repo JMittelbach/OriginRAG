@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from pfempire.schema import PaperRecord
+from originrag.schema import PaperRecord
 
 
 def test_canonical_paper_metadata_conforms_to_schema() -> None:

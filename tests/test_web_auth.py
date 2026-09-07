@@ -9,7 +9,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from pfempire.web_auth import (
+from originrag.web_auth import (
     DAILY_MODEL_REQUEST_LIMIT,
     LOCKOUT_SECONDS,
     MAX_FAILED_ATTEMPTS,
@@ -124,7 +124,7 @@ def test_session_touch_is_throttled_and_extends_idle_deadline(tmp_path, monkeypa
         )
 
     monkeypatch.setattr(
-        "pfempire.web_auth.time.time",
+        "originrag.web_auth.time.time",
         lambda: baseline + SESSION_TOUCH_INTERVAL_SECONDS - 1,
     )
     assert store.get_session(token) is not None
@@ -136,7 +136,7 @@ def test_session_touch_is_throttled_and_extends_idle_deadline(tmp_path, monkeypa
     assert tuple(unchanged) == (baseline, baseline + 10_000)
 
     due_at = baseline + SESSION_TOUCH_INTERVAL_SECONDS
-    monkeypatch.setattr("pfempire.web_auth.time.time", lambda: due_at)
+    monkeypatch.setattr("originrag.web_auth.time.time", lambda: due_at)
     assert store.get_session(token) is not None
     with store.connect() as connection:
         refreshed = connection.execute(
@@ -186,7 +186,7 @@ def test_parallel_session_touches_are_coalesced_without_database_lock(
             """
         )
     monkeypatch.setattr(store, "connect", contention_sensitive_connect)
-    monkeypatch.setattr("pfempire.web_auth.time.time", lambda: due_at)
+    monkeypatch.setattr("originrag.web_auth.time.time", lambda: due_at)
 
     with ThreadPoolExecutor(max_workers=12) as executor:
         sessions = list(executor.map(lambda _: store.get_session(token), range(24)))

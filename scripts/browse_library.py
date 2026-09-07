@@ -13,10 +13,10 @@ sys.path.insert(0, str(ROOT / "src"))
 from rich.console import Console  # noqa: E402
 from rich.text import Text  # noqa: E402
 
-from pfempire.paths import OriginRAGConfigError, get_bib_dir  # noqa: E402
-from pfempire.provenance.library import load_paper_registry  # noqa: E402
-from pfempire.retrieval.paper_retrieval import read_metadata_rows, safe_year  # noqa: E402
-from pfempire.utils.terminal_ui import safe_text  # noqa: E402
+from originrag.paths import OriginRAGConfigError, get_bib_dir  # noqa: E402
+from originrag.provenance.library import load_paper_registry  # noqa: E402
+from originrag.retrieval.paper_retrieval import read_metadata_rows, safe_year  # noqa: E402
+from originrag.utils.terminal_ui import safe_text  # noqa: E402
 
 
 def normalise(value: str) -> str:

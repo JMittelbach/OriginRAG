@@ -17,12 +17,12 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.curation.relevance_policy import relevance_decision  # noqa: E402
-from pfempire.discovery.europepmc import EuropePMCHit, best_pdf_url, download_pdf, search  # noqa: E402
-from pfempire.discovery.openalex import search_openalex  # noqa: E402
-from pfempire.discovery.preprints import search_preprint_server  # noqa: E402
-from pfempire.discovery.types import DiscoveryHit  # noqa: E402
-from pfempire.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
+from originrag.curation.relevance_policy import relevance_decision  # noqa: E402
+from originrag.discovery.europepmc import EuropePMCHit, best_pdf_url, download_pdf, search  # noqa: E402
+from originrag.discovery.openalex import search_openalex  # noqa: E402
+from originrag.discovery.preprints import search_preprint_server  # noqa: E402
+from originrag.discovery.types import DiscoveryHit  # noqa: E402
+from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
 
 
 DEFAULT_SOURCES = ["europepmc"]

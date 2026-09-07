@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pfempire.retrieval.query_plan import (
+from originrag.retrieval.query_plan import (
     ADOLESCENCE_ALIASES,
     EARLY_CHILDHOOD_ALIASES,
     MEMORY_T_CELL_ALIASES,

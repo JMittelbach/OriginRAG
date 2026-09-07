@@ -16,8 +16,8 @@ try:
 except ImportError:
     Console = None
 
-from pfempire.retrieval.fts_index import search_chunks_bm25  # noqa: E402
-from pfempire.retrieval.keyword import search_chunks  # noqa: E402
+from originrag.retrieval.fts_index import search_chunks_bm25  # noqa: E402
+from originrag.retrieval.keyword import search_chunks  # noqa: E402
 
 
 OUT_FIELDS = [

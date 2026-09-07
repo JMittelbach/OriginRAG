@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.retrieval.chunk_quality import classify_chunk_quality
+from originrag.retrieval.chunk_quality import classify_chunk_quality
 
 
 def test_reference_like_text_is_classified() -> None:

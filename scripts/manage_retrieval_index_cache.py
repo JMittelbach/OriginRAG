@@ -13,7 +13,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.retrieval.index_cache import (  # noqa: E402
+from originrag.retrieval.index_cache import (  # noqa: E402
     DEFAULT_PRUNE_MIN_AGE_SECONDS,
     DEFAULT_RETAIN_GENERATIONS,
     configured_cache_path,

@@ -2,14 +2,14 @@ import pytest
 
 from conftest import make_candidate
 
-from pfempire.trace.schemas import EvidenceBlueprint
-from pfempire.trace.flow_selector import can_add_flow, retrieval_anchors
-from pfempire.trace.selector import SelectorConfig, select_evidence
+from originrag.trace.schemas import EvidenceBlueprint
+from originrag.trace.flow_selector import can_add_flow, retrieval_anchors
+from originrag.trace.selector import SelectorConfig, select_evidence
 
 
 @pytest.mark.parametrize("budget,expected", [(99, False), (100, True), (101, True)])
 def test_covered_facets_skip_unused_alternatives(blueprint, budget, expected):
-    from pfempire.trace.flow_selector import preserves_repair_budget
+    from originrag.trace.flow_selector import preserves_repair_budget
 
     class UnusedAlternatives(list):
         def __iter__(self):
@@ -21,7 +21,7 @@ def test_covered_facets_skip_unused_alternatives(blueprint, budget, expected):
 
 def test_repair_budget_matches_original_rule_on_random_inputs(blueprint):
     import random
-    from pfempire.trace.flow_selector import facet_contribution, preserves_repair_budget, token_cost
+    from originrag.trace.flow_selector import facet_contribution, preserves_repair_budget, token_cost
 
     def reference(candidate, selected, remaining, specification, token_budget):
         proposed = [*selected, candidate]

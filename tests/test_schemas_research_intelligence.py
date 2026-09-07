@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from pfempire.schemas import (
+from originrag.schemas import (
     Entity,
     EvidenceItem,
     EvidencePack,

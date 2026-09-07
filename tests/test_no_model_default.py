@@ -14,22 +14,22 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import ask_corpus  # noqa: E402
-import pfempire.retrieval.fts_index as fts_index_module  # noqa: E402
-from pfempire.retrieval.fts_index import build_fts_index  # noqa: E402
-from pfempire.retrieval.index_cache import (  # noqa: E402
+import originrag.retrieval.fts_index as fts_index_module  # noqa: E402
+from originrag.retrieval.fts_index import build_fts_index  # noqa: E402
+from originrag.retrieval.index_cache import (  # noqa: E402
     READ_CACHE_ENV,
     prime_read_index_cache,
     resolve_read_bundle,
 )
-from pfempire.retrieval.query_plan import (  # noqa: E402
+from originrag.retrieval.query_plan import (  # noqa: E402
     NamedStudyReference,
     RetrievalQuery,
     build_retrieval_queries,
     required_context_anchor_groups,
     required_entity_anchor_groups,
 )
-from pfempire.trace.blueprint import suggest_blueprint  # noqa: E402
-from pfempire.trace.runtime import prepare_candidates  # noqa: E402
+from originrag.trace.blueprint import suggest_blueprint  # noqa: E402
+from originrag.trace.runtime import prepare_candidates  # noqa: E402
 
 
 def test_required_entity_filter_rejects_topical_match_without_entity() -> None:

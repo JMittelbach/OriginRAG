@@ -1,6 +1,6 @@
 from conftest import make_candidate
 
-from pfempire.trace.counterfactual import paper_flow_contributions
+from originrag.trace.counterfactual import paper_flow_contributions
 
 
 def test_flow_counterfactual_identifies_critical_complement(blueprint):

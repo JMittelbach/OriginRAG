@@ -6,11 +6,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
-from pfempire.trace.blueprint import suggest_blueprint  # noqa: E402
-from pfempire.trace.io import read_jsonl, read_tsv, write_json, write_tsv  # noqa: E402
-from pfempire.trace.schemas import EvidenceBlueprint  # noqa: E402
-from pfempire.analysis.ollama_client import call_ollama_generate  # noqa: E402
-from pfempire.trace.runtime import candidate_from_result  # noqa: E402
+from originrag.trace.blueprint import suggest_blueprint  # noqa: E402
+from originrag.trace.io import read_jsonl, read_tsv, write_json, write_tsv  # noqa: E402
+from originrag.trace.schemas import EvidenceBlueprint  # noqa: E402
+from originrag.analysis.ollama_client import call_ollama_generate  # noqa: E402
+from originrag.trace.runtime import candidate_from_result  # noqa: E402
 
 
 def main() -> int:

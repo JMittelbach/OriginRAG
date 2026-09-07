@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.retrieval.text_cleaning import clean_pdf_text_for_display, evidence_window
+from originrag.retrieval.text_cleaning import clean_pdf_text_for_display, evidence_window
 
 
 def test_clean_pdf_text_removes_hyphenated_line_breaks_and_ligatures() -> None:

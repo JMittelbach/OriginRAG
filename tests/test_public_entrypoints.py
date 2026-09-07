@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import subprocess
 import tomllib
 from pathlib import Path
@@ -56,13 +57,22 @@ def test_citation_metadata_matches_package_version() -> None:
     assert citation["repository-code"] == "https://github.com/JMittelbach/OriginRAG"
 
 
-def test_pre_rename_launcher_remains_a_compatibility_alias() -> None:
-    result = subprocess.run(
-        [str(REPO_ROOT / "pfempire"), "--version"],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+def test_source_package_uses_the_product_name() -> None:
+    import originrag
 
-    assert result.stdout.startswith("OriginRAG ")
+    assert Path(originrag.__file__).resolve() == REPO_ROOT / "src/originrag/__init__.py"
+    assert not (REPO_ROOT / "src/pfempire").exists()
+    assert not (REPO_ROOT / "pfempire").exists()
+
+
+def test_application_does_not_import_the_old_package() -> None:
+    for directory in ("src", "scripts", "tests"):
+        for source in (REPO_ROOT / directory).rglob("*.py"):
+            for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    modules = [node.module or ""]
+                else:
+                    continue
+                assert all(module.split(".")[0] != "pfempire" for module in modules), source

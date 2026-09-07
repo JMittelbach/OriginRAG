@@ -1,5 +1,5 @@
-from pfempire.analysis.chat import ChatTurnContext, answer_context, build_chat_retrieval_question, conversation_prompt_block
-from pfempire.analysis.prompts import build_answer_repair_prompt, build_citation_answer_prompt
+from originrag.analysis.chat import ChatTurnContext, answer_context, build_chat_retrieval_question, conversation_prompt_block
+from originrag.analysis.prompts import build_answer_repair_prompt, build_citation_answer_prompt
 
 
 def test_recent_context_reaches_initial_and_repair_prompts_not_evidence_ids():

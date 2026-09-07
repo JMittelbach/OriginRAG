@@ -3,8 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from pfempire.claims.search import search_claims
-from pfempire.claims.store import claim_counts, initialize_claim_store, read_claims, upsert_claims
+from originrag.claims.search import search_claims
+from originrag.claims.store import claim_counts, initialize_claim_store, read_claims, upsert_claims
 
 
 def test_claim_store_upserts_and_searches_claims(tmp_path: Path) -> None:

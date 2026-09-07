@@ -3,16 +3,16 @@ from itertools import combinations, product
 import pytest
 
 from conftest import make_candidate
-from pfempire.trace.evidence_weights import effective_independent_evidence
-from pfempire.trace.flow import compute_evidence_flow
-from pfempire.trace.robust_lineage import (
+from originrag.trace.evidence_weights import effective_independent_evidence
+from originrag.trace.flow import compute_evidence_flow
+from originrag.trace.robust_lineage import (
     LineageDependenceInterval,
     complete_lineage_intervals,
     effective_evidence_bounds,
     rank_lineage_reviews,
     robust_evidence_flow,
 )
-from pfempire.trace.schemas import EvidenceBlueprint
+from originrag.trace.schemas import EvidenceBlueprint
 
 
 def independent_pair(paper_a: str, paper_b: str) -> LineageDependenceInterval:

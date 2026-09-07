@@ -19,9 +19,9 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.discovery.europepmc import EuropePMCHit, search_one  # noqa: E402
-from pfempire.discovery.openalex import search_openalex_title  # noqa: E402
-from pfempire.discovery.types import DiscoveryHit  # noqa: E402
+from originrag.discovery.europepmc import EuropePMCHit, search_one  # noqa: E402
+from originrag.discovery.openalex import search_openalex_title  # noqa: E402
+from originrag.discovery.types import DiscoveryHit  # noqa: E402
 
 
 REPORT_FIELDS = [

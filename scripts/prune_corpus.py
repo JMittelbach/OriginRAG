@@ -14,7 +14,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.paths import get_bib_dir, load_project_env  # noqa: E402
+from originrag.paths import get_bib_dir, load_project_env  # noqa: E402
 
 
 PAPERS_PATH = REPO_ROOT / "data/metadata/papers.tsv"

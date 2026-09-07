@@ -12,14 +12,14 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.curation.corpus_hygiene import (  # noqa: E402
+from originrag.curation.corpus_hygiene import (  # noqa: E402
     KEEP_ACTIONS,
     QUARANTINE_ACTIONS,
     assess_paper,
     collect_chunk_stats,
     find_exact_duplicates,
 )
-from pfempire.retrieval.metadata import load_paper_metadata  # noqa: E402
+from originrag.retrieval.metadata import load_paper_metadata  # noqa: E402
 
 
 FIELDS = [

@@ -11,7 +11,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.retrieval.paper_retrieval import PAPER_FIELDS, search_papers  # noqa: E402
+from originrag.retrieval.paper_retrieval import PAPER_FIELDS, search_papers  # noqa: E402
 
 
 def main() -> int:

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-import pfempire.retrieval.index_cache as cache_module
-from pfempire.retrieval.fts_index import build_fts_index
-from pfempire.retrieval.index_cache import (
+import originrag.retrieval.index_cache as cache_module
+from originrag.retrieval.fts_index import build_fts_index
+from originrag.retrieval.index_cache import (
     READ_CACHE_ENV,
     RetrievalIndexCacheError,
     cache_generations_path,

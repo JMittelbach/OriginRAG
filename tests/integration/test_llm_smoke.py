@@ -14,9 +14,9 @@ for path in [SRC_DIR, SCRIPTS_DIR]:
         sys.path.insert(0, str(path))
 
 import ask_corpus  # noqa: E402
-from pfempire.analysis.faithfulness import load_and_check, write_grounding_report  # noqa: E402
-from pfempire.analysis.ollama_client import check_server, list_models, model_available  # noqa: E402
-from pfempire.utils.io import write_json  # noqa: E402
+from originrag.analysis.faithfulness import load_and_check, write_grounding_report  # noqa: E402
+from originrag.analysis.ollama_client import check_server, list_models, model_available  # noqa: E402
+from originrag.utils.io import write_json  # noqa: E402
 
 
 def main() -> int:

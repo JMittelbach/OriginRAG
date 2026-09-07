@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-from pfempire.provenance.requests import queue_missing_sources, read_requests
+from originrag.provenance.requests import queue_missing_sources, read_requests
 
 
 def test_source_request_queue_is_explicit_and_idempotent(tmp_path) -> None:

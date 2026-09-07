@@ -28,7 +28,7 @@ try:
 except ImportError:
     fitz = None
 
-from pfempire.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
+from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
 
 
 FIELDNAMES = [

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import fitz
 
-from pfempire.provenance.library import LibraryStatusResolver
-from pfempire.provenance.references import (
+from originrag.provenance.library import LibraryStatusResolver
+from originrag.provenance.references import (
     extract_pdf_citation_map,
     extract_jats_citation_map,
     normalize_doi,
@@ -17,12 +17,12 @@ from pfempire.provenance.references import (
     reference_record,
     trace_claim_sources,
 )
-from pfempire.provenance.resolver import (
+from originrag.provenance.resolver import (
     resolve_reference_against_library,
     resolve_trace_against_library,
 )
-from pfempire.provenance.store import upsert_source_trace
-from pfempire.claims.store import upsert_claims
+from originrag.provenance.store import upsert_source_trace
+from originrag.claims.store import upsert_claims
 
 
 def test_numbered_reference_parser_keeps_sequence_and_normalizes_doi() -> None:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pfempire.analysis.answer_backends import generate_answer_with_backend
-from pfempire.analysis.ollama_client import OllamaResult
-from pfempire.retrieval.query_planner import plan_queries
+from originrag.analysis.answer_backends import generate_answer_with_backend
+from originrag.analysis.ollama_client import OllamaResult
+from originrag.retrieval.query_planner import plan_queries
 
 
 def test_default_planner_is_rule_based() -> None:
@@ -40,7 +40,7 @@ def test_qwen_answer_backend_uses_requested_generation_parameters(monkeypatch) -
         )
 
     monkeypatch.setattr(
-        "pfempire.analysis.answer_backends.call_ollama_generate",
+        "originrag.analysis.answer_backends.call_ollama_generate",
         fake_call,
     )
 
@@ -80,7 +80,7 @@ def test_qwen_answer_backend_passes_configured_context_window(monkeypatch) -> No
 
     monkeypatch.setenv("PFEMPIRE_OLLAMA_NUM_CTX", "12288")
     monkeypatch.setattr(
-        "pfempire.analysis.answer_backends.call_ollama_generate",
+        "originrag.analysis.answer_backends.call_ollama_generate",
         fake_call,
     )
 
@@ -109,7 +109,7 @@ def test_qwen_answer_backend_passes_configured_prediction_budget(monkeypatch) ->
     monkeypatch.setenv("PFEMPIRE_OLLAMA_NUM_PREDICT", "3200")
     monkeypatch.setenv("HYPORAG_OLLAMA_NUM_PREDICT", "2800")
     monkeypatch.setattr(
-        "pfempire.analysis.answer_backends.call_ollama_generate",
+        "originrag.analysis.answer_backends.call_ollama_generate",
         fake_call,
     )
 
@@ -138,7 +138,7 @@ def test_qwen_answer_backend_honors_legacy_prediction_budget(monkeypatch) -> Non
     monkeypatch.delenv("PFEMPIRE_OLLAMA_NUM_PREDICT", raising=False)
     monkeypatch.setenv("HYPORAG_OLLAMA_NUM_PREDICT", "2800")
     monkeypatch.setattr(
-        "pfempire.analysis.answer_backends.call_ollama_generate",
+        "originrag.analysis.answer_backends.call_ollama_generate",
         fake_call,
     )
 

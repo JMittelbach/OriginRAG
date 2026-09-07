@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.analysis.evidence_pack import (
+from originrag.analysis.evidence_pack import (
     apply_certification_core_roles,
     build_evidence_pack,
     format_evidence_pack_markdown,

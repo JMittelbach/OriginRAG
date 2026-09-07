@@ -13,9 +13,9 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.analysis.ollama_client import call_ollama_generate  # noqa: E402
-from pfempire.claims.extraction import extract_claims_from_chunk  # noqa: E402
-from pfempire.retrieval.llm_query_planner import parse_json_object  # noqa: E402
+from originrag.analysis.ollama_client import call_ollama_generate  # noqa: E402
+from originrag.claims.extraction import extract_claims_from_chunk  # noqa: E402
+from originrag.retrieval.llm_query_planner import parse_json_object  # noqa: E402
 
 
 ALLOWED_TYPES = {

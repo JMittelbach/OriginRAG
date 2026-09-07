@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from pfempire.retrieval.query_plan import (
+from originrag.retrieval.query_plan import (
     build_retrieval_queries,
     required_entity_anchor_groups,
 )
-from pfempire.retrieval.source_intent import (
+from originrag.retrieval.source_intent import (
     assess_intervention_evidence,
     is_epcr_pfemp1_intervention_source_request,
 )

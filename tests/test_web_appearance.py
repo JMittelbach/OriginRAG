@@ -1,7 +1,7 @@
 from html.parser import HTMLParser
 from pathlib import Path
 
-from pfempire.web_appearance import APPEARANCE_SCRIPT, APPEARANCE_STYLE, with_appearance
+from originrag.web_appearance import APPEARANCE_SCRIPT, APPEARANCE_STYLE, with_appearance
 
 
 class Elements(HTMLParser):

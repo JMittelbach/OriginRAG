@@ -57,5 +57,5 @@ faiss/
 !/data/metadata/.gitkeep
 !/data/metadata/papers.tsv
 !/data/metadata/paper_registry.tsv
-/src/pfempire/evaluation/
-/src/pfempire/trace/lineage_trap_v1.py
+/src/originrag/evaluation/
+/src/originrag/trace/lineage_trap_v1.py

@@ -1,7 +1,7 @@
 import pytest
 
 from conftest import make_candidate
-from pfempire.trace.selector import SelectorConfig, select_evidence
+from originrag.trace.selector import SelectorConfig, select_evidence
 
 
 def test_trace_selects_missing_critical_facet(blueprint):

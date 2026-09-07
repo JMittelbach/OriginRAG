@@ -12,7 +12,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.summaries.paper_summary import summarize_paper_with_ollama, write_jsonl  # noqa: E402
+from originrag.summaries.paper_summary import summarize_paper_with_ollama, write_jsonl  # noqa: E402
 
 
 def main() -> int:

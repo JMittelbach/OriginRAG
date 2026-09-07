@@ -11,7 +11,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.retrieval.section_detection import carries_forward_section, detect_section_for_chunk  # noqa: E402
+from originrag.retrieval.section_detection import carries_forward_section, detect_section_for_chunk  # noqa: E402
 
 
 def main() -> int:

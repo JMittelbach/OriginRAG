@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.analysis.answer_qc import (
+from originrag.analysis.answer_qc import (
     annotate_publication_family_relationships,
     assess_answer_quality,
     normalize_inline_evidence_labels,
@@ -2414,7 +2414,7 @@ More assays are needed (Smith et al., 2020; E001).
 
 
 def test_lineage_caveat_is_inserted_into_limitations() -> None:
-    from pfempire.analysis.answer_qc import (
+    from originrag.analysis.answer_qc import (
         ensure_required_lineage_caveat,
         missing_required_lineage_caveat,
     )

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pfempire.analysis.ollama_client import OllamaResult
-import pfempire.retrieval.llm_query_planner as llm_query_planner
-from pfempire.retrieval.query_planner import plan_queries
+from originrag.analysis.ollama_client import OllamaResult
+import originrag.retrieval.llm_query_planner as llm_query_planner
+from originrag.retrieval.query_planner import plan_queries
 
 
 def test_invalid_ollama_json_triggers_rule_based_fallback(monkeypatch) -> None:

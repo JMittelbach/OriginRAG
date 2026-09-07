@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.analysis.answer_format import normalize_answer_format
+from originrag.analysis.answer_format import normalize_answer_format
 
 
 def test_normalize_hypothesis_headings_from_local_llm_variants() -> None:

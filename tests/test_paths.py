@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from pfempire.paths import OriginRAGConfigError, get_bib_dir, resolve_bib_path
+from originrag.paths import OriginRAGConfigError, get_bib_dir, resolve_bib_path
 
 
 def test_get_bib_dir_requires_env(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -18,14 +18,14 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.discovery.europepmc import (  # noqa: E402
+from originrag.discovery.europepmc import (  # noqa: E402
     download_pdf,
     download_pmc_oa_pdf,
     pdf_url_candidates,
     search_one,
 )
-from pfempire.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
-from pfempire.provenance.library import (  # noqa: E402
+from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
+from originrag.provenance.library import (  # noqa: E402
     normalize_doi,
     normalize_pmcid,
     normalize_pmid,

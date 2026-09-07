@@ -1,4 +1,4 @@
-from pfempire.curation.relevance_policy import relevance_decision
+from originrag.curation.relevance_policy import relevance_decision
 
 
 def test_keeps_molecular_pfrh5_vaccine_paper() -> None:

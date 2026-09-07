@@ -1,4 +1,4 @@
-from pfempire.trace.certificate import build_certificate
+from originrag.trace.certificate import build_certificate
 from conftest import make_candidate
 
 def test_insufficient_blocks_strong_claim(blueprint):

@@ -35,33 +35,33 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import ask_corpus  # noqa: E402
 import import_paper_inbox  # noqa: E402
-from pfempire.analysis.chat import ChatTurnContext, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
-from pfempire.analysis.faithfulness import citation_claim_blocks, direct_evidence_text  # noqa: E402
-from pfempire.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
-from pfempire.provenance.library import (  # noqa: E402
+from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
+from originrag.analysis.faithfulness import citation_claim_blocks, direct_evidence_text  # noqa: E402
+from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
+from originrag.provenance.library import (  # noqa: E402
     LibraryStatusResolver,
     normalize_doi,
     normalize_pmcid,
     normalize_pmid,
     normalize_title,
 )
-from pfempire.provenance.requests import queue_missing_sources  # noqa: E402
-from pfempire.provenance.resolver import (  # noqa: E402
+from originrag.provenance.requests import queue_missing_sources  # noqa: E402
+from originrag.provenance.resolver import (  # noqa: E402
     enrich_reference_online,
     resolve_reference_against_library,
 )
-from pfempire.provenance.source_type import classify_source_document  # noqa: E402
-from pfempire.retrieval.query_plan import (  # noqa: E402
+from originrag.provenance.source_type import classify_source_document  # noqa: E402
+from originrag.retrieval.query_plan import (  # noqa: E402
     classify_paper_search_mode,
     has_sufficient_curated_source_expansions,
 )
-from pfempire.retrieval.index_cache import (  # noqa: E402
+from originrag.retrieval.index_cache import (  # noqa: E402
     configured_cache_path,
     prime_read_index_cache,
 )
-from pfempire.utils.io import write_json  # noqa: E402
-from pfempire.web_appearance import with_appearance  # noqa: E402
-from pfempire.web_auth import (  # noqa: E402
+from originrag.utils.io import write_json  # noqa: E402
+from originrag.web_appearance import with_appearance  # noqa: E402
+from originrag.web_auth import (  # noqa: E402
     AuthStore,
     AuthenticatedUser,
     AuthenticationError,
@@ -3612,8 +3612,8 @@ def build_public_source_trace(paper_id: str, claim_text: str) -> dict:
         raise ValueError("The carrier PDF is not available on this machine.")
 
 
-    from pfempire.provenance.references import extract_pdf_citation_map, trace_claim_sources
-    from pfempire.provenance.resolver import resolve_trace_against_library
+    from originrag.provenance.references import extract_pdf_citation_map, trace_claim_sources
+    from originrag.provenance.resolver import resolve_trace_against_library
 
     citation_map = extract_pdf_citation_map(pdf_path, clean_paper_id)
     trace = trace_claim_sources(citation_map, clean_claim, min_score=55.0, limit=12)

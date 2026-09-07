@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pfempire.trace.schemas import EvidenceBlueprint, EvidenceFacet, TraceCandidate
+from originrag.trace.schemas import EvidenceBlueprint, EvidenceFacet, TraceCandidate
 
 
 @pytest.fixture

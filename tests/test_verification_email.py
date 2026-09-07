@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.verification_email import LocalTestVerificationMailer, SMTPVerificationMailer
+from originrag.verification_email import LocalTestVerificationMailer, SMTPVerificationMailer
 
 
 def test_smtp_mailer_uses_starttls_and_sends_only_to_recipient(monkeypatch) -> None:
@@ -28,7 +28,7 @@ def test_smtp_mailer_uses_starttls_and_sends_only_to_recipient(monkeypatch) -> N
         def send_message(self, message) -> None:
             events.append(("message", message["To"], message.get_content()))
 
-    monkeypatch.setattr("pfempire.verification_email.smtplib.SMTP", FakeSMTP)
+    monkeypatch.setattr("originrag.verification_email.smtplib.SMTP", FakeSMTP)
     mailer = SMTPVerificationMailer(
         host="smtp.bnitm.test",
         port=587,

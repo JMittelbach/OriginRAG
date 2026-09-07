@@ -12,8 +12,8 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from import_lineage_adjudication import adjudication_overrides  # noqa: E402
 from build_evidence_lineage_graph import apply_overrides  # noqa: E402
-from pfempire.trace.io import write_tsv  # noqa: E402
-from pfempire.trace.runtime import lineage_review_status  # noqa: E402
+from originrag.trace.io import write_tsv  # noqa: E402
+from originrag.trace.runtime import lineage_review_status  # noqa: E402
 
 
 def reviewed_rows() -> list[dict[str, str]]:

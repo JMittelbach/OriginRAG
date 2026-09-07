@@ -1,6 +1,6 @@
 import pytest
 
-from pfempire.trace.evaluation import paired_bootstrap
+from originrag.trace.evaluation import paired_bootstrap
 
 def test_paired_bootstrap_is_reproducible():
     rows=[{"question_id":f"q{i}","selector":"a","m":i+1} for i in range(3)]+[{"question_id":f"q{i}","selector":"b","m":i} for i in range(3)]
@@ -8,8 +8,8 @@ def test_paired_bootstrap_is_reproducible():
 
 def test_weak_certificate_is_treated_as_abstention(blueprint):
     from conftest import make_candidate
-    from pfempire.trace.evaluation import evaluate_selector
-    from pfempire.trace.selector import SelectorConfig
+    from originrag.trace.evaluation import evaluate_selector
+    from originrag.trace.selector import SelectorConfig
 
     result=evaluate_selector(
         "topk_relevance",
@@ -25,8 +25,8 @@ def test_weak_certificate_is_treated_as_abstention(blueprint):
 
 def test_unannotated_gold_recall_is_not_reported_as_zero(blueprint):
     from conftest import make_candidate
-    from pfempire.trace.evaluation import evaluate_selector
-    from pfempire.trace.selector import SelectorConfig
+    from originrag.trace.evaluation import evaluate_selector
+    from originrag.trace.selector import SelectorConfig
 
     result = evaluate_selector(
         "topk_relevance",

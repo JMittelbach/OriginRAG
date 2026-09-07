@@ -14,7 +14,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
-from pfempire.paths import get_bib_dir  # noqa: E402
+from originrag.paths import get_bib_dir  # noqa: E402
 
 METADATA_DIR = REPO_ROOT / "data/metadata"
 RELPATH_FIELDS = {"local_pdf_relpath", "matched_pdf_relpath"}

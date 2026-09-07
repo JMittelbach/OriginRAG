@@ -21,62 +21,62 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.analysis.answer_format import normalize_answer_format  # noqa: E402
-from pfempire.analysis.answer_backends import generate_answer_with_backend  # noqa: E402
-from pfempire.analysis.answer_qc import (  # noqa: E402
+from originrag.analysis.answer_format import normalize_answer_format  # noqa: E402
+from originrag.analysis.answer_backends import generate_answer_with_backend  # noqa: E402
+from originrag.analysis.answer_qc import (  # noqa: E402
     annotate_publication_family_relationships,
     assess_answer_quality,
     ensure_required_lineage_caveat,
     normalize_inline_evidence_labels,
 )
-from pfempire.analysis.evidence_pack import (  # noqa: E402
+from originrag.analysis.evidence_pack import (  # noqa: E402
     apply_certification_core_roles,
     build_evidence_pack,
     format_evidence_pack_markdown,
     freeze_prompt_visible_result,
 )
-from pfempire.analysis.evidence_pack_grading import (  # noqa: E402
+from originrag.analysis.evidence_pack_grading import (  # noqa: E402
     format_evidence_pack_grade_markdown,
     grade_evidence_pack,
     question_relevance_terms,
 )
-from pfempire.analysis.evidence_table import format_evidence_table_markdown, write_evidence_table_tsv  # noqa: E402
-from pfempire.analysis.faithfulness import check_answer_grounding, write_grounding_report  # noqa: E402
-from pfempire.analysis.llm_backends import generate_answer  # noqa: E402
-from pfempire.analysis.ollama_client import (  # noqa: E402
+from originrag.analysis.evidence_table import format_evidence_table_markdown, write_evidence_table_tsv  # noqa: E402
+from originrag.analysis.faithfulness import check_answer_grounding, write_grounding_report  # noqa: E402
+from originrag.analysis.llm_backends import generate_answer  # noqa: E402
+from originrag.analysis.ollama_client import (  # noqa: E402
     answer_model as ollama_answer_model,
     call_ollama_generate,
 )
-from pfempire.analysis.prompts import build_answer_repair_prompt, build_citation_answer_prompt  # noqa: E402
-from pfempire.analysis.template_answers import (  # noqa: E402
+from originrag.analysis.prompts import build_answer_repair_prompt, build_citation_answer_prompt  # noqa: E402
+from originrag.analysis.template_answers import (  # noqa: E402
     build_data_accessibility_answer,
     build_marker_positive_state_answer,
     build_template_answer,
 )
-from pfempire.analysis.llm_backends import LLMResult  # noqa: E402
-from pfempire.provenance.source_type import classify_source_document  # noqa: E402
-from pfempire.retrieval.chunk_quality import classify_chunk_quality  # noqa: E402
-from pfempire.retrieval.fusion import reciprocal_rank_fusion  # noqa: E402
-from pfempire.retrieval.fts_index import (  # noqa: E402
+from originrag.analysis.llm_backends import LLMResult  # noqa: E402
+from originrag.provenance.source_type import classify_source_document  # noqa: E402
+from originrag.retrieval.chunk_quality import classify_chunk_quality  # noqa: E402
+from originrag.retrieval.fusion import reciprocal_rank_fusion  # noqa: E402
+from originrag.retrieval.fts_index import (  # noqa: E402
     DEFAULT_INDEX_PATH,
     corpus_fingerprint,
     ensure_current_index,
     index_has_candidate_record_store,
     search_chunks_bm25,
 )
-from pfempire.retrieval.index_cache import resolve_read_bundle  # noqa: E402
-from pfempire.retrieval.keyword import (  # noqa: E402
+from originrag.retrieval.index_cache import resolve_read_bundle  # noqa: E402
+from originrag.retrieval.keyword import (  # noqa: E402
     contains_normalized_term,
     normalize_text,
     search_chunks,
 )
-from pfempire.retrieval.metadata import load_paper_metadata  # noqa: E402
-from pfempire.retrieval.paper_retrieval import search_papers  # noqa: E402
-from pfempire.retrieval.paper_selection import (  # noqa: E402
+from originrag.retrieval.metadata import load_paper_metadata  # noqa: E402
+from originrag.retrieval.paper_retrieval import search_papers  # noqa: E402
+from originrag.retrieval.paper_selection import (  # noqa: E402
     collapse_detected_publication_versions,
     retain_direct_clinical_expression_papers,
 )
-from pfempire.retrieval.query_plan import (  # noqa: E402
+from originrag.retrieval.query_plan import (  # noqa: E402
     IMMUNE_RECEPTOR_BINDING_ALIASES,
     NamedStudyReference,
     PAPER_SEARCH_MODES,
@@ -91,22 +91,22 @@ from pfempire.retrieval.query_plan import (  # noqa: E402
     requested_source_function_alternatives,
     requested_source_function_title_alternatives,
 )
-from pfempire.retrieval.source_intent import (  # noqa: E402
+from originrag.retrieval.source_intent import (  # noqa: E402
     assess_intervention_evidence,
     is_epcr_pfemp1_intervention_source_request,
 )
-from pfempire.retrieval.query_planner import plan_queries  # noqa: E402
-from pfempire.retrieval.llm_query_planner import parse_json_object  # noqa: E402
-from pfempire.retrieval.adaptive import adaptive_retrieve  # noqa: E402
-from pfempire.trace.method_versions import (  # noqa: E402
+from originrag.retrieval.query_planner import plan_queries  # noqa: E402
+from originrag.retrieval.llm_query_planner import parse_json_object  # noqa: E402
+from originrag.retrieval.adaptive import adaptive_retrieve  # noqa: E402
+from originrag.trace.method_versions import (  # noqa: E402
     EVIDENCE_ACCOUNTING_VERSION,
     LINEAGE_GRAPH_SCHEMA_VERSION,
     ROBUST_LINEAGE_CERTIFICATE_VERSION,
 )
-from pfempire.trace.io import read_jsonl  # noqa: E402
-from pfempire.trace.lineage import suggest_lineage_signals  # noqa: E402
-from pfempire.trace.runtime import estimate_tokens, run_trace_selection  # noqa: E402
-from pfempire.utils.io import write_json  # noqa: E402
+from originrag.trace.io import read_jsonl  # noqa: E402
+from originrag.trace.lineage import suggest_lineage_signals  # noqa: E402
+from originrag.trace.runtime import estimate_tokens, run_trace_selection  # noqa: E402
+from originrag.utils.io import write_json  # noqa: E402
 
 
 GRADE_ORDER = {"bad": 0, "weak": 1, "usable": 2, "good": 3}

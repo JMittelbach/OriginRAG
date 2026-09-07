@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.retrieval.paper_selection import (
+from originrag.retrieval.paper_selection import (
     collapse_detected_publication_versions,
     requests_direct_clinical_parasite_expression,
     retain_direct_clinical_expression_papers,

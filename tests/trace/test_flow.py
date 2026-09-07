@@ -2,7 +2,7 @@ import pytest
 
 from conftest import make_candidate
 
-from pfempire.trace.flow import (
+from originrag.trace.flow import (
     _max_min_ratio_by_flow_search,
     _max_min_ratio_by_subsets,
     compute_evidence_flow,

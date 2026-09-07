@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.analysis.evidence_table import build_evidence_table_rows, format_evidence_table_markdown
+from originrag.analysis.evidence_table import build_evidence_table_rows, format_evidence_table_markdown
 
 
 def test_build_evidence_table_rows_adds_contribution() -> None:

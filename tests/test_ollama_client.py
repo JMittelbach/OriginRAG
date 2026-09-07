@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.analysis import ollama_client
+from originrag.analysis import ollama_client
 
 
 def test_qwen_structured_calls_disable_thinking_explicitly(monkeypatch) -> None:

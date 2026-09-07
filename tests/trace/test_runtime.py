@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pfempire.trace.lineage import assign_lineage_ids
-from pfempire.trace.method_versions import LINEAGE_GRAPH_SCHEMA_VERSION
-from pfempire.trace.runtime import lineage_review_status, load_edges_with_status
-from pfempire.trace.schemas import EvidenceLineageEdge
+from originrag.trace.lineage import assign_lineage_ids
+from originrag.trace.method_versions import LINEAGE_GRAPH_SCHEMA_VERSION
+from originrag.trace.runtime import lineage_review_status, load_edges_with_status
+from originrag.trace.schemas import EvidenceLineageEdge
 
 
 def edge(left: str, right: str, *, verified: bool) -> EvidenceLineageEdge:

@@ -11,8 +11,8 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.ingestion.chunking import chunk_pages  # noqa: E402
-from pfempire.utils.io import read_json, write_jsonl  # noqa: E402
+from originrag.ingestion.chunking import chunk_pages  # noqa: E402
+from originrag.utils.io import read_json, write_jsonl  # noqa: E402
 
 
 def main() -> int:

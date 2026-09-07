@@ -6,8 +6,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
-from pfempire.trace.io import read_jsonl, read_tsv, write_tsv  # noqa: E402
-from pfempire.trace.lineage import suggest_lineage_signals  # noqa: E402
+from originrag.trace.io import read_jsonl, read_tsv, write_tsv  # noqa: E402
+from originrag.trace.lineage import suggest_lineage_signals  # noqa: E402
 
 FIELDS = [
     "signal_id",

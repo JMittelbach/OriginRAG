@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from pfempire.utils.normalization import (
+from originrag.utils.normalization import (
     finite_float,
     is_finite_number,
     normalize_string_list,

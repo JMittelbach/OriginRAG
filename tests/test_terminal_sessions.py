@@ -6,12 +6,12 @@ import sys
 
 import pytest
 
-from pfempire.analysis.terminal_sessions import SessionStore, snapshot_result, visible_answer
+from originrag.analysis.terminal_sessions import SessionStore, snapshot_result, visible_answer
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import chat_corpus  # noqa: E402
-from pfempire.utils.terminal_ui import TerminalUI  # noqa: E402
+from originrag.utils.terminal_ui import TerminalUI  # noqa: E402
 
 
 def test_unique_sessions_persist_and_do_not_share_settings(tmp_path):
@@ -73,7 +73,7 @@ def test_failed_atomic_save_preserves_previous_snapshot(tmp_path, monkeypatch):
     def fail(*args):
         raise OSError("Disk write failed")
 
-    monkeypatch.setattr("pfempire.analysis.terminal_sessions.os.replace", fail)
+    monkeypatch.setattr("originrag.analysis.terminal_sessions.os.replace", fail)
     try:
         with pytest.raises(OSError, match="Disk write failed"):
             store.save()

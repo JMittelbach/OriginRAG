@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pfempire.analysis.faithfulness import check_answer_grounding, write_grounding_report
+from originrag.analysis.faithfulness import check_answer_grounding, write_grounding_report
 
 
 def evidence_pack() -> dict:

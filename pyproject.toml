@@ -53,7 +53,7 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-"pfempire.db" = ["schema.sql"]
+"originrag.db" = ["schema.sql"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

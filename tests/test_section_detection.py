@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.retrieval.section_detection import (
+from originrag.retrieval.section_detection import (
     carries_forward_section,
     detect_section_for_chunk,
     stored_section_needs_redetection,

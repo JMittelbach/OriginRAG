@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pfempire.retrieval.keyword import query_tokens
-from pfempire.retrieval.paper_retrieval import score_paper, search_papers
+from originrag.retrieval.keyword import query_tokens
+from originrag.retrieval.paper_retrieval import score_paper, search_papers
 
 
 def test_doi_prefix_is_not_reported_as_an_exact_identifier_match() -> None:

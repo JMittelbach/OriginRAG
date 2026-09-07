@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 
-from pfempire.analysis.answer_qc import assess_answer_quality
-from pfempire.analysis.template_answers import (
+from originrag.analysis.answer_qc import assess_answer_quality
+from originrag.analysis.template_answers import (
     build_data_accessibility_answer,
     build_template_answer,
     clean_evidence_text,

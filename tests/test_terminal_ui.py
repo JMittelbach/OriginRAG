@@ -14,11 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import chat_corpus  # noqa: E402
-from pfempire.utils.terminal_ui import TerminalUI, helix, helix_dimensions, safe_text  # noqa: E402
+from originrag.utils.terminal_ui import TerminalUI, helix, helix_dimensions, safe_text  # noqa: E402
 
 
 def test_animation_cache_is_periodic_bounded_and_returns_independent_text():
-    from pfempire.utils.terminal_ui import animated_helix, _helix_frame
+    from originrag.utils.terminal_ui import animated_helix, _helix_frame
 
     _helix_frame.cache_clear()
     first = animated_helix(0.3)
@@ -35,10 +35,10 @@ def test_animation_cache_is_periodic_bounded_and_returns_independent_text():
 
 
 def test_rotation_does_not_restart_when_work_begins(monkeypatch):
-    from pfempire.utils.terminal_ui import WaitingDisplay
+    from originrag.utils.terminal_ui import WaitingDisplay
 
     clock = [100.0]
-    monkeypatch.setattr("pfempire.utils.terminal_ui.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("originrag.utils.terminal_ui.time.monotonic", lambda: clock[0])
     console = Console(file=io.StringIO(), force_terminal=True, width=80, height=24, record=True)
     ui = TerminalUI(console=console)
     clock[0] += 0.75
@@ -103,7 +103,7 @@ def test_large_terminal_does_not_enlarge_the_animation():
 
 
 def test_waiting_display_resizes_without_overflow(monkeypatch):
-    from pfempire.utils.terminal_ui import WaitingDisplay
+    from originrag.utils.terminal_ui import WaitingDisplay
 
     monkeypatch.setenv("TERM", "xterm-256color")
     console = Console(file=io.StringIO(), force_terminal=True, width=80, height=24, record=True)
@@ -116,11 +116,11 @@ def test_waiting_display_resizes_without_overflow(monkeypatch):
 
 
 def test_waiting_helix_rotates_even_when_stage_does_not_change(monkeypatch):
-    from pfempire.utils.terminal_ui import WaitingDisplay
+    from originrag.utils.terminal_ui import WaitingDisplay
 
     monkeypatch.setenv("TERM", "xterm-256color")
     clock = [100.0]
-    monkeypatch.setattr("pfempire.utils.terminal_ui.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("originrag.utils.terminal_ui.time.monotonic", lambda: clock[0])
     console = Console(file=io.StringIO(), force_terminal=True, width=80, height=24, record=True)
     display = WaitingDisplay(TerminalUI(console=console), "Searching your library")
     console.print(display)
@@ -144,7 +144,7 @@ def test_startup_does_not_delay_input(monkeypatch):
     stream = io.StringIO()
     console = Console(file=stream, force_terminal=True, width=80, height=24, record=True)
     durations = []
-    monkeypatch.setattr("pfempire.utils.terminal_ui.time.sleep", durations.append)
+    monkeypatch.setattr("originrag.utils.terminal_ui.time.sleep", durations.append)
     TerminalUI(console=console).welcome()
     output = console.export_text()
     assert "Ask a question" in output
@@ -157,7 +157,7 @@ def test_idle_toolbar_rotates_without_writing_over_input(monkeypatch):
     stream = io.StringIO()
 
     clock = [100.0]
-    monkeypatch.setattr("pfempire.utils.terminal_ui.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("originrag.utils.terminal_ui.time.monotonic", lambda: clock[0])
     ui = TerminalUI(console=Console(file=stream, force_terminal=True, width=80, height=24))
     first = ui._idle_toolbar().value
     clock[0] += 0.5
@@ -227,7 +227,7 @@ def test_real_terminal_idle_animation_and_cleanup(keys, result):
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
     original = termios.tcgetattr(slave)
     code = (
-        "from pfempire.utils.terminal_ui import TerminalUI\n"
+        "from originrag.utils.terminal_ui import TerminalUI\n"
         "try:\n    print('RESULT:', TerminalUI().prompt())\n"
         "except (KeyboardInterrupt, EOFError) as error:\n    print('RESULT:', type(error).__name__)\n"
     )
@@ -275,7 +275,7 @@ def test_real_terminal_idle_animation_and_cleanup(keys, result):
 def test_piped_preview_is_plain_and_does_not_sleep(monkeypatch):
     stream = io.StringIO()
     ui = TerminalUI(console=Console(file=stream, force_terminal=False, width=80))
-    monkeypatch.setattr("pfempire.utils.terminal_ui.time.sleep",
+    monkeypatch.setattr("originrag.utils.terminal_ui.time.sleep",
                         lambda _: pytest.fail("plain output must not wait for animation"))
     ui.preview()
     output = stream.getvalue()

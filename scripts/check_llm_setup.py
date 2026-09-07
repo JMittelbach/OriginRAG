@@ -10,7 +10,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.analysis.ollama_client import (  # noqa: E402
+from originrag.analysis.ollama_client import (  # noqa: E402
     DEFAULT_BASE_URL,
     check_server,
     generate_text,

@@ -14,8 +14,8 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from pfempire.retrieval.chunk_quality import classify_chunk_quality  # noqa: E402
-from pfempire.retrieval.metadata import load_paper_metadata  # noqa: E402
+from originrag.retrieval.chunk_quality import classify_chunk_quality  # noqa: E402
+from originrag.retrieval.metadata import load_paper_metadata  # noqa: E402
 
 
 FLAG_FIELDS = [

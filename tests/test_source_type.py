@@ -1,4 +1,4 @@
-from pfempire.provenance.source_type import classify_source_document
+from originrag.provenance.source_type import classify_source_document
 
 
 def test_systematic_review_is_secondary() -> None:

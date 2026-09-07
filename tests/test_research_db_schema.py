@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from pfempire.claims.store import initialize_claim_store, upsert_claims
-from pfempire.db import initialize_database, list_tables
+from originrag.claims.store import initialize_claim_store, upsert_claims
+from originrag.db import initialize_database, list_tables
 
 
 def test_initialize_research_db_creates_expected_tables(tmp_path) -> None:

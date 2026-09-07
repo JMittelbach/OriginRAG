@@ -1,11 +1,11 @@
 import pytest
 
-from pfempire.trace.dependence import (
+from originrag.trace.dependence import (
     combine_signal_dependence,
     dependence_between,
     dependence_lookup,
 )
-from pfempire.trace.schemas import EvidenceLineageEdge, LineageSignal
+from originrag.trace.schemas import EvidenceLineageEdge, LineageSignal
 
 
 def signal(kind, strength=1):

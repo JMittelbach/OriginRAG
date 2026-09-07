@@ -5,17 +5,17 @@ from pathlib import Path
 
 import pytest
 
-from pfempire.trace.method_versions import (
+from originrag.trace.method_versions import (
     CERTIFYING_EVIDENCE_STRATEGY_VERSION,
     COMPLETE_BOX_PREFIX_EXACT_METHOD,
     ROBUST_LINEAGE_CERTIFICATE_VERSION,
 )
-from pfempire.trace.runtime import (
+from originrag.trace.runtime import (
     certification_core_candidates,
     lineage_intervals_from_edges,
     run_trace_selection,
 )
-from pfempire.trace.schemas import EvidenceBlueprint, EvidenceFacet, EvidenceLineageEdge, TraceCandidate
+from originrag.trace.schemas import EvidenceBlueprint, EvidenceFacet, EvidenceLineageEdge, TraceCandidate
 
 
 def candidate(paper_id: str, *, lineage_id: str) -> TraceCandidate:

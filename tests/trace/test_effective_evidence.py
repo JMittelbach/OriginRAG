@@ -1,7 +1,7 @@
 import pytest
 
 from conftest import make_candidate
-from pfempire.trace.evidence_weights import effective_independent_evidence
+from originrag.trace.evidence_weights import effective_independent_evidence
 
 
 def test_five_independent_papers_near_five():

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pfempire.task_modes import TaskModeConfigError, get_task_mode, load_task_modes
+from originrag.task_modes import TaskModeConfigError, get_task_mode, load_task_modes
 
 
 def test_load_task_modes_contains_core_modes() -> None:

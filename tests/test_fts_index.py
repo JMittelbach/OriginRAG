@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-import pfempire.retrieval.fts_index as fts_index_module
-from pfempire.retrieval.fts_index import (
+import originrag.retrieval.fts_index as fts_index_module
+from originrag.retrieval.fts_index import (
     RetrievalIndexError,
     build_fts_index,
     build_fts_query,

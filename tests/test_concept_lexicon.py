@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pfempire.concepts.lexicon import load_concept_lexicons, match_concepts_in_text
+from originrag.concepts.lexicon import load_concept_lexicons, match_concepts_in_text
 
 
 def test_concept_lexicon_matches_aliases() -> None:

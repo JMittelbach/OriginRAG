@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pfempire.claims.extraction import extract_claims_from_chunk, extract_claims_from_chunks, split_sentences
+from originrag.claims.extraction import extract_claims_from_chunk, extract_claims_from_chunks, split_sentences
 
 
 def test_extracts_structured_claim_from_pfemp1_epcr_sentence() -> None:

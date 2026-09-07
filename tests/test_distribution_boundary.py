@@ -5,9 +5,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_application_checkout_excludes_internal_research_harnesses():
-    assert not list((ROOT / "src/pfempire/evaluation").glob("*.py"))
+    assert not list((ROOT / "src/originrag/evaluation").glob("*.py"))
     for relative in (
-        "src/pfempire/trace/lineage_trap_v1.py",
+        "src/originrag/trace/lineage_trap_v1.py",
         "scripts/build_malaria_evidence_bench.py",
         "docs/manuscript/main.tex",
         "docs/paper_reproduction.md",
