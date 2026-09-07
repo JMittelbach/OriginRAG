@@ -13,7 +13,7 @@ import web_chat  # noqa: E402
 
 @pytest.fixture
 def browser_page(tmp_path):
-    state = {"user_id": "alice", "authenticated": True, "total": 0, "searchable": 0, "local_pdf": 0, "error": False, "imports": []}
+    state = {"user_id": "alice", "authenticated": True, "local_imports": False, "total": 0, "searchable": 0, "local_pdf": 0, "error": False, "imports": []}
     requests = []
     base = "http://127.0.0.1:39843"
 
@@ -35,6 +35,8 @@ def browser_page(tmp_path):
         payload = {"jobs": [], "sessions": [], "queue": {}, "state": "idle", "groups": []}
         code = 200
         if path == "/api/status":
+            payload["library_access"] = {"enabled": state["authenticated"] or state["local_imports"],
+                                         "csrf_token": "local-test-token" if state["local_imports"] else ""}
             if state["authenticated"]:
                 payload["user"] = {"user_id": state["user_id"], "display_name": "Test user"}
         elif path == "/api/library-stats":
@@ -42,7 +44,10 @@ def browser_page(tmp_path):
         elif path == "/api/paper-import":
             assert request.method == "POST"
             assert request.post_data_json == {"doi": "10.1234/test"}
-            assert request.headers.get("x-csrf-token") == "test-csrf"
+            if state["local_imports"]:
+                assert request.headers.get("x-originrag-local-token") == "local-test-token"
+            else:
+                assert request.headers.get("x-csrf-token") == "test-csrf"
             job = {"job_id": "job1", "doi": "10.1234/test", "state": "queued", "message": "Waiting to import"}
             state["imports"] = [job]
             payload = job
@@ -206,8 +211,25 @@ def test_anonymous_session_explains_disabled_import(browser_page):
     page.locator("#discoveryButton").click()
     page.locator("#discoveryQuery").fill("graph algorithms")
     page.locator("#discoverySearch").click()
-    button = page.locator(".discovery-item").get_by_role("button", name="Import requires sign-in")
+    button = page.locator(".discovery-item").get_by_role("button", name="Import unavailable")
     button.wait_for()
     assert button.is_disabled()
-    assert "./web --auth" in button.get_attribute("title")
+    assert "./web" in button.get_attribute("title")
     assert "/api/paper-import" not in requests
+
+
+def test_local_import_without_account_or_cookie(browser_page):
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    state["authenticated"], state["local_imports"] = False, True
+    page.context.clear_cookies()
+    page.reload()
+    page.locator("#guideSkip").click()
+    page.locator("#paperUploadButton").wait_for(state="visible")
+    page.locator("#discoveryButton").click()
+    page.locator("#discoveryQuery").fill("graph algorithms")
+    page.locator("#discoverySearch").click()
+    page.locator(".discovery-item").get_by_role("button", name="Add to library").click()
+    page.wait_for_function("document.querySelector('#paperImportJobs').textContent.includes('Waiting to import')")
+    assert "/api/paper-import" in requests
+    assert not any("/login" in path for path in requests)

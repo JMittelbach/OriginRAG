@@ -6344,7 +6344,7 @@ INDEX_HTML = r"""<!doctype html>
     window.fetch = async (resource, options = {}) => {
       const requestOptions = {...options, credentials: "same-origin"};
       const method = String(requestOptions.method || "GET").toUpperCase();
-      const target = new URL(typeof resource === "string" ? resource : resource.url, window.location.href);
+      const target = new URL(resource instanceof Request ? resource.url : String(resource), window.location.href);
       const sameOrigin = target.origin === window.location.origin;
       if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
         requestOptions.headers = new Headers(requestOptions.headers || {});
