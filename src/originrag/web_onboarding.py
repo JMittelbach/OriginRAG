@@ -145,6 +145,7 @@ SCRIPT = r"""
     const pair = importButtons.get(doi), job = importJobs.get(doi);
     if (!pair || !job) return;
     const {button, availability} = pair;
+    if (pair.ready) { button.disabled = true; button.textContent = "In library"; return; }
     const active = activeImports.has(job.state);
     button.disabled = active || job.state === "imported";
     button.textContent = active ? "Importing…" : job.state === "imported" ? "In library" : "Try import again";
@@ -158,6 +159,13 @@ SCRIPT = r"""
       if (!response.ok) return;
       const data = await response.json();
       const list = el("paperImportJobs"); list.replaceChildren();
+      const knownJobs = new Set((data.jobs || []).map((job) => job.job_id));
+      for (const [doi, previous] of importJobs) {
+        if (activeImports.has(previous.state) && !knownJobs.has(previous.job_id)) {
+          importJobs.set(doi, {...previous, state: "unknown", message: "Import status is no longer available. Check Library before trying again."});
+          updateImportButton(doi);
+        }
+      }
       for (const job of data.jobs || []) {
         importJobs.set(job.doi, job); updateImportButton(job.doi);
       }
@@ -219,8 +227,13 @@ SCRIPT = r"""
           button.textContent = paper.fulltext_ready ? "In library" : "Add to library";
           button.disabled = Boolean(paper.fulltext_ready);
           button.addEventListener("click", () => addPaper(paper, button, availability));
-          row.append(button); importButtons.set(paper.doi, {button, availability});
+          row.append(button); importButtons.set(paper.doi, {button, availability, ready: Boolean(paper.fulltext_ready)});
           updateImportButton(paper.doi);
+        } else {
+          const button = document.createElement("button"); button.type = "button";
+          button.textContent = "Import requires sign-in"; button.disabled = true;
+          button.title = "Use an upload-enabled account. For a local installation, start ./web --auth.";
+          row.append(button);
         }
       }
     } catch (error) {

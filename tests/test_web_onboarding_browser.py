@@ -13,7 +13,7 @@ import web_chat  # noqa: E402
 
 @pytest.fixture
 def browser_page(tmp_path):
-    state = {"user_id": "alice", "total": 0, "searchable": 0, "local_pdf": 0, "error": False, "imports": []}
+    state = {"user_id": "alice", "authenticated": True, "total": 0, "searchable": 0, "local_pdf": 0, "error": False, "imports": []}
     requests = []
     base = "http://127.0.0.1:39843"
 
@@ -35,7 +35,8 @@ def browser_page(tmp_path):
         payload = {"jobs": [], "sessions": [], "queue": {}, "state": "idle", "groups": []}
         code = 200
         if path == "/api/status":
-            payload["user"] = {"user_id": state["user_id"], "display_name": "Test user"}
+            if state["authenticated"]:
+                payload["user"] = {"user_id": state["user_id"], "display_name": "Test user"}
         elif path == "/api/library-stats":
             payload.update({key: state[key] for key in ("total", "searchable", "local_pdf")})
         elif path == "/api/paper-import":
@@ -101,26 +102,6 @@ def test_search_empty_state_updates_mobile_and_themes(browser_page):
     page.locator("#guideSkip").click()
     assert page.locator("header .header-left #discoveryButton").count() == 1
     assert page.locator(".library-start").count() == 0
-
-
-def test_direct_import_status_survives_dialog_and_page_reload(browser_page):
-    page, state, requests, tmp = browser_page
-    page.locator("#guideSkip").click()
-    page.locator("#discoveryButton").click()
-    page.locator("#discoveryQuery").fill("graph algorithms")
-    page.locator("#discoverySearch").click()
-    page.locator(".discovery-item").get_by_role("button", name="Add to library").click()
-    page.wait_for_function("document.querySelector('.discovery-item button').textContent === 'Importing…'")
-    page.locator("#discoveryClose").click()
-    page.reload()
-    page.wait_for_load_state("networkidle")
-    page.locator("#discoveryButton").click()
-    page.wait_for_function("document.getElementById('paperImportJobs').textContent.includes('Waiting to import')")
-    state["imports"][0].update(state="manual_upload", message="No matching accessible PDF found")
-    page.locator("#paperImportJobs").get_by_role("button", name="Upload PDF").wait_for()
-    page.locator("#paperImportJobs").get_by_role("button", name="Upload PDF").click()
-    assert page.locator("#paperDoi").input_value() == "10.1234/test"
-    assert page.locator("#paperUploadBackdrop").evaluate("el => el.classList.contains('open')")
     find_box = page.locator("#discoveryButton").bounding_box()
     appearance_box = page.locator("#appearanceButton").bounding_box()
     assert find_box["x"] < appearance_box["x"]
@@ -154,3 +135,43 @@ def test_direct_import_status_survives_dialog_and_page_reload(browser_page):
     page.locator("#paperUploadClose").click()
     page.evaluate("window.dispatchEvent(new CustomEvent('originrag:library-stats', {detail: {total: 40, searchable: 1, local_pdf: 1}}))")
     assert page.locator(".library-start").count() == 0
+
+
+def test_direct_import_status_survives_dialog_and_page_reload(browser_page):
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    page.locator("#discoveryButton").click()
+    page.locator("#discoveryQuery").fill("graph algorithms")
+    page.locator("#discoverySearch").click()
+    page.locator(".discovery-item").get_by_role("button", name="Add to library").click()
+    page.wait_for_function("document.querySelector('.discovery-item button').textContent === 'Importing…'")
+    page.locator("#discoveryClose").click()
+    page.reload()
+    page.wait_for_load_state("networkidle")
+    page.locator("#discoveryButton").click()
+    page.wait_for_function("document.getElementById('paperImportJobs').textContent.includes('Waiting to import')")
+    job = dict(state["imports"][0])
+    state["imports"] = []
+    page.wait_for_function("document.getElementById('paperImportJobs').textContent.includes('no longer available')")
+    state["imports"] = [{**job, "state": "manual_upload", "message": "No matching accessible PDF found"}]
+    page.locator("#paperImportJobs").get_by_role("button", name="Upload PDF").wait_for()
+    page.locator("#paperImportJobs").get_by_role("button", name="Upload PDF").click()
+    assert page.locator("#paperDoi").input_value() == "10.1234/test"
+    assert page.locator("#paperUploadBackdrop").evaluate("el => el.classList.contains('open')")
+
+
+def test_anonymous_session_explains_disabled_import(browser_page):
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    state["authenticated"] = False
+    page.reload()
+    page.wait_for_selector("#welcomeGuide[open]")
+    page.locator("#guideSkip").click()
+    page.locator("#discoveryButton").click()
+    page.locator("#discoveryQuery").fill("graph algorithms")
+    page.locator("#discoverySearch").click()
+    button = page.locator(".discovery-item").get_by_role("button", name="Import requires sign-in")
+    button.wait_for()
+    assert button.is_disabled()
+    assert "./web --auth" in button.get_attribute("title")
+    assert "/api/paper-import" not in requests

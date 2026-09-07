@@ -1,6 +1,7 @@
 import csv
 import sys
 from pathlib import Path
+import pytest
 
 from test_oa_import import pdf_bytes
 
@@ -52,3 +53,16 @@ def test_existing_assets_and_conflicting_ids_are_not_upgraded(tmp_path, monkeypa
     asset.parent.mkdir(parents=True)
     asset.write_text("{}")
     assert not inbox.metadata_only_records(rows)
+
+
+def test_upgrade_rolls_back_metadata_and_restores_pdf_on_index_failure(tmp_path, monkeypatch):
+    source, metadata = setup_library(tmp_path, monkeypatch)
+    original = {path.name: path.read_bytes() for path in metadata.iterdir()}
+    def fail(*args, **kwargs):
+        raise RuntimeError("test index failure")
+    monkeypatch.setattr(inbox, "update_fts_index", fail)
+    with pytest.raises(RuntimeError, match="test index failure"):
+        inbox.import_inbox(source.parent)
+    assert source.is_file()
+    assert not (tmp_path / "data/chunks/EXISTING_1.jsonl").exists()
+    assert {path.name: path.read_bytes() for path in metadata.iterdir()} == original
