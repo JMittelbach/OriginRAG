@@ -32,10 +32,10 @@ def test_tour_is_per_browser_and_account_and_can_be_replayed():
 
 
 def test_empty_catalogue_and_metadata_only_states_are_distinct():
-    assert 'total === 0' in SCRIPT
+    assert 'Number(stats.total || 0) === 0' in SCRIPT
     assert 'Your library is empty.' in SCRIPT
-    assert 'no full-text papers are ready' in SCRIPT
-    assert 'banner.hidden = ready > 0' in SCRIPT
+    assert 'No full-text papers are ready' in SCRIPT
+    assert 'library-start' not in SCRIPT
     assert 'originrag:library-stats' in SCRIPT
     assert 'Ask the host' in SCRIPT
     assert 'Indexed' not in MARKUP
@@ -54,5 +54,5 @@ def test_discovery_does_not_treat_results_as_downloads_or_render_untrusted_html(
 
 def test_find_papers_is_only_in_the_top_left_header():
     assert 'document.querySelector("header .header-left").append(findButton)' in SCRIPT
-    assert 'banner.append(bannerText, add);' in SCRIPT
+    assert 'banner.append' not in SCRIPT
     assert 'const find = ' not in SCRIPT

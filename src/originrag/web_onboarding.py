@@ -7,7 +7,7 @@ STYLE = """
     .guide-dialog::backdrop { background: rgba(0,0,0,.65); }
     .guide-dialog h2 { margin: 10px 0; font-size: 25px; }
     .guide-dialog p { color: var(--soft); line-height: 1.65; }
-    .guide-dialog button, .library-start button { min-height: 40px; padding: 8px 14px; width: auto; }
+    .guide-dialog button { min-height: 40px; padding: 8px 14px; width: auto; }
     .guide-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
     .guide-count { color: var(--muted); font-size: 12px; }
     .guide-dialog label { display: block; margin: 12px 0 6px; }
@@ -19,10 +19,6 @@ STYLE = """
     .discovery-item { border-top: 1px solid var(--line); padding: 14px 0; }
     .discovery-item a { color: var(--accent); line-height: 1.5; }
     .discovery-item p { font-size: 12px; margin: 5px 0; }
-    .library-start { padding: 12px 22px; border-bottom: 1px solid var(--line); }
-    .library-start p { margin: 0 0 8px; color: var(--soft); font-size: 13px; line-height: 1.5; }
-    .library-start[hidden] { display: none; }
-    .library-start button + button { margin-left: 8px; }
     @media (max-width: 480px) { .guide-dialog { padding: 18px; } }
 """
 
@@ -85,13 +81,6 @@ SCRIPT = r"""
     ["Follow the evidence", "Open citations to inspect the source passages. Study overlap is checked automatically: several papers may reuse one study or dataset. An unknown independent-study count means the overlap is not yet resolved, not that every paper is independent."],
     ["Make it yours", "Choose a light or dark theme and wallpaper in Appearance. Answer style adjusts how replies are written. Use ? to reopen this tour whenever you need it."]
   ];
-  const banner = document.createElement("section");
-  banner.className = "library-start"; banner.hidden = true;
-  banner.setAttribute("aria-label", "Getting your library ready");
-  const bannerText = document.createElement("p");
-  const add = document.createElement("button"); add.type = "button"; add.textContent = "Add papers";
-  banner.append(bannerText, add);
-  el("chat").before(banner);
   const findButton = document.createElement("button");
   findButton.type = "button"; findButton.id = "discoveryButton";
   findButton.className = "header-button"; findButton.textContent = "Find papers";
@@ -100,18 +89,9 @@ SCRIPT = r"""
   const replay = document.createElement("button"); replay.type = "button";
   replay.id = "guideReplay"; replay.textContent = "Quick tour";
   el("aboutClose").before(replay);
-  function updateBanner(data) {
+  function updateLibraryState(data) {
     stats = data;
-    const ready = Number(data.searchable || 0), total = Number(data.total || 0), pdfs = Number(data.local_pdf || 0);
-    banner.hidden = ready > 0;
-    add.hidden = !uploadAvailable;
-    if (ready > 0) return;
-    bannerText.textContent = total === 0
-      ? "Your library is empty. Add article PDFs to start asking questions. Accepted uploads are organised and indexed automatically."
-      : pdfs === 0
-        ? "You can browse the catalogue, but no full-text papers are ready for chat. Add PDFs; accepted uploads are organised and indexed automatically."
-        : "PDFs are present, but no papers are ready for chat yet. Check the library update status; files may still need processing or attention.";
-    if (!uploadAvailable) bannerText.textContent += " Ask the host to import PDFs or enable web uploads.";
+    if (guide.open) renderStep();
   }
   function renderStep() {
     el("guideCount").textContent = `${step + 1} of ${steps.length}`;
@@ -154,7 +134,6 @@ SCRIPT = r"""
   findButton.addEventListener("click", openDiscovery);
   el("discoveryClose").addEventListener("click", closeDiscovery);
   const openUpload = () => { if (uploadAvailable) el("paperUploadButton").click(); };
-  add.addEventListener("click", openUpload);
   el("discoveryUpload").addEventListener("click", () => { closeDiscovery(); openUpload(); });
   el("discoveryExample").addEventListener("change", (event) => {
     if (event.target.value) el("discoveryQuery").value = event.target.value;
@@ -190,14 +169,14 @@ SCRIPT = r"""
       if (serial === latestSearch) el("discoveryStatus").textContent = error.name === "AbortError" ? "Search cancelled." : error.message;
     } finally { if (serial === latestSearch) el("discoverySearch").disabled = false; }
   });
-  window.addEventListener("originrag:library-stats", (event) => updateBanner(event.detail));
+  window.addEventListener("originrag:library-stats", (event) => updateLibraryState(event.detail));
   async function start() {
     try {
       const responses = await Promise.all([fetch("/api/status"), fetch("/api/library-stats"), fetch("/api/library-status")]);
       if (responses.some((response) => !response.ok)) return;
       const [status, data, library] = await Promise.all(responses.map((response) => response.json()));
       uploadAvailable = Boolean(status.user) && library.state !== "unavailable";
-      updateBanner(data);
+      updateLibraryState(data);
       storageKey = `originrag.quick-tour.v1.${status.user?.user_id || "local"}`;
       let seen = false;
       try { seen = localStorage.getItem(storageKey) === "done"; } catch {}

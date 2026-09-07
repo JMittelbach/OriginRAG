@@ -20,7 +20,7 @@ and personal settings. Skip it at any time or reopen it with **? → Quick tour*
 Completion is remembered for this account in this browser. Clearing browser
 storage shows the tour again.
 
-If the library is empty, or contains only bibliographic records, a short hint
+If the library is empty, or contains only bibliographic records, the quick tour
 explains what is missing. In authenticated mode, **Add papers** accepts PDFs.
 Accepted uploads are checked, named, categorised and indexed automatically.
 Check the update status for duplicates, rejected files or files needing review.
