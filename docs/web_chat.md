@@ -13,6 +13,36 @@ The launcher opens a loopback-only service and selects a nearby port if `8765`
 is unavailable. Generated sessions remain below `outputs/web_chat_sessions/`
 and are ignored by Git.
 
+## First visit and adding literature
+
+A five-step quick tour introduces uploads, literature search, chat, study overlap
+and personal settings. Skip it at any time or reopen it with **? → Quick tour**.
+Completion is remembered for this account in this browser. Clearing browser
+storage shows the tour again.
+
+If the library is empty, or contains only bibliographic records, a short hint
+explains what is missing. In authenticated mode, **Add papers** accepts PDFs.
+Accepted uploads are checked, named, categorised and indexed automatically.
+Check the update status for duplicates, rejected files or files needing review.
+Anonymous sessions show instructions for asking the host to enable uploads or
+import the PDFs. A catalogue entry alone is not full text available for chat.
+
+**Find papers** searches external literature by any topic, independently of the
+local malaria-oriented discovery profiles. Topic examples cover sciences,
+engineering, social sciences and humanities, but do not restrict the query.
+Choose a starting year and sort by relevance or publication date. Journal
+articles are the default. Other options include conference papers, posted
+content (including preprints), or all publication types including books.
+The [Crossref search API](https://www.crossref.org/documentation/retrieve-metadata/rest-api/)
+receives only the search query and filters, not the local library or chats.
+Coverage varies by discipline and registered publication metadata.
+
+Search returns up to 12 bibliographic records, not downloaded PDFs. Open a
+publication to obtain a legally accessible copy, then use **Add papers**.
+Existing catalogue entries are marked. The search does not bypass paywalls,
+determine peer-review status or imply that a result supports the current answer.
+It uses no language model. Network failures are shown without blocking chat.
+
 ## Appearance
 
 Use **Appearance** in the top bar to choose Light, Dark, Black or your system

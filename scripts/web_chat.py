@@ -61,6 +61,8 @@ from originrag.retrieval.index_cache import (  # noqa: E402
 )
 from originrag.utils.io import write_json  # noqa: E402
 from originrag.web_appearance import with_appearance  # noqa: E402
+from originrag.web_onboarding import with_onboarding  # noqa: E402
+from originrag.discovery.topic_search import TopicDiscovery, DiscoveryBusy, DiscoveryUnavailable  # noqa: E402
 from originrag.web_auth import (  # noqa: E402
     AuthStore,
     AuthenticatedUser,
@@ -1582,6 +1584,7 @@ def build_handler(
         raise ValueError("Web chat requires an app.")
 
     anonymous_review_lock = threading.Lock()
+    topic_discovery = TopicDiscovery()
     corpus_lock = library_manager.corpus_lock if library_manager else threading.RLock()
     turn_jobs = TurnJobManager(
         max_concurrent_turns,
@@ -1692,6 +1695,27 @@ def build_handler(
                 return
             if parsed.path == "/api/library-stats":
                 self.respond_json(library_catalog_stats())
+                return
+            if parsed.path == "/api/discover-papers":
+                params = parse_qs(parsed.query)
+                try:
+                    result = topic_discovery.search(
+                        owner_key,
+                        query=(params.get("query") or [""])[0],
+                        since=(params.get("since") or [""])[0],
+                        order=(params.get("order") or ["relevance"])[0],
+                        kind=(params.get("kind") or ["journal-article"])[0],
+                    )
+                    known = {normalize_doi(str(item.get("doi") or "")) for item in library_catalog()}
+                    for item in result["items"]:
+                        item["in_library"] = normalize_doi(item["doi"]) in known
+                    self.respond_json(result)
+                except ValueError as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except DiscoveryBusy as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.TOO_MANY_REQUESTS)
+                except DiscoveryUnavailable as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_GATEWAY)
                 return
             if parsed.path == "/api/sessions":
                 owner_key = user.user_id if user else "anonymous"
@@ -8235,6 +8259,7 @@ INDEX_HTML = r"""<!doctype html>
         const response = await fetch("/api/library-stats");
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Library statistics unavailable.");
+        window.dispatchEvent(new CustomEvent("originrag:library-stats", {detail: data}));
         const total = Number(data.total || 0);
         const searchable = Number(data.searchable || 0);
         const localPdf = Number(data.local_pdf || 0);
@@ -8633,7 +8658,7 @@ INDEX_HTML = r"""<!doctype html>
 """
 
 
-INDEX_HTML = with_appearance(INDEX_HTML)
+INDEX_HTML = with_onboarding(with_appearance(INDEX_HTML))
 
 
 if __name__ == "__main__":

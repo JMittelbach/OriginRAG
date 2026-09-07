@@ -11,6 +11,7 @@ It keeps relevant reports available while assessing how much independent
 support they provide, including when their relationships are uncertain.
 
 - **Search and browse** by title, author or DOI without a language model.
+- **Find new papers** on any topic in the web app, then add accessible PDFs.
 - **Chat with your papers** using a local model through Ollama.
 - **Inspect the evidence:** follow citations, read source passages and review
   possible study overlap.
