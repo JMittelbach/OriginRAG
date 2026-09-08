@@ -2,21 +2,23 @@ import csv
 import json
 import os
 import sqlite3
+import sys
 import threading
 import time
 from pathlib import Path
 
 import pytest
 
-import import_paper_inbox as inbox
-import web_chat
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+import import_paper_inbox as inbox  # noqa: E402
+import web_chat  # noqa: E402
 
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("ORIGINRAG_LIVE_IMPORT_TESTS") != "1",
     reason="Opt-in live publisher downloads and Chromium: ORIGINRAG_LIVE_IMPORT_TESTS=1",
 )
-ROOT = Path(__file__).resolve().parents[1]
 CONTROLS = [
     ("10.1093/bioinformatics/bty560", "fastp an ultra-fast all-in-one FASTQ preprocessor", "Bioinformatics", "fastp"),
     ("10.1093/bioinformatics/btw354", "MultiQC summarize analysis results for multiple tools and samples in a single report", "Bioinformatics", "MultiQC"),
