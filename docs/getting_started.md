@@ -351,8 +351,6 @@ bind the built-in server to `0.0.0.0` or expose it directly to the internet.
 A public deployment requires a reviewed HTTPS reverse proxy, secure cookies,
 access controls, backups, and a production application server.
 
-## Troubleshooting
-
 ### Keep the server running with systemd
 
 On a Linux server with systemd, a user service keeps OriginRAG running without
@@ -419,6 +417,8 @@ systemctl --user start originrag.service
 Use `systemctl --user restart originrag.service` to load configuration changes.
 To disable automatic startup, run `systemctl --user disable --now originrag.service`.
 The application remains bound to loopback and requires an SSH tunnel as above.
+
+## Troubleshooting
 
 ### Retrieval index missing
 
