@@ -353,6 +353,73 @@ access controls, backups, and a production application server.
 
 ## Troubleshooting
 
+### Keep the server running with systemd
+
+On a Linux server with systemd, a user service keeps OriginRAG running without
+an open SSH session. First verify that `./web --auth --strict-port` starts
+successfully, then stop that foreground process before enabling the service.
+Keep Ollama, or your chosen model backend, running separately.
+
+Create `~/.config/systemd/user/originrag.service` with the following content.
+Replace **all three** `/absolute/path/to/OriginRAG` paths with your installation
+directory. Set `ORIGINRAG_PYTHON` to the actual Python interpreter that has
+OriginRAG's dependencies installed, for example the `.venv` interpreter shown
+below or `/absolute/path/to/conda/envs/originrag/bin/python`. Do not rely on an
+interactive Conda activation or use `~` in these paths.
+
+```ini
+[Unit]
+Description=OriginRAG literature assistant
+
+[Service]
+Type=simple
+WorkingDirectory=/absolute/path/to/OriginRAG
+Environment=ORIGINRAG_PYTHON=/absolute/path/to/OriginRAG/.venv/bin/python
+Environment=ORIGINRAG_WEB_OPEN=0
+ExecStart=/absolute/path/to/OriginRAG/web --auth --strict-port
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+UMask=0077
+
+[Install]
+WantedBy=default.target
+```
+
+Load and start it:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now originrag.service
+systemctl --user status originrag.service
+journalctl --user -u originrag.service -f
+```
+
+For operation after logout and automatic startup after reboot, enable
+[user lingering](https://man7.org/linux/man-pages/man1/loginctl.1.html):
+
+```bash
+loginctl enable-linger "$USER"
+loginctl show-user "$USER" -p Linger
+```
+
+The second command should report `Linger=yes`. If permission is denied, ask
+your server administrator to enable it for your account. On systems without a
+systemd user manager, use the service manager provided by the administrator.
+Do not run a second watchdog or foreground web process on the same port.
+
+Before an update, let queued requests and imports finish, then stop the service:
+
+```bash
+systemctl --user stop originrag.service
+# Update application files/dependencies, preserving your local corpus and .env.
+systemctl --user start originrag.service
+```
+
+Use `systemctl --user restart originrag.service` to load configuration changes.
+To disable automatic startup, run `systemctl --user disable --now originrag.service`.
+The application remains bound to loopback and requires an SSH tunnel as above.
+
 ### Retrieval index missing
 
 Confirm that PDFs exist below `ORIGINRAG_BIB_DIR`, then run:

@@ -137,6 +137,22 @@ Keep the service on loopback; do not expose the Python server directly to the
 internet. Use the SSH tunnel for remote access.
 [Server setup details](docs/getting_started.md#6-self-host-on-a-private-server)
 
+For continuous operation on Linux, configure the
+[systemd user service](docs/getting_started.md#keep-the-server-running-with-systemd).
+After the one-time setup:
+
+```bash
+systemctl --user enable --now originrag.service
+systemctl --user status originrag.service
+journalctl --user -u originrag.service -f
+```
+
+The service restarts after a failure. Enable user lingering as described in
+the guide so it also stays available after logout and starts after a reboot.
+Use `systemctl --user stop originrag.service` before maintenance, and
+`systemctl --user start originrag.service` afterwards. The SSH tunnel is still
+required for remote access.
+
 ## Data, documentation and development
 
 OriginRAG builds your local corpus from imported PDFs or open-access downloads,
