@@ -4,6 +4,7 @@ import http.client
 import io
 import ipaddress
 import json
+import math
 import os
 import re
 import secrets
@@ -155,8 +156,16 @@ def cc_licence(record: dict) -> bool:
     for item in record.get("license") or []:
         if not isinstance(item, dict):
             continue
+        start = (item.get("start") or {}).get("timestamp")
+        if start is not None:
+            try:
+                if not math.isfinite(float(start)) or float(start) > time.time() * 1000:
+                    continue
+            except (TypeError, ValueError):
+                continue
         url = urlsplit(str(item.get("URL") or ""))
-        if url.scheme == "https" and url.hostname == "creativecommons.org" and url.path.startswith(("/licenses/", "/publicdomain/")):
+        if (url.scheme in {"http", "https"} and url.netloc == "creativecommons.org"
+                and re.fullmatch(r"/(?:licenses/(?:by|by-sa|by-nd|by-nc|by-nc-sa|by-nc-nd)|publicdomain/(?:zero|mark))/[0-9.]+/?", url.path)):
             return True
     return False
 
@@ -241,7 +250,6 @@ def download_open_pdf(doi: str, progress) -> bytes:
 
     deadline = time.monotonic() + 70
     seen = set()
-    blocked_hosts = set()
     blocked_url = ""
     identity_failed = False
     unavailable = False
@@ -251,12 +259,11 @@ def download_open_pdf(doi: str, progress) -> bytes:
         if len(seen) >= 4 or time.monotonic() >= deadline:
             break
         seen.add(url)
-        if urlsplit(url).hostname in blocked_hosts:
-            continue
         progress("downloading")
         try:
             data = fetch_public(url, max_bytes=MAX_PDF_BYTES, deadline=deadline)
             if not data.startswith(b"%PDF-"):
+                unavailable = True
                 continue
             with fitz.open(stream=data, filetype="pdf") as pdf:
                 if pdf.needs_pass or not pdf.page_count:
@@ -269,14 +276,14 @@ def download_open_pdf(doi: str, progress) -> bytes:
             return data
         except PublicDownloadError as exc:
             if exc.status in {401, 403}:
-                blocked_hosts.add(urlsplit(exc.url).hostname)
                 blocked_url = blocked_url or exc.url
             else:
                 unavailable = True
         except Exception:
+            unavailable = True
             continue
     if blocked_url:
-        raise ManualUploadRequired("The source requires a browser for this download (HTTP 401/403). Open the PDF in your browser, then upload it here. This is not necessarily a paywall.", reason="browser_required", download_url=blocked_url)
+        raise ManualUploadRequired("The source refused the automatic download (HTTP 401/403). Try opening the PDF in your browser, then upload it here. This does not necessarily mean the paper is paywalled.", reason="browser_required", download_url=blocked_url)
     if identity_failed:
         raise ManualUploadRequired("A PDF was found, but its DOI could not be matched to this paper. Upload the correct article PDF for review.", reason="identity_unverified")
     if unavailable:

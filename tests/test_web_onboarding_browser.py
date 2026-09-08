@@ -224,6 +224,38 @@ def test_anonymous_session_explains_disabled_import(browser_page):
     assert "/api/paper-import" not in requests
 
 
+@pytest.mark.parametrize("download_url,safe", [
+    ("https://academic.oup.com/bioinformatics/article-pdf/42/9/btag620/70784336/btag620.pdf", True),
+    ("javascript:alert(1)", False),
+    ("https://user:secret@example.org/file.pdf", False),
+])
+def test_browser_only_pdf_offers_download_and_upload_without_retry(browser_page, download_url, safe):
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    state["imports"] = [{"job_id": "job1", "doi": "10.1234/test", "state": "manual_upload",
+                         "reason": "browser_required", "download_url": download_url,
+                         "message": "The source refused the automatic download (HTTP 403)."}]
+    page.locator("#discoveryButton").click()
+    page.locator("#discoveryQuery").fill("graph algorithms")
+    page.locator("#discoverySearch").click()
+    row = page.locator(".discovery-item")
+    button = row.get_by_role("button", name="Upload PDF", exact=True)
+    button.wait_for()
+    links = row.get_by_role("link", name="Open PDF in browser", exact=True)
+    assert links.count() == int(safe)
+    if safe:
+        assert links.get_attribute("href") == download_url
+        assert links.get_attribute("target") == "_blank"
+        assert links.get_attribute("rel") == "noopener noreferrer"
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.locator("#discoveryDialog").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+        page.screenshot(path=str(tmp / "browser-download.png"))
+    button.click()
+    assert page.locator("#paperDoi").input_value() == "10.1234/test"
+    assert page.locator("#paperUploadBackdrop").evaluate("el => el.classList.contains('open')")
+    assert "/api/paper-import" not in requests
+
+
 def test_local_import_without_account_or_cookie(browser_page):
     page, state, requests, tmp = browser_page
     page.locator("#guideSkip").click()
