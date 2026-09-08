@@ -15,6 +15,7 @@ import time
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from html.parser import HTMLParser
 from urllib.parse import quote, urlencode, urljoin, urlsplit
 
 from originrag.provenance.library import normalize_doi
@@ -170,9 +171,40 @@ def cc_licence(record: dict) -> bool:
     return False
 
 
+class ArticleMetadata(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.dois = set()
+        self.pdf_urls = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "meta":
+            return
+        attrs = dict(attrs)
+        name = (attrs.get("name") or attrs.get("property") or "").lower()
+        content = attrs.get("content") or ""
+        if name in {"citation_doi", "dc.identifier", "dc.identifier.doi"}:
+            doi = normalize_doi(content)
+            if doi:
+                self.dois.add(doi)
+        if name == "citation_pdf_url" and content:
+            self.pdf_urls.append(content)
+
+
+def landing_pdf_candidates(url: str, doi: str, deadline: float):
+    raw = fetch_public(url, max_bytes=2_000_000, deadline=deadline)
+    parser = ArticleMetadata()
+    parser.feed(raw.decode("utf-8", errors="replace"))
+    if parser.dois != {doi}:
+        return
+    for link in parser.pdf_urls[:2]:
+        yield urljoin(url, link)
+
+
 def oa_candidates(doi: str, deadline: float):
     open_access = False
     checked_pmcids = set()
+    landing_pages = []
     email = os.environ.get("ORIGINRAG_UNPAYWALL_EMAIL", "").strip()
     if email:
         try:
@@ -181,8 +213,11 @@ def oa_candidates(doi: str, deadline: float):
                 open_access = True
                 locations = [data.get("best_oa_location")] + (data.get("oa_locations") or [])
                 for item in locations:
-                    if isinstance(item, dict) and item.get("url_for_pdf"):
-                        yield str(item["url_for_pdf"])
+                    if isinstance(item, dict):
+                        if item.get("url_for_landing_page"):
+                            landing_pages.append(str(item["url_for_landing_page"]))
+                        if item.get("url_for_pdf"):
+                            yield str(item["url_for_pdf"])
         except Exception:
             pass
     try:
@@ -198,6 +233,8 @@ def oa_candidates(doi: str, deadline: float):
                 if not isinstance(item, dict) or item.get("is_oa") is not True:
                     continue
                 landing = urlsplit(str(item.get("landing_page_url") or ""))
+                if landing.scheme == "https" and landing.hostname not in {"pmc.ncbi.nlm.nih.gov", "europepmc.org"}:
+                    landing_pages.append(landing.geturl())
                 match = re.fullmatch(r"/articles/(PMC[0-9]+)/?", landing.path)
                 if landing.hostname == "pmc.ncbi.nlm.nih.gov" and match and len(checked_pmcids) < 2 and match[1] not in checked_pmcids:
                     checked_pmcids.add(match[1])
@@ -236,6 +273,8 @@ def oa_candidates(doi: str, deadline: float):
     try:
         data = metadata("https://api.crossref.org/works/" + quote(doi, safe=""), deadline).get("message") or {}
         if normalize_doi(data.get("DOI")) == doi and (open_access or cc_licence(data)):
+            if data.get("URL"):
+                landing_pages.append(str(data["URL"]))
             links = [item for item in (data.get("link") or []) if isinstance(item, dict) and item.get("content-type") == "application/pdf"]
             links.sort(key=lambda item: item.get("content-version") != "vor")
             for item in links[:4]:
@@ -243,6 +282,11 @@ def oa_candidates(doi: str, deadline: float):
                     yield str(item["URL"])
     except Exception:
         pass
+    for url in list(dict.fromkeys(landing_pages))[:3]:
+        try:
+            yield from landing_pdf_candidates(url, doi, deadline)
+        except Exception:
+            continue
 
 
 def download_open_pdf(doi: str, progress) -> bytes:
@@ -283,12 +327,12 @@ def download_open_pdf(doi: str, progress) -> bytes:
             unavailable = True
             continue
     if blocked_url:
-        raise ManualUploadRequired("The source refused the automatic download (HTTP 401/403). Try opening the PDF in your browser, then upload it here. This does not necessarily mean the paper is paywalled.", reason="browser_required", download_url=blocked_url)
+        raise ManualUploadRequired("Import failed: the source blocked automatic downloading (HTTP 401/403), and no accessible alternative PDF was verified. Not added to the RAG library.", reason="browser_required", download_url=blocked_url)
     if identity_failed:
-        raise ManualUploadRequired("A PDF was found, but its DOI could not be matched to this paper. Upload the correct article PDF for review.", reason="identity_unverified")
+        raise ManualUploadRequired("Import failed: the PDF's DOI did not match this paper. Not added to the RAG library.", reason="identity_unverified")
     if unavailable:
-        raise ManualUploadRequired("A PDF link was found, but its source is currently unavailable. Try again later or upload your copy.", reason="source_unavailable")
-    raise ManualUploadRequired("No accessible PDF with matching DOI could be verified. Open the publication and upload a legally accessible PDF instead.")
+        raise ManualUploadRequired("Import failed: the PDF source is currently unavailable. Not added to the RAG library. Please try again later.", reason="source_unavailable")
+    raise ManualUploadRequired("Import failed: no accessible PDF with matching DOI could be verified. Not added to the RAG library.")
 
 
 class PaperImports:
@@ -352,13 +396,13 @@ class PaperImports:
             elif result and result.get("status") == "duplicate":
                 self.update(job_id, "duplicate", "Already present or duplicate detected; check Library")
             else:
-                self.update(job_id, "review_required", "Library processing needs attention. Check the library update report or upload the PDF manually")
+                self.update(job_id, "review_required", "PDF downloaded, but library processing needs attention. Not confirmed ready for RAG. Check the library update report.")
         except ManualUploadRequired as exc:
             with self.lock:
                 self.jobs[job_id].update(reason=exc.reason, download_url=exc.download_url)
-            self.update(job_id, "manual_upload", str(exc))
+            self.update(job_id, "failed", str(exc))
         except Exception:
-            self.update(job_id, "error", "Import could not complete. Check the library status and try again, or upload the PDF manually")
+            self.update(job_id, "error", "Import could not complete. Not confirmed ready for RAG. Check the library status before retrying.")
 
     def shutdown(self):
         with self.lock:

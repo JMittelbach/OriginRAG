@@ -200,31 +200,21 @@ SCRIPT = r"""
   findButton.addEventListener("click", openDiscovery);
   el("discoveryClose").addEventListener("click", closeDiscovery);
   const openUpload = () => { if (uploadAvailable) el("paperUploadButton").click(); };
-  function uploadFor(doi) { el("paperDoi").value = doi; closeDiscovery(); openUpload(); }
-  function browserDownloadLink(job) {
-    if (job.state !== "manual_upload" || job.reason !== "browser_required") return null;
-    try {
-      const url = new URL(job.download_url);
-      if (url.protocol !== "https:" || url.username || url.password) return null;
-      const link = document.createElement("a");
-      link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer";
-      link.textContent = "Open PDF in browser"; return link;
-    } catch { return null; }
+  function importMessage(job) {
+    if (job.state === "manual_upload") return "Import failed: no downloadable, verified PDF could be obtained. Not added to the RAG library.";
+    return job.message || job.state;
   }
   el("discoveryUpload").addEventListener("click", () => { closeDiscovery(); openUpload(); });
   function updateImportButton(doi) {
     const pair = importButtons.get(doi), job = importJobs.get(doi);
     if (!pair || !job) return;
-    const {button, availability, browserLink} = pair;
-    browserLink.replaceChildren();
+    const {button, availability} = pair;
     if (pair.ready) { button.disabled = true; button.textContent = "In library"; return; }
     const active = activeImports.has(job.state);
     button.disabled = active || job.state === "imported";
-    const browserRequired = job.state === "manual_upload" && job.reason === "browser_required";
-    button.textContent = active ? "Importing…" : job.state === "imported" ? "In library" : browserRequired ? "Upload PDF" : "Try import again";
-    const link = browserDownloadLink(job);
-    if (link) browserLink.append(link);
-    availability.textContent = job.message || job.state;
+    const stage = {queued: "Waiting…", finding: "Finding PDF…", downloading: "Downloading…", indexing: "Indexing…"};
+    button.textContent = active ? stage[job.state] : job.state === "imported" ? "In library" : "Retry import";
+    availability.textContent = importMessage(job);
   }
   async function pollImports() {
     if (!uploadAvailable || importPollBusy) return;
@@ -245,16 +235,8 @@ SCRIPT = r"""
         importJobs.set(job.doi, job); updateImportButton(job.doi);
       }
       for (const job of [...importJobs.values()].slice(-8)) {
-        const row = document.createElement("p"); row.textContent = `${job.doi} · ${job.message || job.state}`;
+        const row = document.createElement("p"); row.textContent = `${job.doi} · ${importMessage(job)}`;
         list.append(row);
-        if (["manual_upload", "review_required", "error"].includes(job.state)) {
-          const actions = document.createElement("div"); actions.className = "discovery-import-actions";
-          const link = browserDownloadLink(job);
-          if (link) actions.append(link);
-          const upload = document.createElement("button"); upload.type = "button"; upload.textContent = "Upload PDF";
-          upload.addEventListener("click", () => uploadFor(job.doi));
-          actions.append(upload); list.append(actions);
-        }
       }
     } catch {} finally { importPollBusy = false; }
   }
@@ -266,7 +248,7 @@ SCRIPT = r"""
       if (!response.ok) throw new Error(job.error || "Import unavailable");
       importJobs.set(paper.doi, job); updateImportButton(paper.doi); pollImports();
     } catch (error) {
-      availability.textContent = `${error.message} You can use Add PDFs to library instead.`;
+      availability.textContent = `Import could not be started: ${error.message}`;
       button.disabled = false; button.textContent = "Add to library";
     }
   }
@@ -309,15 +291,9 @@ SCRIPT = r"""
           const button = document.createElement("button"); button.type = "button";
           button.textContent = paper.fulltext_ready ? "In library" : "Add to library";
           button.disabled = Boolean(paper.fulltext_ready);
-          button.addEventListener("click", () => {
-            const job = importJobs.get(paper.doi);
-            if (job?.state === "manual_upload" && job.reason === "browser_required") uploadFor(paper.doi);
-            else addPaper(paper, button, availability);
-          });
-          const actions = document.createElement("div"); actions.className = "discovery-import-actions";
-          const browserLink = document.createElement("span");
-          actions.append(browserLink, button); row.append(actions);
-          importButtons.set(paper.doi, {button, availability, browserLink, ready: Boolean(paper.fulltext_ready)});
+          button.addEventListener("click", () => addPaper(paper, button, availability));
+          row.append(button);
+          importButtons.set(paper.doi, {button, availability, ready: Boolean(paper.fulltext_ready)});
           updateImportButton(paper.doi);
         } else {
           const button = document.createElement("button"); button.type = "button";
