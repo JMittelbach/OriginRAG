@@ -75,7 +75,7 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
             raise
 
 
-def fetch_public(url: str, *, max_bytes: int, deadline: float) -> bytes:
+def fetch_public(url: str, *, max_bytes: int, deadline: float, with_url: bool = False) -> bytes | tuple[bytes, str]:
     for _ in range(4):
         host, ip, path = public_target(url)
         remaining = deadline - time.monotonic()
@@ -109,7 +109,7 @@ def fetch_public(url: str, *, max_bytes: int, deadline: float) -> bytes:
                 data.extend(block)
                 if len(data) > max_bytes:
                     raise ValueError("Download exceeds the size limit")
-            return bytes(data)
+            return (bytes(data), url) if with_url else bytes(data)
         finally:
             connection.close()
     raise ValueError("Too many download redirects")
@@ -192,13 +192,13 @@ class ArticleMetadata(HTMLParser):
 
 
 def landing_pdf_candidates(url: str, doi: str, deadline: float):
-    raw = fetch_public(url, max_bytes=2_000_000, deadline=deadline)
+    raw, final_url = fetch_public(url, max_bytes=2_000_000, deadline=deadline, with_url=True)
     parser = ArticleMetadata()
     parser.feed(raw.decode("utf-8", errors="replace"))
     if parser.dois != {doi}:
         return
     for link in parser.pdf_urls[:2]:
-        yield urljoin(url, link)
+        yield urljoin(final_url, link)
 
 
 def oa_candidates(doi: str, deadline: float):

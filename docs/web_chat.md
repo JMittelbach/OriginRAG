@@ -59,7 +59,9 @@ quality or peer-review status.
 Search returns up to 12 bibliographic records. Locally, or in an upload-enabled account,
 click **Add to library** on a result to find and import an open-access PDF.
 The DOI is sent to OpenAlex, Europe PMC and Crossref to locate open-access
-copies, including publisher PDF links registered with Crossref. Available
+copies, including publisher PDF links registered with Crossref. Open-access
+article pages are also checked for DOI-matched PDF links when
+direct provider links fail, within the same bounded download budget. Available
 PMC copies are retrieved through the official [PMC Open Data cloud service](https://pmc.ncbi.nlm.nih.gov/tools/pmcaws/),
 provided by the US National Library of Medicine. The latest deposited version
 must have matching identifiers and be marked open access and not retracted.
@@ -75,19 +77,20 @@ once, with at most eight active or queued imports and a 40 MB limit per PDF.
 Downloads use public HTTPS addresses only, with revalidated redirects and
 connections pinned to a checked public IP. An accessible PDF must also contain
 the requested DOI on its first page. Scanned copies, alternate versions or
-PDFs that fail this check require manual upload rather than automatic acceptance.
+PDFs that fail this check are not automatically accepted.
 
 Accepted PDFs go through the same identifier, duplicate, naming and indexing
 checks as uploads. A metadata-only record is supplemented while retaining its
 paper ID and citation key. Existing assets are not overwritten. A downloaded
 file is not reported as ready until library processing succeeds.
 
-If no suitable copy can be obtained, **Upload PDF** provides the manual route.
-If a source refuses the automatic download, **Open PDF in browser** links to
-the discovered PDF and **Upload PDF** opens the upload form with the DOI filled
-in. Download the file in your browser and select it in that form. Browser access
-can work even when a publisher blocks automated requests. OriginRAG does not
-copy browser cookies or bypass access checks.
+**Add to library** runs the complete download, classification, naming and
+indexing process without an upload step. The button shows progress and changes
+to **In library** only after indexing succeeds. If no suitable PDF can be
+obtained, the import shows a failure and **Retry import**, not an upload prompt
+or a success message. Browser access can work even when a publisher blocks
+automated requests. OriginRAG does not copy browser cookies or bypass access
+checks. The separate **Add papers** action remains available for local files.
 An unavailable copy does not necessarily mean the paper is paywalled: provider
 outages, download restrictions and identity-check failures can also cause this.
 Import status is held for the running server process, not across a restart.

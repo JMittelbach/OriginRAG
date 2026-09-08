@@ -169,6 +169,51 @@ def test_manual_job_preserves_browser_link_without_importing():
     finally:
         jobs.shutdown()
     job = jobs.snapshot("alice")[0]
-    assert job["state"] == "manual_upload" and job["reason"] == "browser_required"
+    assert job["state"] == "failed" and job["reason"] == "browser_required"
     assert urlsplit(job["download_url"]).hostname == "publisher.example"
     assert jobs.snapshot("bob") == []
+
+
+@pytest.mark.parametrize("article_doi,expected", [(DOI, True), ("10.1234/wrong", False), ("", False)])
+def test_landing_page_identity_and_redirect_relative_pdf(monkeypatch, article_doi, expected):
+    html = f'<meta name="citation_doi" content="{article_doi}"><meta name="citation_pdf_url" content="files/article.pdf?x=1&amp;y=2">'.encode()
+    def fetch(url, **kwargs):
+        assert kwargs["with_url"] is True
+        assert kwargs["max_bytes"] == 2_000_000
+        return html, "https://publisher.example/articles/123/"
+    monkeypatch.setattr(oa, "fetch_public", fetch)
+    assert list(oa.landing_pdf_candidates("https://doi.org/" + DOI, DOI, time.monotonic()+5)) == (
+        ["https://publisher.example/articles/123/files/article.pdf?x=1&y=2"] if expected else [])
+
+
+def test_landing_links_are_downloaded_automatically_and_pdf_is_verified(monkeypatch):
+    data = pdf_bytes()
+    calls = []
+    def metadata(url, deadline):
+        if "openalex.org" in url:
+            return {"doi": DOI, "locations": [
+                {"is_oa": False, "landing_page_url": "https://closed.example/article"},
+                {"is_oa": True, "landing_page_url": "https://publisher.example/article"}]}
+        return {}
+    def fetch(url, **kwargs):
+        calls.append(url)
+        if kwargs.get("with_url"):
+            return (f'<meta name="citation_doi" content="{DOI}"><meta name="citation_pdf_url" content="https://publisher.example/article.pdf">'.encode(), url)
+        return data
+    monkeypatch.setattr(oa, "metadata", metadata)
+    monkeypatch.setattr(oa, "fetch_public", fetch)
+    assert oa.download_open_pdf(DOI, lambda state: None) == data
+    assert calls == ["https://publisher.example/article", "https://publisher.example/article.pdf"]
+
+
+def test_landing_page_budget_and_duplicate_links(monkeypatch):
+    calls = []
+    monkeypatch.setattr(oa, "metadata", lambda url, deadline: {
+        "doi": DOI, "locations": [{"is_oa": True, "landing_page_url": f"https://example.org/{i}"} for i in [0, 0, 1, 2, 3, 4]]
+    } if "openalex.org" in url else {})
+    def landing(url, doi, deadline):
+        calls.append(url)
+        return iter(())
+    monkeypatch.setattr(oa, "landing_pdf_candidates", landing)
+    assert list(oa.oa_candidates(DOI, time.monotonic()+5)) == []
+    assert calls == [f"https://example.org/{i}" for i in range(3)]

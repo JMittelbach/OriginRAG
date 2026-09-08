@@ -19,7 +19,6 @@ STYLE = """
     .discovery-item { border-top: 1px solid var(--line); padding: 14px 0; }
     .discovery-item a { color: var(--accent); line-height: 1.5; }
     .discovery-item p { font-size: 12px; margin: 5px 0; }
-    .discovery-import-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
     .journal-options { max-height: 190px; overflow-y: auto; }
     .journal-options label { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
     .journal-options input { width: auto; flex: none; margin-top: 4px; }

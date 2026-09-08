@@ -1,4 +1,5 @@
 import csv
+import sqlite3
 import sys
 from pathlib import Path
 import pytest
@@ -66,3 +67,37 @@ def test_upgrade_rolls_back_metadata_and_restores_pdf_on_index_failure(tmp_path,
     assert source.is_file()
     assert not (tmp_path / "data/chunks/EXISTING_1.jsonl").exists()
     assert {path.name: path.read_bytes() for path in metadata.iterdir()} == original
+
+
+@pytest.mark.parametrize("index_failure", [False, True])
+def test_one_click_import_runs_real_sorting_and_indexing_without_user_upload(tmp_path, monkeypatch, index_failure):
+    from web_chat import LibrarySyncManager
+    from originrag.discovery.oa_import import PaperImports
+    source, metadata = setup_library(tmp_path, monkeypatch)
+    source.rename(tmp_path / "fixture.pdf")
+    if index_failure:
+        def fail(*a, **kw):
+            raise RuntimeError("Index unavailable")
+        monkeypatch.setattr(inbox, "update_fts_index", fail)
+    library = LibrarySyncManager(source.parent, importer=inbox.import_inbox, auto_worker=False,
+                                 read_cache_refresh=lambda: None, refresh_callback=lambda: None)
+    jobs = PaperImports(library, downloader=lambda doi, progress: pdf_bytes(doi))
+    try:
+        jobs.enqueue("alice", "10.1234/test")
+    finally:
+        jobs.shutdown()
+    job = jobs.snapshot("alice")[0]
+    if index_failure:
+        assert job["state"] != "imported"
+        assert not (tmp_path / "data/chunks/EXISTING_1.jsonl").exists()
+        return
+    assert job["state"] == "imported"
+    with (metadata / "papers.tsv").open() as stream:
+        row = next(csv.DictReader(stream, delimiter="\t"))
+    assert row["paper_id"] == "EXISTING_1"
+    assert row["fulltext_status"] == "chunked"
+    assert row["local_pdf_relpath"].startswith("papers/")
+    assert (tmp_path / "bib" / row["local_pdf_relpath"]).read_bytes().startswith(b"%PDF-")
+    with sqlite3.connect(tmp_path / "data/indexes/pfempire_fts.sqlite") as db:
+        found = db.execute("SELECT paper_id FROM chunk_fts WHERE chunk_fts MATCH ?", ("graph",)).fetchall()
+    assert found and {r[0] for r in found} == {"EXISTING_1"}

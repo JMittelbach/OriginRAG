@@ -191,7 +191,7 @@ def test_direct_import_status_survives_dialog_and_page_reload(browser_page):
     page.locator("#discoveryQuery").fill("graph algorithms")
     page.locator("#discoverySearch").click()
     page.locator(".discovery-item").get_by_role("button", name="Add to library").click()
-    page.wait_for_function("document.querySelector('.discovery-item button').textContent === 'Importing…'")
+    page.wait_for_function("document.querySelector('.discovery-item button').textContent === 'Waiting…'")
     page.locator("#discoveryClose").click()
     page.reload()
     page.wait_for_load_state("networkidle")
@@ -201,10 +201,9 @@ def test_direct_import_status_survives_dialog_and_page_reload(browser_page):
     state["imports"] = []
     page.wait_for_function("document.getElementById('paperImportJobs').textContent.includes('no longer available')")
     state["imports"] = [{**job, "state": "manual_upload", "message": "No matching accessible PDF found"}]
-    page.locator("#paperImportJobs").get_by_role("button", name="Upload PDF").wait_for()
-    page.locator("#paperImportJobs").get_by_role("button", name="Upload PDF").click()
-    assert page.locator("#paperDoi").input_value() == "10.1234/test"
-    assert page.locator("#paperUploadBackdrop").evaluate("el => el.classList.contains('open')")
+    page.wait_for_function("document.getElementById('paperImportJobs').textContent.includes('Not added to the RAG library')")
+    assert page.locator("#paperImportJobs button").count() == 0
+    assert not page.locator("#paperUploadBackdrop").evaluate("el => el.classList.contains('open')")
 
 
 def test_anonymous_session_explains_disabled_import(browser_page):
@@ -224,36 +223,33 @@ def test_anonymous_session_explains_disabled_import(browser_page):
     assert "/api/paper-import" not in requests
 
 
-@pytest.mark.parametrize("download_url,safe", [
-    ("https://academic.oup.com/bioinformatics/article-pdf/42/9/btag620/70784336/btag620.pdf", True),
-    ("javascript:alert(1)", False),
-    ("https://user:secret@example.org/file.pdf", False),
-])
-def test_browser_only_pdf_offers_download_and_upload_without_retry(browser_page, download_url, safe):
+@pytest.mark.parametrize("job_state", ["failed", "manual_upload", "error"])
+def test_failed_import_stays_an_import_without_upload_detour(browser_page, job_state):
     page, state, requests, tmp = browser_page
     page.locator("#guideSkip").click()
-    state["imports"] = [{"job_id": "job1", "doi": "10.1234/test", "state": "manual_upload",
-                         "reason": "browser_required", "download_url": download_url,
-                         "message": "The source refused the automatic download (HTTP 403)."}]
+    state["imports"] = [{"job_id": "job1", "doi": "10.1234/test", "state": job_state,
+                         "reason": "browser_required", "download_url": "https://example.org/pdf",
+                         "message": "Import failed: source blocked downloading. Not added to the RAG library."}]
     page.locator("#discoveryButton").click()
     page.locator("#discoveryQuery").fill("graph algorithms")
     page.locator("#discoverySearch").click()
     row = page.locator(".discovery-item")
-    button = row.get_by_role("button", name="Upload PDF", exact=True)
+    button = row.get_by_role("button", name="Retry import", exact=True)
     button.wait_for()
-    links = row.get_by_role("link", name="Open PDF in browser", exact=True)
-    assert links.count() == int(safe)
-    if safe:
-        assert links.get_attribute("href") == download_url
-        assert links.get_attribute("target") == "_blank"
-        assert links.get_attribute("rel") == "noopener noreferrer"
-        page.set_viewport_size({"width": 390, "height": 844})
-        assert page.locator("#discoveryDialog").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
-        page.screenshot(path=str(tmp / "browser-download.png"))
+    assert row.get_by_role("link", name="Open PDF in browser", exact=True).count() == 0
+    assert page.locator("#discoveryDialog").get_by_role("button", name="Upload PDF", exact=True).count() == 0
+    assert "Not added to the RAG library" in row.inner_text()
     button.click()
-    assert page.locator("#paperDoi").input_value() == "10.1234/test"
-    assert page.locator("#paperUploadBackdrop").evaluate("el => el.classList.contains('open')")
-    assert "/api/paper-import" not in requests
+    page.wait_for_function("document.querySelector('.discovery-item button').textContent === 'Waiting…'")
+    assert "/api/paper-import" in requests
+    assert not page.locator("#paperUploadBackdrop").evaluate("el => el.classList.contains('open')")
+    job = dict(state["imports"][0])
+    for stage, label in [("downloading", "Downloading…"), ("indexing", "Indexing…"), ("imported", "In library")]:
+        state["imports"] = [{**job, "state": stage, "message": label}]
+        page.wait_for_function("label => document.querySelector('.discovery-item button').textContent === label", arg=label)
+        assert row.locator("button").is_disabled()
+    assert len([p for p in requests if p == "/api/paper-import"]) == 1
+    assert "/api/library-upload" not in requests
 
 
 def test_local_import_without_account_or_cookie(browser_page):

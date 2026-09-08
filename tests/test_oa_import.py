@@ -129,7 +129,7 @@ def test_no_access_requires_upload_instead_of_success():
     jobs = oa.PaperImports(None, downloader=denied)
     jobs.enqueue("alice", "10.1234/test")
     jobs.executor.shutdown(wait=True)
-    assert jobs.snapshot("alice")[0]["state"] == "manual_upload"
+    assert jobs.snapshot("alice")[0]["state"] == "failed"
 
 
 def test_queue_is_bounded_and_rejects_arbitrary_urls():
