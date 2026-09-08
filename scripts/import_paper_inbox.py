@@ -1104,10 +1104,19 @@ def load_known_pdf_hashes() -> set[str]:
     manifest_path = REPO_ROOT / "product_manifest.json"
     if manifest_path.exists():
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        files = payload.get("files") or []
+        if isinstance(files, dict):
+            files = [
+                {"path": path, "sha256": value}
+                for path, value in files.items()
+                if isinstance(value, str)
+            ]
         hashes.update(
             item.get("sha256", "")
-            for item in payload.get("files") or []
-            if str(item.get("path") or "").startswith("bib/papers/")
+            for item in files
+            if isinstance(item, dict)
+            and str(item.get("path") or "").startswith("bib/papers/")
+            and isinstance(item.get("sha256"), str)
         )
     cache_path = REPO_ROOT / "runtime/imports/pdf_hashes.json"
     if cache_path.exists():

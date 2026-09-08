@@ -15,9 +15,37 @@ from originrag.retrieval.query_plan import (
     explicit_named_study_references,
     required_context_anchor_groups,
     required_entity_anchor_groups,
+    named_antibody_anchor_groups,
     source_lookup_query,
     unwrap_explicit_query_instruction,
 )
+
+
+@pytest.mark.parametrize("name", ["ATS", "ats", "GFP", "BRD4"])
+def test_named_antibody_queries_keep_the_requested_target(name: str) -> None:
+    question = f"paper which used {name} antibody"
+    assert named_antibody_anchor_groups(question) == [(name.lower(),)]
+    assert (name.lower(),) in required_entity_anchor_groups(question)
+    assert classify_paper_search_mode(question) == "topical_discovery"
+    queries = build_retrieval_queries(question, task="sources")
+    assert any(q.label == "named_antibody_1" for q in queries)
+    assert not any(q.label == "molecular_targets" for q in queries)
+
+
+@pytest.mark.parametrize("question", [
+    "Find papers which used monoclonal antibodies",
+    "Find papers which used human antibodies",
+    "How effective are malaria antibodies?",
+    "Find studies using non-neutralizing antibodies",
+    "Find studies using IgG antibodies",
+])
+def test_generic_antibody_descriptions_are_not_named_targets(question: str) -> None:
+    assert named_antibody_anchor_groups(question) == []
+
+
+def test_antibody_anchor_uses_current_turn_and_strips_anti_prefix() -> None:
+    question = "Previous user question: ATS antibody\nCurrent user question: papers using anti-GFP antibody"
+    assert named_antibody_anchor_groups(question) == [("gfp",)]
 
 
 def test_spp1_question_gets_required_symbol_and_alias_query() -> None:

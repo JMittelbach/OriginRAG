@@ -113,6 +113,8 @@ SOURCE_LOOKUP_TERMS = (
 )
 
 SOURCE_LOOKUP_PATTERNS = (
+    r"\b(?:papers?|stud(?:y|ies)|articles?|reports?)\s+(?:(?:which|that)\s+)?"
+    r"(?:used?|uses|using|employed|employing|investigated|examined)\b",
 
 
     r"\b(?:find|rank|list|show|identify|recommend)\b.{0,100}\b(?:papers?|studies|articles?|sources?|references?)\b",

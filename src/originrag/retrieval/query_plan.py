@@ -473,6 +473,42 @@ CLINICAL_PHENOTYPE_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+def named_antibody_anchor_groups(question: str) -> list[tuple[str, ...]]:
+    """Preserve explicitly named antibody targets without guessing acronym expansions."""
+    current = current_question_from_context(question)
+    generic = {
+        "a", "an", "the", "any", "which", "what", "specific", "different",
+        "monoclonal", "polyclonal", "primary", "secondary", "human", "mouse",
+        "murine", "rabbit", "goat", "rat", "donkey", "bovine", "neutralizing",
+        "neutralising", "therapeutic", "protective", "circulating", "serum",
+        "recombinant", "commercial", "commercially", "purified", "labelled",
+        "labeled", "conjugated", "fluorescent", "available", "these", "those",
+        "of", "with", "using", "used", "and", "or", "control", "isotype",
+        "novel", "broad", "total", "other", "new", "igg", "igm", "ige", "iga",
+    }
+    groups: list[tuple[str, ...]] = []
+    for match in re.finditer(
+        r"\b(?:anti[- ]?)?([A-Za-z][A-Za-z0-9]*(?:[-/][A-Za-z0-9]+)*)\s+"
+        r"(?:antibod(?:y|ies)|antiserum|antisera)\b",
+        current,
+        flags=re.IGNORECASE,
+    ):
+        token = normalize_text(match.group(1))
+        if token in generic or any(part in generic for part in token.split()):
+            continue
+        if not (match.group(1).isupper() or any(c.isdigit() for c in token)
+                or len(token) <= 5):
+            continue
+        aliases = next(
+            (values for values in ENTITY_ALIASES.values()
+             if any(token == normalize_text(alias) for alias in values)),
+            (token,),
+        )
+        if aliases not in groups:
+            groups.append(aliases)
+    return groups
+
+
 def required_entity_anchor_groups(question: str) -> list[tuple[str, ...]]:
     """Return explicit high-specificity entities that retrieved evidence must carry.
 
@@ -502,7 +538,7 @@ def required_entity_anchor_groups(question: str) -> list[tuple[str, ...]]:
         )
     }
 
-    groups: list[tuple[str, ...]] = []
+    groups: list[tuple[str, ...]] = list(named_antibody_anchor_groups(current))
     if developmental_t_cell_repertoire_request(normalized):
 
 
@@ -560,7 +596,8 @@ def required_entity_anchor_groups(question: str) -> list[tuple[str, ...]]:
             )
             for alias in aliases
         ):
-            groups.append(aliases)
+            if aliases not in groups:
+                groups.append(aliases)
 
     if not expression_family_group and re.search(
         r"\b(?:var genes?|pfemp1)\s+or\s+(?:var genes?|pfemp1)\b",
@@ -1135,6 +1172,18 @@ def build_retrieval_queries(question: str, task: str = "answer", max_queries: in
     if previous_titles:
         queries.append(RetrievalQuery("followup_sources", compact(f"{current_question or clean_question} {' '.join(previous_titles)}")))
     curated_expansions = rule_based_expansions(normalized_current, task=task)
+    antibody_groups = named_antibody_anchor_groups(current_question)
+    if antibody_groups:
+        curated_expansions = [
+            expansion for expansion in curated_expansions
+            if expansion.label != "molecular_targets"
+        ]
+        for index, group in enumerate(antibody_groups, start=1):
+            queries.append(RetrievalQuery(
+                f"named_antibody_{index}",
+                f"{entity_anchor_query(group)} antibody antibodies",
+                intent="required_entity",
+            ))
 
 
     queries.extend(

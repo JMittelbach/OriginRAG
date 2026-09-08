@@ -11,6 +11,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import import_paper_inbox as inbox  # noqa: E402
 
 
+@pytest.mark.parametrize("files,expected", [
+    ({"src/originrag/__init__.py": "code-hash"}, set()),
+    ({"bib/papers/example.pdf": "pdf-hash"}, {"pdf-hash"}),
+    ([{"path": "bib/papers/example.pdf", "sha256": "legacy-pdf-hash"}], {"legacy-pdf-hash"}),
+    ([None, "unexpected", {"path": "bib/papers/example.pdf", "sha256": None}], set()),
+])
+def test_known_pdf_hashes_accept_both_product_manifest_formats(tmp_path, monkeypatch, files, expected):
+    import json
+    monkeypatch.setattr(inbox, "REPO_ROOT", tmp_path)
+    (tmp_path / "product_manifest.json").write_text(json.dumps({"files": files}))
+    cache = tmp_path / "runtime/imports/pdf_hashes.json"
+    cache.parent.mkdir(parents=True)
+    cache.write_text(json.dumps(["previous-import-hash"]))
+    assert inbox.load_known_pdf_hashes() == expected | {"previous-import-hash"}
+
+
 def setup_library(tmp_path, monkeypatch):
     monkeypatch.setattr(inbox, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(inbox, "fetch_crossref", lambda *a, **k: {"title": "A study of graph algorithms", "author": "Example", "year": "2024", "journal": "Test Journal"})
@@ -43,6 +59,17 @@ def test_metadata_only_record_is_upgraded_without_duplicate_ids(tmp_path, monkey
     source.write_bytes(pdf_bytes())
     repeated = inbox.import_inbox(source.parent)
     assert repeated["imported"] == 0 and repeated["duplicates"] == 1
+
+
+def test_real_import_accepts_product_source_manifest(tmp_path, monkeypatch):
+    import json
+    source, _ = setup_library(tmp_path, monkeypatch)
+    (tmp_path / "product_manifest.json").write_text(json.dumps({
+        "schema_version": "originrag_product_source_v1",
+        "files": {"scripts/import_paper_inbox.py": "code-hash"},
+    }))
+    result = inbox.import_inbox(source.parent)
+    assert result["imported"] == 1
 
 
 def test_existing_assets_and_conflicting_ids_are_not_upgraded(tmp_path, monkeypatch):

@@ -32,6 +32,97 @@ from originrag.trace.blueprint import suggest_blueprint  # noqa: E402
 from originrag.trace.runtime import prepare_candidates  # noqa: E402
 
 
+@pytest.mark.parametrize("name", ["ATS", "GFP"])
+def test_named_antibody_search_rejects_unrelated_and_background_passages(name: str) -> None:
+    question = f"paper which used {name} antibody"
+    candidates = [
+        {"paper_id": "DIRECT", "title": "A measurement study", "section": "methods",
+         "text": f"The {name} antibody was used in this study."},
+        {"paper_id": "OTHER", "title": "Another antibody study", "section": "results",
+         "text": "The PAM1.4 antibody was tested in this study."},
+        {"paper_id": "BACKGROUND", "title": "A review", "section": "discussion",
+         "text": f"Previous studies used the {name} antibody [12]."},
+        {"paper_id": "PARTIAL", "title": "An unrelated study", "section": "methods",
+         "text": f"The {name}2 antibody was used in this study."},
+        {"paper_id": "TITLE_ONLY", "title": f"The {name} antibody", "section": "methods",
+         "text": "The PAM1.4 antibody was used in this study."},
+    ]
+    groups = required_entity_anchor_groups(question)
+    anchored = ask_corpus.retain_entity_anchored_evidence(
+        candidates, groups, question=question, max_chars_per_chunk=500,
+    )
+    retained = ask_corpus.retain_direct_entity_source_evidence(
+        anchored, question=question, entity_anchor_groups=groups, max_chars_per_chunk=500,
+    )
+    assert [row["paper_id"] for row in retained] == ["DIRECT"]
+
+
+@pytest.mark.parametrize("has_match", [True, False])
+@pytest.mark.parametrize("selector", ["current", "trace_flow"])
+@pytest.mark.parametrize("retriever", ["keyword", "bm25"])
+def test_named_antibody_paper_request_end_to_end(
+    tmp_path: Path, has_match: bool, selector: str, retriever: str,
+) -> None:
+    from originrag.analysis.chat import resolve_chat_task
+
+    question = "paper which used ATS antibody"
+    chunks_dir = tmp_path / "chunks"
+    chunks_dir.mkdir()
+    papers = tmp_path / "papers.tsv"
+    documents = [
+        ("OTHER", "Antibody measurements", "methods",
+         "The PAM1.4 antibody was used in this study."),
+        ("REVIEW", "Antibody literature review", "discussion",
+         "Previous studies used an ATS antibody [12]."),
+    ]
+    if has_match:
+        documents.append(("DIRECT", "A measurement study", "methods",
+                          "The ATS antibody was used in this study."))
+    papers.write_text(
+        "paper_id\ttitle\tyear\tdoi\tpaper_type\tfulltext_status\n" + "".join(
+            f"{pid}\t{title}\t2024\t10.1000/{pid.lower()}\tarticle\tchunked\n"
+            for pid, title, _, _ in documents
+        ), encoding="utf-8",
+    )
+    for pid, _, section, text in documents:
+        (chunks_dir / f"{pid}.jsonl").write_text(json.dumps({
+            "chunk_id": f"{pid}_C1", "paper_id": pid, "section": section, "text": text,
+        }) + "\n", encoding="utf-8")
+    args = make_args(question, str(chunks_dir), str(papers), "none")
+    args.task = resolve_chat_task(question)
+    args.evidence_selector = selector
+    args.retriever = retriever
+    if retriever == "bm25":
+        args.retrieval_index = str(tmp_path / "index.sqlite")
+        build_fts_index(chunks_dir, papers, Path(args.retrieval_index))
+    result = ask_corpus.run_question(args, tmp_path / "run")
+    assert [p["paper_id"] for p in result["paper_search_results"]] == (
+        ["DIRECT"] if has_match else []
+    )
+    config = json.loads((tmp_path / "run" / "run_config.json").read_text())
+    assert config["task"] == "sources"
+    assert config["answer_call_performed"] is False
+
+
+def test_named_antibody_metadata_noise_does_not_exhaust_result_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = [
+        {"paper_id": f"OTHER_{i}", "title": "Antibody measurements", "score": 100 - i}
+        for i in range(20)
+    ]
+    monkeypatch.setattr(ask_corpus, "search_papers", lambda *args, **kwargs: metadata)
+    result = ask_corpus.retrieve_papers_for_queries(
+        question="paper which used GFP antibody",
+        retrieval_queries=[RetrievalQuery("main", "GFP antibody")],
+        papers_tsv=tmp_path / "unused.tsv", candidate_limit=30, result_limit=1,
+        category=None, task_mode="evidence_qa", paper_search_mode="topical_discovery",
+        chunk_results=[{"paper_id": "DIRECT", "text": "This study used GFP antibody.",
+                        "score": 1}],
+    )
+    assert [row["paper_id"] for row in result] == ["DIRECT"]
+
+
 def test_required_entity_filter_rejects_topical_match_without_entity() -> None:
     candidates = [
         {

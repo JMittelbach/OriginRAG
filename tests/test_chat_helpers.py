@@ -24,6 +24,23 @@ def test_resolve_chat_task_defaults_to_evidence_answer() -> None:
     )
 
 
+@pytest.mark.parametrize("question", [
+    "paper which used ATS antibody",
+    "papers which use ats antibody",
+    "a study that used an anti-GFP antibody",
+    "articles using BRD4 antibodies",
+    "reports which examined antibody specificity",
+])
+def test_relative_clause_paper_requests_use_source_search(question: str) -> None:
+    assert resolve_chat_task(question) == "sources"
+
+
+def test_paper_usage_with_explicit_synthesis_still_requests_answer() -> None:
+    assert resolve_chat_task(
+        "Find papers which used GFP antibody, and how strong is the evidence?"
+    ) == "answer"
+
+
 def test_resolve_chat_task_auto_detects_gaps() -> None:
     task = resolve_chat_task("Find research gaps in sex differences and malaria immunity.", configured_task="auto")
 

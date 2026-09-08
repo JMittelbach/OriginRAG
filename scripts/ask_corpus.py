@@ -86,6 +86,7 @@ from originrag.retrieval.query_plan import (  # noqa: E402
     explicit_named_study_references,
     required_context_anchor_groups,
     required_entity_anchor_groups,
+    named_antibody_anchor_groups,
     requested_expression_family_alternatives,
     requested_immune_receptor_binding,
     requested_source_function_alternatives,
@@ -1902,6 +1903,8 @@ def retrieve_papers_for_queries(
         paper["rationale"] = paper.get("rationale") or "full-text match"
         chunk_papers.append(paper)
     combined = reciprocal_rank_fusion([fused, chunk_papers], id_key="paper_id")
+    if named_antibody_anchor_groups(question):
+        combined = retain_papers_with_anchored_evidence(combined, chunk_results)
     combined = rerank_direct_clinical_paper_matches(
         question,
         combined,
@@ -4544,6 +4547,9 @@ def retain_direct_entity_source_evidence(
     title_function_aliases = requested_source_function_title_alternatives(
         normalized_question
     )
+    if named_antibody_anchor_groups(question):
+        function_aliases = ("antibody", "antibodies", "antiserum", "antisera")
+        title_function_aliases = ()
     if not function_aliases or not entity_anchor_groups:
         return candidates
 
