@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -29,7 +30,10 @@ CONTROLS = [
 
 @pytest.mark.parametrize("doi,query,journal,term", CONTROLS, ids=["bioinformatics-fastp", "bioinformatics-multiqc", "nature-alphafold2", "nature-alphafold3"])
 def test_live_find_click_import_and_search(tmp_path, monkeypatch, doi, query, journal, term):
-    playwright = pytest.importorskip("playwright.sync_api")
+    try:
+        import playwright.sync_api as playwright
+    except ImportError:
+        pytest.fail("Live controls require playwright and its Chromium browser")
     monkeypatch.setattr(inbox, "REPO_ROOT", tmp_path)
     for name in ("papers.tsv", "paper_registry.tsv"):
         with (ROOT / "assets/catalogue" / name).open() as stream:
@@ -65,6 +69,8 @@ def test_live_find_click_import_and_search(tmp_path, monkeypatch, doi, query, jo
                 page.locator("#guideSkip").click(timeout=20000)
                 page.locator("#discoveryButton").click()
                 page.locator("#discoveryQuery").fill(query)
+                page.locator("#journalQuery").fill(journal)
+                page.locator("#journalOptions label").filter(has_text=re.compile(r"^" + journal + r" ·")).locator("input").first.check(timeout=20000)
                 with page.expect_response(lambda response: "/api/discover-papers?" in response.url, timeout=25000) as search:
                     page.locator("#discoverySearch").click()
                 results = search.value.json()
@@ -79,12 +85,11 @@ def test_live_find_click_import_and_search(tmp_path, monkeypatch, doi, query, jo
                     row.get_by_role("button", name="Add to library", exact=True).click()
                 assert added.value.status == 202, added.value.text()
                 job_id = added.value.json()["job_id"]
-                page.wait_for_function("""async jobId => {
-                    const response = await fetch('/api/paper-imports');
-                    const data = await response.json();
-                    const job = data.jobs.find(j => j.job_id === jobId);
-                    return job && !['queued', 'finding', 'downloading', 'indexing'].includes(job.state);
-                }""", arg=job_id, polling=1000, timeout=125000)
+                page.wait_for_function("""doi => {
+                    const link = [...document.querySelectorAll('.discovery-item > a')].find(a => a.href === 'https://doi.org/' + doi);
+                    const button = link?.closest('.discovery-item').querySelector('button');
+                    return button && ['In library', 'Retry import'].includes(button.textContent);
+                }""", arg=doi, polling=500, timeout=125000)
                 jobs = page.request.get(f"http://127.0.0.1:{server.server_address[1]}/api/paper-imports").json()["jobs"]
                 job = next(item for item in jobs if item["job_id"] == job_id)
                 report.update(job=job, import_seconds=round(time.monotonic() - start, 2))
@@ -100,7 +105,11 @@ def test_live_find_click_import_and_search(tmp_path, monkeypatch, doi, query, jo
             papers = list(csv.DictReader(stream, delimiter="\t"))
         assert len(papers) == 1
         paper = papers[0]
-        assert paper["doi"] == doi and paper["journal"] == journal
+        with (tmp_path / "data/metadata/paper_registry.tsv").open() as stream:
+            registry = list(csv.DictReader(stream, delimiter="\t"))
+        assert len(registry) == 1
+        assert registry[0]["journal"] == journal and registry[0]["doi"] == doi
+        assert paper["doi"] == doi
         assert paper["fulltext_status"] == "chunked"
         pdf = tmp_path / "bib" / paper["local_pdf_relpath"]
         assert pdf.read_bytes().startswith(b"%PDF-")
