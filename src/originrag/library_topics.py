@@ -1,41 +1,88 @@
+import hashlib
+import math
 import re
-from collections.abc import Mapping
+from collections import Counter, defaultdict
+from functools import lru_cache
 
 
-LIBRARY_TOPICS = (
-    ("var_pfemp1", "Multigene families & antigenic variation", {"var_pfemp1", "rifin", "stevor", "multigene_families"}),
-    ("malaria_biology", "Malaria biology", {"general_malaria", "parasite_biology", "malaria"}),
-    ("host_disease", "Host & disease biology", {"host_immunity", "host_immunity_general", "malaria_host_genetics", "sex_diff", "covid_host_response", "infectious_disease_host_response", "noninfectious_disease_biology", "host_tissue_atlas"}),
-    ("malaria_omics_resistance", "Malaria omics & resistance", {"resistance_dx", "malaria_omics", "malaria_host_omics", "malaria_tools"}),
-    ("single_cell_methods", "Single-cell methods", {"scrna_annotation", "sc_tools", "sc_harmonization", "latent_variable_methods"}),
-    ("spatial_transcriptomics", "Spatial transcriptomics", {"spatial_transcriptomics", "spatial_omics"}),
-    ("genomics_rnaseq", "Genomics, evolution & RNA-seq", {"rna_seq_methods", "genomics", "phylogenetics", "orthology"}),
-    ("ai_computational", "AI & computational methods", {"tools_ml", "foundation_models", "bioinformatics"}),
-    ("research_methods", "Evidence synthesis & general methods", {"evidence_synthesis", "general_methods"}),
-    ("other", "Other", {"other", "uncategorized", "unknown"}),
-)
+STOPWORDS = frozenset("a an the and or of in on for to from with by via as at into across using use used based study studies analysis analyses method methods approach approaches new novel comprehensive reveals reveal enables enable data dataset datasets framework tool tools research review systematic introduction advances towards toward through their its is are be this that these those we our de der die das und von zu mit des eine ein et al".split())
 
 
-def library_topic(record: Mapping[str, object]) -> tuple[str, str]:
-    title = str(record.get("title") or "").casefold()
-    title = re.sub(r"[‐‑–—]", "-", title)
-    category = str(record.get("category") or record.get("collection") or "").casefold()
-    group = ""
-    if re.search(r"spatial(?:ly[- ]resolved)?[- ]+(?:single[- ]cell[- ]+)?(?:transcriptom|gene expression|omics|multiomics)|\b(?:merfish|seqfish|slide-seq|slide-tags|stereo-seq|seq-scope|dbit-seq|squidpy|spatialdata|giotto|banksy|cell2location|spatialexperiment)\b", title):
-        group = "spatial_transcriptomics"
-    elif re.search(r"\b(?:pfemp1|rifins?|stevors?|multigene|multi-gene)\b|\bvar genes?\b|antigenic variation", title):
-        group = "var_pfemp1"
-    elif re.search(r"\b(?:foundation models?|large language models?|geneformer|scgpt|scfoundation)\b", title):
-        group = "ai_computational"
-    elif re.search(r"\b(?:deseq2?|edger|limma|voom|kallisto|featurecounts|rsubread|mafft|muscle|iq-tree|raxml|fasttree|orthofinder|orthomcl|eggnog|hmmer|mmseqs2|interpro|pfam)\b|\bsalmon\b.*quantification|\b(?:orthology|phylogenetic|phylogenomic|sequence alignment)\b", title):
-        group = "genomics_rnaseq"
-    elif re.search(r"single[- ]cell", title) and re.search(r"\b(?:methods?|benchmark\w*|integration|deconvolution|normalization|clustering|analysis framework|best practices|experimental design|pseudoreplication)\b", title):
-        group = "single_cell_methods"
-    elif re.search(r"rna[- ]seq|rna sequencing", title) and re.search(r"\b(?:analysis|methods?|normalization|quantification|differential|workflow|alignment)\b", title):
-        group = "genomics_rnaseq"
-    elif re.search(r"\b(?:nextflow|snakemake|nf-core|multiqc|fastp|cutadapt|umi-tools|gene set enrichment|gsea|gsva|multiple testing|false discovery|batch effects|surrogate variable|power analysis|sample size|meta-analysis|systematic review)\b", title):
-        group = "research_methods"
-    for key, label, categories in LIBRARY_TOPICS:
-        if group == key or (not group and category in categories):
-            return key, label
-    return "other", "Other"
+def _features(title):
+    words = re.findall(r"[^\W_]+(?:[-'][^\W_]+)*", title.casefold(), re.UNICODE)
+    words = [w for w in words if len(w) > 2 and not w.isdigit()]
+    features = Counter(w for w in words if w not in STOPWORDS)
+    features.update(f"{a} {b}" for a, b in zip(words, words[1:]) if a not in STOPWORDS and b not in STOPWORDS)
+    return features
+
+
+def _unit(vector):
+    norm = math.sqrt(sum(v * v for v in vector.values()))
+    return {k: v / norm for k, v in vector.items()} if norm else {}
+
+
+def _dot(a, b):
+    return sum(value * b.get(key, 0.0) for key, value in a.items())
+
+
+@lru_cache(maxsize=4)
+def _discover(titles, target):
+    features = [_features(title) for title in titles]
+    df = Counter(term for row in features for term in row)
+    vocabulary = set(sorted(df, key=lambda term: (-df[term], term))[:6000])
+    vectors = [_unit({term: (1 + math.log(count)) * (1 + math.log((1 + len(titles)) / (1 + df[term])))
+                     for term, count in row.items() if term in vocabulary}) for row in features]
+    active = [i for i, row in enumerate(vectors) if row]
+    if not active:
+        return tuple(("unclassified", "Unclassified") for _ in titles)
+    k = max(1, min(target - int(len(active) < len(titles)), len(active), max(1, round(math.sqrt(len(active) / 3)))))
+    density = {i: sum(df[term] for term in features[i]) / max(1, len(features[i])) for i in active}
+    seeds = [max(active, key=lambda i: (density[i], -i))]
+    nearest = {i: _dot(vectors[i], vectors[seeds[0]]) for i in active}
+    while len(seeds) < k:
+        seed = max(active, key=lambda i: ((1 - nearest[i]) * math.sqrt(density[i]), -i))
+        if seed in seeds or nearest[seed] > .999999:
+            break
+        seeds.append(seed)
+        for i in active:
+            nearest[i] = max(nearest[i], _dot(vectors[i], vectors[seed]))
+    centers = [vectors[i] for i in seeds]
+    assignment = None
+    for _ in range(16):
+        current = {i: max(range(len(centers)), key=lambda j: (_dot(vectors[i], centers[j]), -j)) for i in active}
+        if current == assignment:
+            break
+        assignment = current
+        sums = [defaultdict(float) for _ in centers]
+        for i, group in assignment.items():
+            for term, weight in vectors[i].items():
+                sums[group][term] += weight
+        centers = [_unit(row) if row else centers[j] for j, row in enumerate(sums)]
+    labels = {}
+    used = set()
+    for group in sorted(set(assignment.values())):
+        members = [i for i in active if assignment[i] == group]
+        counts = Counter(term for i in members for term in features[i])
+        ranked = sorted(counts, key=lambda term: (-(counts[term] / len(members)) * math.log(1 + len(titles) / df[term]) * (1.5 if " " in term else 1), term))
+        chosen = []
+        for term in ranked:
+            if not any(set(term.split()) & set(old.split()) for old in chosen):
+                chosen.append(term)
+            if len(chosen) == 2:
+                break
+        label = " / ".join(term[0].upper() + term[1:] for term in chosen) or "Unclassified"
+        if label in used:
+            label += f" ({group + 1})"
+        used.add(label)
+        identifier = "topic_" + hashlib.sha256(label.encode()).hexdigest()[:12]
+        labels[group] = (identifier, label)
+    return tuple(labels[assignment[i]] if i in assignment else ("unclassified", "Unclassified") for i in range(len(titles)))
+
+
+def assign_library_topics(records, target=10):
+    """Discover local browsing groups from titles, independently of legacy categories."""
+    target = max(1, min(10, int(target)))
+    source = list(records)
+    titles = tuple(sorted({str(row.get("title") or "").strip() for row in source}))
+    mapping = dict(zip(titles, _discover(titles, target))) if titles else {}
+    return tuple(dict(row, topic=mapping[str(row.get("title") or "").strip()][0], topic_label=mapping[str(row.get("title") or "").strip()][1]) for row in source)

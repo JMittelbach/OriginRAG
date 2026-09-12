@@ -39,7 +39,7 @@ from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_questi
 from originrag.analysis.faithfulness import citation_claim_blocks, direct_evidence_text  # noqa: E402
 from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
 from originrag.web_local_access import local_browser_request  # noqa: E402
-from originrag.library_topics import LIBRARY_TOPICS, library_topic  # noqa: E402
+from originrag.library_topics import assign_library_topics  # noqa: E402
 from originrag.provenance.library import (  # noqa: E402
     LibraryStatusResolver,
     normalize_doi,
@@ -78,7 +78,6 @@ from originrag.web_auth import (  # noqa: E402
 TITLE_FILENAME = "session_title.txt"
 TITLE_MAX_CHARS = 48
 MAX_LIBRARY_UPLOAD_BYTES = 100 * 1024 * 1024
-LIBRARY_TRACKER_GROUPS = LIBRARY_TOPICS
 TITLE_STOPWORDS = {
     "about",
     "answer",
@@ -1350,7 +1349,6 @@ def library_catalog(
         if local_relpath and not pdf_exists:
             pdf_exists = (REPO_ROOT / "bib" / local_relpath).is_file()
         searchable = (resolved_chunks_dir / f"{paper_id}.jsonl").is_file()
-        topic, topic_label = library_topic(row)
         catalogue.append(
             {
                 "paper_id": paper_id,
@@ -1362,15 +1360,13 @@ def library_catalog(
                 "doi_url": f"https://doi.org/{doi}" if doi else "",
                 "collection": _catalog_text(row.get("collection")),
                 "category": _catalog_text(row.get("category") or row.get("domain")),
-                "topic": topic,
-                "topic_label": topic_label,
                 "local_pdf": pdf_exists,
                 "searchable": searchable,
             }
         )
     return tuple(
         sorted(
-            catalogue,
+            assign_library_topics(catalogue),
             key=lambda item: (
                 str(item["author"]).casefold() or "~",
                 str(item["year"]),
@@ -1465,12 +1461,10 @@ def library_catalog_stats(
         or "uncategorized"
         for item in source
     )
-    topic_counts = Counter(library_topic(item)[0] for item in source)
-    groups = []
-    for group, label, _categories in LIBRARY_TRACKER_GROUPS:
-        count = topic_counts[group]
-        if count:
-            groups.append({"group": group, "label": label, "count": count})
+    assigned = source if all(item.get("topic") for item in source) else assign_library_topics(source)
+    topic_counts = Counter((item["topic"], item["topic_label"]) for item in assigned)
+    groups = [{"group": key, "label": label, "count": count}
+              for (key, label), count in sorted(topic_counts.items(), key=lambda pair: (-pair[1], pair[0]))]
     return {
         "total": len(source),
         "searchable": sum(bool(item.get("searchable")) for item in source),
