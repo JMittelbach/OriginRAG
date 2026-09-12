@@ -39,6 +39,7 @@ from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_questi
 from originrag.analysis.faithfulness import citation_claim_blocks, direct_evidence_text  # noqa: E402
 from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
 from originrag.web_local_access import local_browser_request  # noqa: E402
+from originrag.library_topics import LIBRARY_TOPICS, library_topic  # noqa: E402
 from originrag.provenance.library import (  # noqa: E402
     LibraryStatusResolver,
     normalize_doi,
@@ -77,59 +78,7 @@ from originrag.web_auth import (  # noqa: E402
 TITLE_FILENAME = "session_title.txt"
 TITLE_MAX_CHARS = 48
 MAX_LIBRARY_UPLOAD_BYTES = 100 * 1024 * 1024
-LIBRARY_TRACKER_GROUPS = (
-    ("var_pfemp1", "var / PfEMP1", {"var_pfemp1"}),
-    (
-        "malaria_biology",
-        "Malaria biology",
-        {"general_malaria", "parasite_biology", "malaria"},
-    ),
-    (
-        "host_disease",
-        "Host & disease biology",
-        {
-            "host_immunity",
-            "host_immunity_general",
-            "malaria_host_genetics",
-            "sex_diff",
-            "covid_host_response",
-            "infectious_disease_host_response",
-            "noninfectious_disease_biology",
-            "host_tissue_atlas",
-        },
-    ),
-    (
-        "malaria_omics_resistance",
-        "Malaria omics & resistance",
-        {
-            "resistance_dx",
-            "malaria_omics",
-            "malaria_host_omics",
-            "malaria_tools",
-        },
-    ),
-    (
-        "single_cell_methods",
-        "Single-cell methods",
-        {
-            "scrna_annotation",
-            "sc_tools",
-            "sc_harmonization",
-            "latent_variable_methods",
-            "rna_seq_methods",
-        },
-    ),
-    (
-        "ai_computational",
-        "AI & computational methods",
-        {"tools_ml", "foundation_models", "bioinformatics"},
-    ),
-    (
-        "research_methods",
-        "Evidence synthesis & general methods",
-        {"evidence_synthesis", "general_methods"},
-    ),
-)
+LIBRARY_TRACKER_GROUPS = LIBRARY_TOPICS
 TITLE_STOPWORDS = {
     "about",
     "answer",
@@ -1401,6 +1350,7 @@ def library_catalog(
         if local_relpath and not pdf_exists:
             pdf_exists = (REPO_ROOT / "bib" / local_relpath).is_file()
         searchable = (resolved_chunks_dir / f"{paper_id}.jsonl").is_file()
+        topic, topic_label = library_topic(row)
         catalogue.append(
             {
                 "paper_id": paper_id,
@@ -1412,6 +1362,8 @@ def library_catalog(
                 "doi_url": f"https://doi.org/{doi}" if doi else "",
                 "collection": _catalog_text(row.get("collection")),
                 "category": _catalog_text(row.get("category") or row.get("domain")),
+                "topic": topic,
+                "topic_label": topic_label,
                 "local_pdf": pdf_exists,
                 "searchable": searchable,
             }
@@ -1445,7 +1397,7 @@ def search_library_catalog(
         author = str(item.get("author") or "").casefold()
         other = " ".join(
             str(item.get(field) or "").casefold()
-            for field in ("journal", "year", "doi", "paper_id", "category", "collection")
+            for field in ("journal", "year", "doi", "paper_id", "category", "collection", "topic", "topic_label")
         )
         rank = 0
         if clean_query == title or clean_query == author:
@@ -1480,6 +1432,8 @@ def search_library_catalog(
                         "paper_id",
                         "category",
                         "collection",
+                        "topic",
+                        "topic_label",
                     )
                 )
                 for token in query_tokens
@@ -1511,20 +1465,12 @@ def library_catalog_stats(
         or "uncategorized"
         for item in source
     )
-    grouped_categories: set[str] = set()
+    topic_counts = Counter(library_topic(item)[0] for item in source)
     groups = []
-    for group, label, categories in LIBRARY_TRACKER_GROUPS:
-        grouped_categories.update(categories)
-        count = sum(category_counts.get(category, 0) for category in categories)
+    for group, label, _categories in LIBRARY_TRACKER_GROUPS:
+        count = topic_counts[group]
         if count:
             groups.append({"group": group, "label": label, "count": count})
-    other_count = sum(
-        count
-        for category, count in category_counts.items()
-        if category not in grouped_categories
-    )
-    if other_count:
-        groups.append({"group": "other", "label": "Other", "count": other_count})
     return {
         "total": len(source),
         "searchable": sum(bool(item.get("searchable")) for item in source),
@@ -8284,7 +8230,7 @@ INDEX_HTML = r"""<!doctype html>
       metadata.textContent = [paper.author, paper.year, paper.journal].filter(Boolean).join(" · ") || "Bibliographic details unavailable";
       const category = document.createElement("span");
       category.className = "library-paper-category";
-      category.textContent = libraryCategoryLabel(paper.category || paper.collection);
+      category.textContent = paper.topic_label || libraryCategoryLabel(paper.category || paper.collection);
       const links = document.createElement("div");
       links.className = "library-paper-links";
       if (paper.doi_url) {
@@ -8333,7 +8279,7 @@ INDEX_HTML = r"""<!doctype html>
         libraryStatsTotal.textContent = total.toLocaleString();
         libraryStatsDonutTotal.textContent = total.toLocaleString();
         libraryStatsCoverage.textContent = `${searchable.toLocaleString()} searchable · ${localPdf.toLocaleString()} local PDFs`;
-        const colors = ["#46cfc1", "#7aa2f7", "#f2c879", "#ef8a80", "#b18ceb", "#7da6b5", "#657681"];
+        const colors = ["#46cfc1", "#7aa2f7", "#f2c879", "#ef8a80", "#b18ceb", "#ed91c4", "#95bf70", "#df9f61", "#7da6b5", "#657681"];
         const groups = (data.groups || []).filter((item) => Number(item.count || 0) > 0);
         let position = 0;
         const segments = [];
