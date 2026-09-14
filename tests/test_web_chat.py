@@ -131,14 +131,9 @@ def test_library_catalog_stats_counts_categories_and_availability() -> None:
         ],
         "groups": [
             {
-                "group": "malaria_omics_resistance",
-                "label": "Malaria omics & resistance",
-                "count": 2,
-            },
-            {
-                "group": "single_cell_methods",
-                "label": "Single-cell methods",
-                "count": 1,
+                "group": "unclassified",
+                "label": "Unclassified",
+                "count": 3,
             },
         ],
     }
@@ -2991,11 +2986,8 @@ def test_web_ui_exposes_one_auto_routed_chat_and_accessible_assurance_controls()
     assert 'fetch("/api/jobs")' in html
     assert "Browse or search the shared bibliography. This does not run Qwen." not in html
     assert "Foundation models/RAG" not in html
-    labels = {key: label for key, label, _ in web_chat.LIBRARY_TRACKER_GROUPS}
-    assert len(labels) == 10
-    assert labels["ai_computational"] == "AI & computational methods"
-    assert labels["spatial_transcriptomics"] == "Spatial transcriptomics"
-    assert labels["research_methods"] == "Evidence synthesis & general methods"
+    assert 'paper.topic_label || libraryCategoryLabel' in html
+    assert not hasattr(web_chat, "LIBRARY_TRACKER_GROUPS")
     assert "Loaded ${data.title" not in html
     assert "Waiting in queue · ${ahead}" in html
     assert "session-job-indicator" in html

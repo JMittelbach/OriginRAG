@@ -16,9 +16,10 @@ support they provide, including when their relationships are uncertain.
 - **Inspect the evidence:** follow citations, read source passages and review
   possible study overlap.
 
-The evidence-accounting method is domain-general; the current categories and
-search defaults are malaria-focused. Equivalent performance in other fields
-has not been established.
+Library topic groups are generated from your paper titles, with up to ten groups
+for larger collections and fewer for small libraries. No subject-specific category
+list is required. The evidence-accounting method is domain-general; equivalent
+performance in other fields has not been established.
 
 ## Install
 

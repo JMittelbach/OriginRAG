@@ -24,6 +24,16 @@ If the library is empty, or contains only bibliographic records, the quick tour
 explains what is missing. **Add papers** accepts PDFs locally without an account,
 or after signing in when the server uses authentication.
 Accepted uploads are checked, named, categorised and indexed automatically.
+
+The library overview groups papers automatically from their titles. Larger
+collections have up to ten groups; smaller or repetitive collections have fewer.
+Labels are extracted from recurring words and phrases, not from a fixed list of
+disciplines. Grouping runs locally without an LLM or external metadata service.
+It refreshes when the catalogue is refreshed after an import, so labels and
+membership can change as the collection grows. These are approximate browsing
+groups, not expert annotations. Papers without informative titles are shown as
+Unclassified. Original storage categories, paper IDs and retrieval inputs remain
+unchanged.
 Check the update status for duplicates, rejected files or files needing review.
 Open the local URL printed by `./web`: **Find papers → Add to library** works
 without `--auth` too. A catalogue entry alone is not full text available for chat.
