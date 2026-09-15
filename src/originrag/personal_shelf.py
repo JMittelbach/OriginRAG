@@ -17,8 +17,12 @@ class PersonalShelf:
     def connect(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.path, timeout=10)
-        os.chmod(self.path, 0o600)
-        connection.execute("CREATE TABLE IF NOT EXISTS books (paper_id TEXT PRIMARY KEY, metadata TEXT NOT NULL, saved_at INTEGER NOT NULL)")
+        try:
+            os.chmod(self.path, 0o600)
+            connection.execute("CREATE TABLE IF NOT EXISTS books (paper_id TEXT PRIMARY KEY, metadata TEXT NOT NULL, saved_at INTEGER NOT NULL)")
+        except Exception:
+            connection.close()
+            raise
         return connection
 
     def snapshot(self, catalogue: tuple | list) -> dict:
@@ -41,7 +45,7 @@ class PersonalShelf:
         if not isinstance(payload, dict) or set(payload) != {"action", "paper_id"}:
             raise ValueError("Supply action and paper_id only.")
         action, paper_id = payload["action"], payload["paper_id"]
-        if action not in {"add", "remove"} or not isinstance(paper_id, str) or not 1 <= len(paper_id) <= 160:
+        if not isinstance(action, str) or action not in {"add", "remove"} or not isinstance(paper_id, str) or not 1 <= len(paper_id) <= 160:
             raise ValueError("Invalid shelf action or paper identifier.")
         paper = next((p for p in catalogue if p["paper_id"] == paper_id), None)
         if action == "add" and not paper:

@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import shutil
+import sqlite3
 import sys
 import threading
 import time
@@ -66,6 +67,7 @@ from originrag.retrieval.index_cache import (  # noqa: E402
 from originrag.utils.io import write_json  # noqa: E402
 from originrag.web_appearance import with_appearance  # noqa: E402
 from originrag.web_onboarding import with_onboarding  # noqa: E402
+from originrag.web_shelf import with_shelf  # noqa: E402
 from originrag.discovery.topic_search import TopicDiscovery, DiscoveryBusy, DiscoveryUnavailable  # noqa: E402
 from originrag.discovery.oa_import import PaperImports, ImportBusy  # noqa: E402
 from originrag.web_auth import (  # noqa: E402
@@ -1648,7 +1650,13 @@ def build_handler(
                 )
                 return
             if parsed.path == "/api/shelf":
-                self.respond_json(PersonalShelf(current_app.out_dir).snapshot(library_catalog()))
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({"error": "Use the local browser or sign in to open your shelf."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                try:
+                    self.respond_json(PersonalShelf(REPO_ROOT / current_app.out_dir).snapshot(library_catalog()))
+                except (OSError, sqlite3.Error):
+                    self.respond_json({"error": "Your shelf is temporarily unavailable. Please try again."}, status=HTTPStatus.SERVICE_UNAVAILABLE)
                 return
             if parsed.path == "/api/library-stats":
                 self.respond_json(library_catalog_stats())
@@ -1754,9 +1762,11 @@ def build_handler(
                     return
                 try:
                     payload = self.read_json_body()
-                    self.respond_json(PersonalShelf(current_app.out_dir).change(payload, library_catalog()))
+                    self.respond_json(PersonalShelf(REPO_ROOT / current_app.out_dir).change(payload, library_catalog()))
                 except ValueError as exc:
                     self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except (OSError, sqlite3.Error):
+                    self.respond_json({"error": "Your shelf could not be saved. Please try again."}, status=HTTPStatus.SERVICE_UNAVAILABLE)
                 return
             if parsed.path == "/api/logout" and auth_store and user:
                 auth_store.logout(session_token)
@@ -7270,6 +7280,7 @@ INDEX_HTML = r"""<!doctype html>
         metadata.className = "reference-details";
         metadata.innerHTML = `<summary>Source details</summary>${statusHtml}${ids}${typeHtml}`;
         item.appendChild(metadata);
+        if (src.paper_id && window.originragShelfButton) item.appendChild(window.originragShelfButton(src));
         if (searchResults && src.match_reason) {
           const match = document.createElement("span");
           match.className = "source-match";
@@ -8329,12 +8340,13 @@ INDEX_HTML = r"""<!doctype html>
           return;
         }
         closeLibraryBrowser();
-        const prefix = navigator.language.toLowerCase().startsWith("de") ? "Zusammenfassung: " : "Summarize this paper: ";
+        const prefix = "Summarize this paper: ";
         message.value = prefix + (paper.doi || paper.title);
         resizeComposer();
         form.requestSubmit();
       });
       links.appendChild(summarize);
+      if (paper.paper_id && window.originragShelfButton) links.appendChild(window.originragShelfButton(paper));
       article.append(title, metadata, category, links);
       return article;
     }
@@ -8759,7 +8771,7 @@ INDEX_HTML = r"""<!doctype html>
 """
 
 
-INDEX_HTML = with_onboarding(with_appearance(INDEX_HTML))
+INDEX_HTML = with_onboarding(with_appearance(with_shelf(INDEX_HTML)))
 
 
 if __name__ == "__main__":

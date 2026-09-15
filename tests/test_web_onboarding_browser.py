@@ -43,6 +43,18 @@ def browser_page(tmp_path):
             payload.update({key: state[key] for key in ("total", "searchable", "local_pdf")})
         elif path.startswith("/api/library?"):
             payload = {"items": state.get("library", []), "total": len(state.get("library", [])), "has_more": False}
+        elif path == "/api/shelf":
+            shelf = state.setdefault("shelves", {}).setdefault(state["user_id"], {})
+            if request.method == "POST":
+                change = request.post_data_json
+                assert set(change) == {"action", "paper_id"}
+                assert request.headers.get("x-csrf-token") == "test-csrf"
+                if change["action"] == "add":
+                    paper = next(p for p in state["library"] if p["paper_id"] == change["paper_id"])
+                    shelf[paper["paper_id"]] = {**paper, "available": True, "summary_available": paper.get("searchable", False)}
+                else:
+                    shelf.pop(change["paper_id"], None)
+            payload = {"items": list(shelf.values()), "limit": 200}
         elif path == "/api/chat":
             state.setdefault("chat_requests", []).append(request.post_data_json)
             payload = {"job_id": "summary-test", "state": "queued", "session_dir": request.post_data_json.get("session_dir", "")}
@@ -325,6 +337,7 @@ def test_inventory_citations_render_as_links_not_internal_ids(browser_page):
 
 def test_library_summary_uses_chat_queue_and_preserves_draft(browser_page):
     page, state, requests, tmp = browser_page
+    page.evaluate("Object.defineProperty(navigator, 'language', {get: () => 'de-DE'})")
     page.locator("#guideSkip").click()
     state["library"] = [
         {"paper_id": "P1", "title": "Numerical methods", "doi": "10.1234/numerical", "searchable": True},
@@ -343,7 +356,7 @@ def test_library_summary_uses_chat_queue_and_preserves_draft(browser_page):
     page.wait_for_function("!document.querySelector('#libraryBrowserBackdrop').classList.contains('open')")
     page.wait_for_function("!document.querySelector('[data-job-id^=submission]')")
     assert len(state["chat_requests"]) == 1
-    assert "10.1234/numerical" in state["chat_requests"][0]["message"]
+    assert state["chat_requests"][0]["message"] == "Summarize this paper: 10.1234/numerical"
     assert "/api/chat" in requests
 
 
@@ -367,3 +380,86 @@ def test_reading_card_has_collapsed_quotes_and_no_evidence_certificate(browser_p
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.locator(".result-meta").evaluate("el => el.scrollWidth <= el.clientWidth + 2")
     page.screenshot(path=str(tmp / "reading-card-mobile.png"))
+
+
+def test_personal_shelf_save_reload_summary_and_remove(browser_page):
+    page, state, requests, tmp = browser_page
+    page.add_init_script("Object.defineProperty(navigator, 'language', {get: () => 'de-DE'})")
+    page.locator("#guideSkip").click()
+    state["library"] = [{"paper_id": f"P{i}", "title": title, "author": author, "year": "2025",
+                         "doi": f"10.1234/p{i}", "doi_url": f"https://doi.org/10.1234/p{i}", "searchable": True}
+                        for i, (title, author) in enumerate([
+                            ("A practical guide to scientific evidence", "Morgan"),
+                            ("Mapping the diversity of life", "Rivera"),
+                            ("Statistical learning with incomplete observations", "Kim"),
+                            ("The hidden structure of complex networks", "Ali"),
+                            ("Methods for spatial data integration", "Taylor"),
+                            ("Reproducible computational research", "Chen"),
+                        ])]
+    page.locator("#libraryButton").click()
+    page.locator(".library-paper .shelf-save").first.wait_for()
+    for save in page.locator(".library-paper .shelf-save").all():
+        save.click()
+    page.keyboard.press("Escape")
+    page.locator("#shelfButton").click()
+    page.wait_for_function("document.querySelectorAll('.shelf-book').length === 6")
+    page.locator(".shelf-book").first.click()
+    assert page.locator("#shelfDetail h3").inner_text() == state["library"][0]["title"]
+    assert page.get_by_role("link", name="Open paper", exact=True).get_attribute("href") == "https://doi.org/10.1234/p0"
+    page.screenshot(path=str(tmp / "bookshelf-desktop.png"))
+    for theme in ("light", "dark"):
+        page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
+        for width in (1280, 390, 320):
+            page.set_viewport_size({"width": width, "height": 844})
+            assert page.locator("#shelfDialog").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+        page.screenshot(path=str(tmp / f"bookshelf-mobile-{theme}.png"))
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.keyboard.press("Escape")
+    assert page.locator("#shelfButton").evaluate("el => document.activeElement === el")
+    page.reload()
+    page.locator("#shelfButton").click()
+    page.wait_for_function("document.querySelectorAll('.shelf-book').length === 6")
+    page.locator(".shelf-book").first.click()
+    page.evaluate("document.querySelector('#message').value = 'Keep my draft'")
+    page.locator("#shelfDetail").get_by_role("button", name="Summarize", exact=True).click()
+    assert page.locator("#message").input_value() == "Keep my draft"
+    assert not state.get("chat_requests")
+    page.evaluate("document.querySelector('#message').value = ''")
+    page.locator("#shelfDetail").get_by_role("button", name="Summarize", exact=True).click()
+    page.wait_for_function("!document.querySelector('[data-job-id^=submission]')")
+    assert page.evaluate("navigator.language") == "de-DE"
+    assert state["chat_requests"][0]["message"] == "Summarize this paper: 10.1234/p0"
+    page.locator("#shelfButton").click()
+    page.locator(".shelf-book").first.click()
+    page.get_by_role("button", name="Remove from shelf", exact=True).click()
+    page.wait_for_function("document.querySelectorAll('.shelf-book').length === 5")
+    assert len(state["library"]) == 6
+    page.keyboard.press("Escape")
+    state["user_id"] = "bob"
+    page.reload()
+    page.locator("#guideSkip").click()
+    page.locator("#shelfButton").click()
+    page.wait_for_function("document.querySelector('#shelfNotice').textContent.startsWith('0 papers')")
+    assert page.locator(".shelf-book").count() == 0
+
+
+def test_shelf_empty_browse_and_save_from_chat(browser_page):
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    paper = {"paper_id": "P1", "title": "<img src=x onerror=alert(1)>", "author": "Example", "year": "2025", "searchable": False}
+    state["library"] = [paper]
+    page.locator("#shelfButton").click()
+    page.get_by_role("button", name="Browse Library", exact=True).click()
+    page.wait_for_function("document.activeElement === document.querySelector('#librarySearch')")
+    page.keyboard.press("Escape")
+    page.evaluate("paper => document.querySelector('#chat').append(buildSourcesPanel([{...paper, cited: true}]))", paper)
+    page.locator("#chat .sources-box > summary").click()
+    page.locator("#chat .shelf-save").click()
+    page.locator("#shelfButton").click()
+    page.locator(".shelf-book").wait_for()
+    page.locator(".shelf-book").click()
+    assert page.locator("#shelfDetail h3").inner_text() == paper["title"]
+    assert page.locator("#shelfDialog img").count() == 0
+    assert page.locator("#shelfDetail").get_by_role("button", name="Summarize", exact=True).is_disabled()
+    page.emulate_media(reduced_motion="reduce")
+    assert page.locator(".shelf-book").evaluate("el => parseFloat(getComputedStyle(el).transitionDuration)") <= 0.001

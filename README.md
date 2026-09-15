@@ -108,6 +108,11 @@ not claim to have read omitted text. Web summaries use the existing chat queue.
 Saved summaries are reused when their text basis and model are unchanged.
 Follow-up questions stay in chat.
 
+Use **Save to shelf** in Library or chat references to keep papers close at hand.
+The **My shelf** button at the top opens your personal bookshelf, with quick access
+to each paper and its summary. On shared servers, shelves belong to individual
+accounts. Removing a bookmark does not remove the paper from the corpus.
+
 For later additions, use **Add papers** in the web app. Local use needs no
 account; sign in when using an authenticated shared server. While the
 service is running, uploads are automatically checked, named, categorised,
