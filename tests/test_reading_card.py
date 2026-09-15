@@ -154,6 +154,28 @@ def test_model_failure_is_explicit(tmp_path, monkeypatch):
     assert not list(tmp_path.glob("*.json"))
 
 
+def test_unsupported_finding_is_removed_not_rewritten_as_a_fact(tmp_path, monkeypatch):
+    output = draft()
+    output["findings"] = [{"text": "The first method is always better on every possible dataset.", "source": "S1"}]
+    fake_model(monkeypatch, output=output, supported=[0])
+    card = rc.create_card(PAPER, CHUNKS, model="test", language="en", cache_dir=tmp_path)
+    assert card["omitted_claims"] == 1
+    assert "always better" not in rc.card_markdown(card)
+    assert "were omitted" in rc.card_markdown(card)
+
+
+def test_structured_abstract_is_not_described_as_full_text():
+    _, coverage = rc.select_passages([dict(CHUNKS[0], section="Structured Abstract")])
+    assert coverage["basis"] == "abstract_only"
+
+
+def test_short_paper_text_is_not_unnecessarily_truncated():
+    chunks = [dict(CHUNKS[0], text=TEXT * 50), dict(CHUNKS[0], section="results", text=TEXT)]
+    selected, coverage = rc.select_passages(chunks)
+    assert coverage["truncated_passages"] == 0
+    assert selected[0]["text"] == rc.compact(chunks[0]["text"])
+
+
 def test_summary_uses_single_paper_not_rag_and_survives_saved_chat(tmp_path, monkeypatch):
     paths = corpus(tmp_path)
     fake_model(monkeypatch)

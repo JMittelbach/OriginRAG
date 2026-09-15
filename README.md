@@ -104,8 +104,9 @@ not claim to exhaust the library or count independent studies.
 Choose **Summarize** beside a paper in **Library**, or enter `/summary DOI or exact title`
 in terminal chat. A short reading card covers the question, approach, findings and
 limitations, with source passages. It clearly marks abstract-only coverage and does
-not claim to have read omitted text. Summaries use the existing chat queue and are
-reused when their text basis and model are unchanged. Follow-up questions stay in chat.
+not claim to have read omitted text. Web summaries use the existing chat queue.
+Saved summaries are reused when their text basis and model are unchanged.
+Follow-up questions stay in chat.
 
 For later additions, use **Add papers** in the web app. Local use needs no
 account; sign in when using an authenticated shared server. While the
