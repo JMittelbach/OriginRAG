@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import hashlib
 import json
@@ -22,6 +23,9 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from originrag.analysis.answer_format import normalize_answer_format  # noqa: E402
+from originrag.analysis.question_understanding import understand_question, understanding_plan  # noqa: E402
+from originrag.analysis.corpus_inventory import extract_inventory  # noqa: E402
+from originrag.summaries.reading_card import summary_request, load_paper, create_card, card_markdown  # noqa: E402
 from originrag.analysis.answer_backends import generate_answer_with_backend  # noqa: E402
 from originrag.analysis.answer_qc import (  # noqa: E402
     annotate_publication_family_relationships,
@@ -347,6 +351,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task-mode", default="evidence_qa", help="Planner task mode for adaptive retrieval.")
     parser.add_argument("--planner-backend", choices=["rule_based", "ollama"], default="rule_based")
     parser.add_argument("--planner-model", default=None)
+    parser.add_argument("--understand-question", action=argparse.BooleanOptionalAction,
+                        default=True, help="Prepare multilingual questions with the local model before retrieval.")
     parser.add_argument("--planner-temperature", type=float, default=0.0)
     parser.add_argument("--planner-timeout", type=int, default=120)
     parser.add_argument("--answer-model", default=None)
@@ -426,6 +432,41 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def run_paper_reading_card(args, output_dir: Path, request: tuple[str, str], progress) -> dict:
+    backend = getattr(args, "configured_answer_backend", args.backend)
+    if backend not in {"ollama", "qwen", "deepseek"}:
+        raise ValueError("Paper summaries require an enabled local model backend.")
+    target, language = request
+    progress("Opening the selected paper")
+    paper, chunks = load_paper(target, resolve_repo_path(args.papers), resolve_repo_path(args.chunks_dir))
+    card = create_card(paper, chunks, model=getattr(args, "answer_model", None), language=language,
+                       cache_dir=REPO_ROOT / "runtime/reading_cards", progress=progress)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    answer = card_markdown(card)
+    answer_path = output_dir / "answer.md"
+    answer_path.write_text(answer, encoding="utf-8")
+    write_json(output_dir / "paper_summary.json", card)
+    passages = [{**paper, **p, "citation_label": paper.get("title", "")}
+                for p in card["inputs"]["passages"]]
+    pack = {"task": "paper_summary", "question": args.question, "paper_summary": card,
+            "chunks": passages, "n_chunks": len(passages), "n_unique_papers": 1}
+    pack_path = output_dir / "evidence_pack.json"
+    write_json(pack_path, pack)
+    table_path = output_dir / "evidence_table.tsv"
+    with table_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["paper_id", "title", "doi", "section", "page_start", "page_end"],
+                                delimiter="\t", extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(passages)
+    prompt_path = output_dir / "reading_inputs.json"
+    write_json(prompt_path, card["inputs"])
+    return {"resolved_task": "paper_summary", "retrieval_question": paper.get("title") or target,
+            "results": passages, "pack": pack, "pack_path": pack_path, "answer_path": answer_path,
+            "evidence_table_tsv_path": table_path, "prompt_path": prompt_path,
+            "llm_result": LLMResult(backend=backend, answer=answer), "answer_qc": {},
+            "answer_attempts": [], "reading_card": card}
+
+
 def run_question(
     args: argparse.Namespace,
     output_dir: Path,
@@ -435,6 +476,9 @@ def run_question(
         if progress_callback is not None:
             progress_callback(stage)
 
+    request = summary_request(str(getattr(args, "answer_question", "") or args.question))
+    if request is not None:
+        return run_paper_reading_card(args, output_dir, request, progress)
     progress("Planning a focused literature search")
     chunks_dir_source = resolve_repo_path(args.chunks_dir)
     papers_tsv_source = resolve_repo_path(args.papers)
@@ -442,9 +486,40 @@ def run_question(
     chunks_dir = chunks_dir_source
     papers_tsv = papers_tsv_source
     output_dir.mkdir(parents=True, exist_ok=True)
+    args = copy.copy(args)
     answer_question = str(getattr(args, "answer_question", "") or args.question)
+    user_question = answer_question
     retrieval_question = str(getattr(args, "retrieval_question", "") or args.question)
     task = str(getattr(args, "task", "answer") or "answer")
+    understanding = {"status": "not_requested"}
+    inventory_mode = False
+    configured_model_backend = str(getattr(args, "configured_answer_backend", args.backend))
+    if (getattr(args, "understand_question", False)
+            and configured_model_backend in {"qwen", "ollama", "deepseek"}
+            and not (task == "sources" and classify_paper_search_mode(user_question) == "targeted_lookup")
+            and not getattr(args, "candidate_pool", None)
+            and not getattr(args, "adaptive", False)):
+        progress("Understanding the question and preparing search terms")
+        understanding = understand_question(
+            user_question, context=retrieval_question if retrieval_question != user_question else "",
+            model=getattr(args, "planner_model", None) or getattr(args, "answer_model", None),
+        )
+        write_json(output_dir / "question_understanding.json", understanding)
+        if understanding["status"] != "ready":
+            raise ValueError(
+                "Die Suchfrage konnte nicht zuverlässig aufbereitet werden. Bitte versuche es "
+                "erneut oder formuliere den gesuchten Begriff kurz aus. Dies ist kein Befund "
+                "über fehlende Literatur. / The search question could not be prepared reliably."
+            )
+        answer_question = understanding["normalized_question"]
+        retrieval_question = answer_question
+        args.question = answer_question
+        args.retrieval_question = retrieval_question
+        inventory_mode = understanding["intent"] == "corpus_inventory" and task in {"answer", "sources"}
+        if inventory_mode:
+            task = args.task = "sources"
+            args.evidence_selector = "current"
+            args.paper_search_mode = "topical_discovery"
     configured_planner_backend = str(
         getattr(args, "configured_planner_backend", getattr(args, "planner_backend", "rule_based"))
         or "rule_based"
@@ -526,7 +601,10 @@ def run_question(
         retrieval_queries = retrieval_queries_from_plan(query_plan)
         results = adaptive_result["retrieval_candidates"]
     else:
-        query_plan = plan_queries(
+        query_plan = (understanding_plan(
+            understanding, task_mode=getattr(args, "task_mode", "evidence_qa"),
+            max_queries=max_retrieval_queries(args.task, settings["preset"]),
+        ) if understanding["status"] == "ready" else plan_queries(
             retrieval_question,
             task_mode=getattr(args, "task_mode", "evidence_qa"),
             planner_backend=effective_planner_backend,
@@ -535,7 +613,7 @@ def run_question(
             planner_temperature=float(getattr(args, "planner_temperature", 0.0) or 0.0),
             planner_timeout=int(getattr(args, "planner_timeout", 120) or 120),
             task=args.task,
-        )
+        ))
         retrieval_queries = retrieval_queries_from_plan(query_plan)
         progress("Searching and ranking the local corpus")
         requested_retriever = str(getattr(args, "retriever", "keyword") or "keyword")
@@ -841,6 +919,7 @@ def run_question(
             paper_search_results
             and configured_answer_backend != "none"
             and paper_search_mode != "targeted_lookup"
+            and not inventory_mode
         ):
             progress("Explaining why each paper matches the question")
             explanation_args = {
@@ -854,7 +933,7 @@ def run_question(
             if paper_search_detail_fields:
                 paper_search_results, reason_meta = (
                     explain_paper_search_matches_in_batches(
-                        answer_question,
+                        user_question,
                         paper_search_results,
                         results,
                         batch_size=PAPER_DETAIL_BATCH_SIZE,
@@ -864,7 +943,7 @@ def run_question(
             else:
                 reason_candidates = paper_search_results[:PAPER_REASON_BATCH_SIZE]
                 explained, reason_meta = explain_paper_search_matches(
-                    answer_question,
+                    user_question,
                     reason_candidates,
                     results,
                     **explanation_args,
@@ -1003,6 +1082,15 @@ def run_question(
         )
     ]
     evidence_grade = grade_evidence_pack(pack)
+    pack["normalized_question"] = answer_question
+    pack["question"] = user_question
+    pack["question_understanding"] = understanding
+    if inventory_mode:
+        progress("Checking named examples against the retrieved papers")
+        pack["corpus_inventory"] = extract_inventory(
+            answer_question, paper_search_results, results,
+            model=getattr(args, "answer_model", None),
+        )
     pack["grade"] = evidence_grade
     pack["bounded_direct_report"] = evidence_grade.get("bounded_direct_report") or {}
     pack["task"] = args.task
@@ -1113,7 +1201,7 @@ def run_question(
     if getattr(args, "conversation_context", None):
         pack["conversation_context"] = args.conversation_context
     prompt = build_citation_answer_prompt(
-        answer_question,
+        user_question,
         pack,
         task=args.task,
         profile_instruction=profile_instruction,
@@ -1183,7 +1271,7 @@ def run_question(
     else:
         progress("Writing a citation-grounded answer")
         llm_result, answer_qc, answer_attempts, answer_backend_meta = generate_with_qc_repair(
-            question=answer_question,
+            question=user_question,
             task=args.task,
             backend=effective_answer_backend,
             initial_prompt=prompt,
@@ -1241,7 +1329,10 @@ def run_question(
             papers_tsv,
             corpus_state_fingerprint=validated_corpus_fingerprint,
         ),
-        "question": answer_question,
+        "question": user_question,
+        "normalized_question": answer_question,
+        "question_understanding": understanding,
+        "corpus_inventory": inventory_mode,
         "retrieval_question": retrieval_question,
         "retrieval_queries": [query.__dict__ for query in retrieval_queries],
         "planner_backend_requested": query_plan.get("planner_backend_requested", "rule_based"),
@@ -1532,6 +1623,8 @@ def run_question(
         print((output_dir / "trace_selection_report.md").read_text(encoding="utf-8"))
 
     return {
+        "resolved_task": task,
+        "retrieval_question": retrieval_question,
         "results": results,
         "pack": pack,
         "llm_result": llm_result,

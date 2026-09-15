@@ -12,6 +12,7 @@ import tempfile
 from uuid import uuid4
 
 from originrag.analysis.chat import ChatTurnContext
+from originrag.analysis.corpus_inventory import inventory_markdown
 
 
 def now() -> str:
@@ -51,6 +52,13 @@ def local_path(root: Path, name: str) -> Path:
 
 
 def visible_answer(result: dict, root: Path) -> tuple[str, str]:
+    pack = result.get("pack") or {}
+    if pack.get("corpus_inventory") is not None:
+        return inventory_markdown(
+            pack["corpus_inventory"],
+            language=(pack.get("question_understanding") or {}).get("language", "en"),
+            sources=result.get("paper_search_results") or [],
+        ), "answer"
     for key, status in (("answer_path", "answer"), ("partial_answer_path", "partial"),
                         ("withheld_answer_path", "withheld")):
         raw = result.get(key)
@@ -73,6 +81,12 @@ def snapshot_result(result: dict, root: Path) -> dict:
         for chunk in (result.get("pack") or {}).get("chunks", [])
     ]}, "answer_qc": {"passed": (result.get("answer_qc") or {}).get("passed")},
         "answer_attempts": [{"kind": item.get("kind")} for item in result.get("answer_attempts", [])]}
+    pack = result.get("pack") or {}
+    for key in ("corpus_inventory", "question_understanding"):
+        if key in pack:
+            saved["pack"][key] = pack[key]
+    if pack.get("corpus_inventory") is not None:
+        saved["paper_search_results"] = result.get("paper_search_results") or []
     for key in ("answer_path", "partial_answer_path", "withheld_answer_path", "evidence_table_tsv_path"):
         if result.get(key):
             saved[key] = str(local_path(root, str(result[key])).relative_to(root.resolve()))

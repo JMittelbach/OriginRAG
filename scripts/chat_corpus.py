@@ -123,7 +123,10 @@ def run_chat(ui: TerminalUI, store: SessionStore, state: ChatState) -> int:
             return 0
         if not user_text:
             continue
-        if user_text.startswith("/"):
+        if user_text.lower() == "/summary":
+            ui.message("Usage: /summary DOI or exact paper title. Use /library to find a paper.")
+            continue
+        if user_text.startswith("/") and not ask_corpus.summary_request(user_text):
             name = user_text.split(maxsplit=1)[0].lower()
             if name in {"/chats", "/switch", "/new", "/rename", "/history"}:
                 try:
@@ -236,6 +239,9 @@ def run_chat(ui: TerminalUI, store: SessionStore, state: ChatState) -> int:
             turn_index += 1
             continue
         answer, status = visible_answer(result, session_dir)
+        resolved_task = result.get("resolved_task", resolved_task)
+        retrieval_question = result.get("retrieval_question", retrieval_question)
+        record.update(task=resolved_task, retrieval_question=retrieval_question)
         record.update(answer=answer, status=status, result=snapshot_result(result, session_dir))
         store.save()
         previous_turns = session.contexts()
@@ -399,6 +405,7 @@ def print_chat_help(ui: TerminalUI | None = None, *, topic: str = "") -> None:
             ("/library", "Open the library and type to search"),
             ("/library Turner 2013", "Search by author, title or DOI; no model call"),
             ("/find", "Find new papers, choose journals and add PDFs"),
+            ("/summary DOI or title", "Read a concise paper summary with source passages"),
             ("/sources", "Selected papers from your last answer"),
             ("/help import", "Add papers and update your library"),
         ]),
@@ -527,6 +534,7 @@ def build_ask_args(
         max_chars_per_chunk=state.max_chars_per_chunk,
         preset=state.preset,
         backend=state.backend,
+        understand_question=True,
         task=task,
         out_dir="",
         category=state.category,

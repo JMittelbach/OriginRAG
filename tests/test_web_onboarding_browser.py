@@ -41,6 +41,12 @@ def browser_page(tmp_path):
                 payload["user"] = {"user_id": state["user_id"], "display_name": "Test user"}
         elif path == "/api/library-stats":
             payload.update({key: state[key] for key in ("total", "searchable", "local_pdf")})
+        elif path.startswith("/api/library?"):
+            payload = {"items": state.get("library", []), "total": len(state.get("library", [])), "has_more": False}
+        elif path == "/api/chat":
+            state.setdefault("chat_requests", []).append(request.post_data_json)
+            payload = {"job_id": "summary-test", "state": "queued", "session_dir": request.post_data_json.get("session_dir", "")}
+            code = 202
         elif path == "/api/paper-import":
             assert request.method == "POST"
             assert request.post_data_json == {"doi": "10.1234/test"}
@@ -274,3 +280,90 @@ def test_local_import_without_account_or_cookie(browser_page):
     page.wait_for_function("document.querySelector('#paperUploadList').textContent.includes('Queued')")
     assert "/api/library-upload" in requests
     assert "/api/library-sync" in requests
+
+
+def test_chat_submission_is_visible_before_server_acknowledgement(browser_page):
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    page.evaluate("""() => {
+      const originalFetch = window.fetch;
+      window.fetch = (url, options) => url === '/api/chat'
+        ? new Promise(resolve => { window.finishTestSubmission = resolve; })
+        : originalFetch(url, options);
+    }""")
+    page.locator("#message").fill("Welche Methoden findet ihr im Korpus?")
+    page.locator("#message").press("Enter")
+    page.wait_for_function("typeof window.finishTestSubmission === 'function'")
+    assert "waiting for the server" in page.locator(".working-stage-label").inner_text()
+    assert "Submitting" in page.locator("#queueSummary").inner_text()
+    assert page.locator("#send").is_disabled()
+    page.evaluate("""() => window.finishTestSubmission(new Response(
+      JSON.stringify({error: 'Test rejection'}), {status: 400, headers: {'Content-Type': 'application/json'}}))""")
+    page.wait_for_function("!document.querySelector('[data-job-id^=submission]')")
+    assert "Test rejection" in page.locator("#chat").inner_text()
+
+
+def test_inventory_citations_render_as_links_not_internal_ids(browser_page):
+    from originrag.analysis.corpus_inventory import inventory_markdown
+
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    source = {"paper_id": "SYNTHETIC", "title": "A numerical methods example",
+              "author": "Example", "year": "2020", "citation_short": "Example, 2020",
+              "evidence_ids": ["E001"], "url": "https://example.org/paper",
+              "source_role": "search_result"}
+    answer = inventory_markdown({"items": [{"name": "finite elements", "paper_id": "SYNTHETIC"}]},
+                                language="de", sources=[source])
+    result = {"answer": answer, "sources": [source], "task": "sources",
+              "answer_state": "results", "assurance": {}}
+    page.evaluate("data => addMessage('assistant', data.answer, resultMeta(data), data)", result)
+    body = page.locator(".assistant .markdown").last
+    assert "finite elements" in body.inner_text()
+    assert "[[cite:" not in body.inner_text()
+    assert body.locator('a[href="https://example.org/paper"]').count() == 1
+
+
+def test_library_summary_uses_chat_queue_and_preserves_draft(browser_page):
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    state["library"] = [
+        {"paper_id": "P1", "title": "Numerical methods", "doi": "10.1234/numerical", "searchable": True},
+        {"paper_id": "P2", "title": "Metadata only", "searchable": False},
+    ]
+    page.locator("#message").fill("Unsent draft")
+    page.locator("#libraryButton").click()
+    buttons = page.locator(".library-paper").get_by_role("button", name="Summarize", exact=True)
+    buttons.first.wait_for()
+    assert buttons.count() == 2 and buttons.nth(1).is_disabled()
+    buttons.first.click()
+    assert page.locator("#message").input_value() == "Unsent draft"
+    assert not state.get("chat_requests")
+    page.evaluate("document.getElementById('message').value = ''")
+    buttons.first.click()
+    page.wait_for_function("!document.querySelector('#libraryBrowserBackdrop').classList.contains('open')")
+    page.wait_for_function("!document.querySelector('[data-job-id^=submission]')")
+    assert len(state["chat_requests"]) == 1
+    assert "10.1234/numerical" in state["chat_requests"][0]["message"]
+    assert "/api/chat" in requests
+
+
+def test_reading_card_has_collapsed_quotes_and_no_evidence_certificate(browser_page):
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    data = {"task": "paper_summary", "answer": "## Numerical methods\n\n### At a glance\nTwo methods were compared.",
+            "answer_state": "answered", "elapsed_seconds": 3,
+            "reading_card": {"coverage": {"basis": "abstract_only"}, "cache_hit": True,
+                             "passages": [{"section": "Abstract", "page_start": 1, "quote": "<script>untrusted</script> literal passage"}]},
+            "sources": [{"paper_id": "P1", "title": "Numerical methods", "author": "Example", "year": "2025",
+                         "source_role": "summary_source", "cited": True, "url": "https://example.org/paper"}]}
+    page.evaluate("data => addMessage('assistant', data.answer, resultMeta(data), data)", data)
+    assert "abstract only" in page.locator(".result-meta").inner_text()
+    assert "Independent studies" not in page.locator(".result-meta").inner_text()
+    quote = page.locator(".result-meta blockquote")
+    assert not quote.is_visible()
+    page.get_by_text("Passages behind this summary", exact=True).click()
+    assert quote.is_visible() and "<script>" in quote.inner_text()
+    assert quote.locator("script").count() == 0
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.locator(".result-meta").evaluate("el => el.scrollWidth <= el.clientWidth + 2")
+    page.screenshot(path=str(tmp / "reading-card-mobile.png"))

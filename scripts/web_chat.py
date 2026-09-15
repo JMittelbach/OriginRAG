@@ -36,6 +36,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 import ask_corpus  # noqa: E402
 import import_paper_inbox  # noqa: E402
 from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
+from originrag.analysis.corpus_inventory import inventory_markdown  # noqa: E402
 from originrag.analysis.faithfulness import citation_claim_blocks, direct_evidence_text  # noqa: E402
 from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
 from originrag.web_local_access import local_browser_request  # noqa: E402
@@ -302,6 +303,8 @@ class WebChatApp:
                 turn_dir,
                 progress_callback=progress_callback,
             )
+            resolved_task = result.get("resolved_task", resolved_task)
+            retrieval_question = result.get("retrieval_question", retrieval_question)
             append_turn_summary(
                 session_dir=target_session,
                 user_text=clean_message,
@@ -1362,6 +1365,7 @@ def library_catalog(
                 "category": _catalog_text(row.get("category") or row.get("domain")),
                 "local_pdf": pdf_exists,
                 "searchable": searchable,
+                "summary_available": searchable or bool(_catalog_text(row.get("abstract"))),
             }
         )
     return tuple(
@@ -2361,6 +2365,7 @@ def build_ask_args(
         preset=settings.preset,
         backend=answer_backend,
         configured_answer_backend=settings.backend,
+        understand_question=True,
         planner_backend=planner_backend,
         configured_planner_backend=settings.planner_backend,
         planner_model=settings.planner_model,
@@ -2397,6 +2402,22 @@ def build_ask_args(
 def serialize_turn_result(
     result: dict, turn_dir: Path, retrieval_question: str, resolved_task: str
 ) -> dict:
+    if result.get("reading_card") is not None:
+        card = result["reading_card"]
+        sources = format_public_sources(result["pack"]["chunks"], source_role="summary_source")
+        for source in sources:
+            source["cited"] = True
+        passages = {p["source"]: p for p in card["inputs"]["passages"]}
+        return {"task": "paper_summary", "answer": ask_corpus.card_markdown(card), "answer_state": "answered",
+                "output_dir": relative_path(turn_dir), "answer_path": relative_path(result["answer_path"]),
+                "sources": sources, "n_unique_papers": 1, "n_chunks": len(passages),
+                "retrieval_question": retrieval_question, "evidence_grade": "not_applicable",
+                "reading_card": {"coverage": card["inputs"]["coverage"], "cache_hit": card["cache_hit"],
+                                 "omitted_claims": card["omitted_claims"],
+                                 "passages": [{"section": passages[c["source"]]["section"],
+                                                "page_start": passages[c["source"]]["page_start"],
+                                                "page_end": passages[c["source"]]["page_end"],
+                                                "quote": c["quote"]} for c in card["claims"]]}}
     answer_path = result.get("answer_path")
     answer = ""
     raw_answer = ""
@@ -2487,6 +2508,12 @@ def serialize_turn_result(
     if resolved_task == "sources":
         answer_state = "results" if sources else "empty"
         answer = build_public_paper_search_summary(sources, paper_search)
+        if pack.get("corpus_inventory") is not None:
+            answer = inventory_markdown(
+                pack["corpus_inventory"],
+                language=(pack.get("question_understanding") or {}).get("language", "en"),
+                sources=sources,
+            )
     else:
         answer_state = (
             "provisional"
@@ -6523,17 +6550,18 @@ INDEX_HTML = r"""<!doctype html>
 
     function updateJobMessage(wrap, job) {
       if (!wrap) return;
-      wrap.classList.toggle("working", ["queued", "running"].includes(job.state));
+      wrap.classList.toggle("working", ["submitting", "queued", "running"].includes(job.state));
       wrap.classList.toggle("job-failed", ["failed", "interrupted"].includes(job.state));
       const label = wrap.querySelector(".working-stage-label");
       if (label) label.textContent = jobStageLabel(job);
       const progress = wrap.querySelector(".working-progress");
       const bar = wrap.querySelector(".working-progress-bar");
+      if (progress) progress.hidden = job.state === "submitting";
       const bounded = Math.max(2, Math.min(100, Number(job.progress) || 2));
       if (progress) progress.setAttribute("aria-valuenow", String(bounded));
       if (bar) bar.style.width = `${bounded}%`;
       const dot = wrap.querySelector(".working-dot");
-      if (dot) dot.hidden = !["queued", "running"].includes(job.state);
+      if (dot) dot.hidden = !["submitting", "queued", "running"].includes(job.state);
     }
 
     function setSubmitting(isSubmitting) {
@@ -6696,6 +6724,33 @@ INDEX_HTML = r"""<!doctype html>
       box.className = "result-meta";
       const summary = document.createElement("div");
       summary.className = "result-summary";
+      if (data.task === "paper_summary") {
+        const card = data.reading_card || {};
+        const coverage = card.coverage || {};
+        summary.appendChild(makePill(coverage.basis === "abstract_only" ? "Paper summary · abstract only" : "Paper summary · selected passages"));
+        if (card.cache_hit) summary.appendChild(makePill("Saved summary"));
+        summary.appendChild(makePill(formatElapsed(data.elapsed_seconds)));
+        box.appendChild(summary);
+        const details = document.createElement("details");
+        details.className = "sources-box";
+        const heading = document.createElement("summary");
+        heading.textContent = "Passages behind this summary";
+        details.appendChild(heading);
+        const seen = new Set();
+        for (const passage of card.passages || []) {
+          const key = `${passage.section}|${passage.page_start}|${passage.quote}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const label = document.createElement("p");
+          label.textContent = `${passage.section || "Passage"}${passage.page_start ? ` · p. ${passage.page_start}` : " · page unavailable"}`;
+          const quote = document.createElement("blockquote");
+          quote.textContent = passage.quote;
+          details.append(label, quote);
+        }
+        box.appendChild(details);
+        box.appendChild(buildSourcesPanel(data.sources || []));
+        return box;
+      }
       if (data.task === "sources") {
         const search = data.paper_search || {};
         const matchCount = (data.sources || []).length;
@@ -7611,6 +7666,11 @@ INDEX_HTML = r"""<!doctype html>
       message.value = "";
       resizeComposer();
       setSubmitting(true);
+      const pendingSubmission = addJobMessage({
+        job_id: `submission-${Date.now()}`, state: "submitting", progress: 0,
+        stage: "Submitting question · waiting for the server to confirm receipt"
+      });
+      if (queueSummary.textContent === "Queue idle") queueSummary.textContent = "Submitting question";
       try {
         const response = await fetch("/api/chat", {
           method: "POST",
@@ -7636,7 +7696,9 @@ INDEX_HTML = r"""<!doctype html>
           statusEl.textContent = "Error.";
         }
       } finally {
+        pendingSubmission.remove();
         setSubmitting(false);
+        if (queueSummary.textContent === "Submitting question") queueSummary.textContent = "Queue idle";
         message.focus();
         if (sessionReconcilePending) scheduleVisibleSessionReconciliation();
       }
@@ -7738,7 +7800,7 @@ INDEX_HTML = r"""<!doctype html>
       queueSummary.classList.toggle("busy", queued + running > 0);
       queueSummary.textContent = queued || running
         ? `Queue · ${running} running · ${queued} waiting`
-        : "Queue idle";
+        : (submittingTurn ? "Submitting question" : "Queue idle");
       queueSummary.title = "View who is currently in the queue.";
     }
 
@@ -8241,6 +8303,24 @@ INDEX_HTML = r"""<!doctype html>
         ? "● searchable full text"
         : (paper.local_pdf ? "○ PDF present · indexing pending" : "○ metadata only");
       links.appendChild(status);
+      const summarize = document.createElement("button");
+      summarize.type = "button";
+      summarize.className = "ghost";
+      summarize.textContent = "Summarize";
+      summarize.disabled = !(paper.summary_available || paper.searchable);
+      summarize.title = summarize.disabled ? "Add an accessible PDF and wait for indexing first" : "Read a short summary with source passages";
+      summarize.addEventListener("click", () => {
+        if (submittingTurn || message.value.trim()) {
+          libraryResultCount.textContent = "Send or clear your current draft before starting a summary.";
+          return;
+        }
+        closeLibraryBrowser();
+        const prefix = navigator.language.toLowerCase().startsWith("de") ? "Zusammenfassung: " : "Summarize this paper: ";
+        message.value = prefix + (paper.doi || paper.title);
+        resizeComposer();
+        form.requestSubmit();
+      });
+      links.appendChild(summarize);
       article.append(title, metadata, category, links);
       return article;
     }

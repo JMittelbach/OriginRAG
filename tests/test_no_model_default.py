@@ -4303,6 +4303,85 @@ def test_data_accessibility_passage_replaces_first_slot_within_paper() -> None:
     ]
 
 
+def test_multilingual_inventory_runs_as_sourced_discovery_without_changing_certificate_policy(
+    tmp_path, monkeypatch,
+):
+    original = "welceh gen famleien findest du im koprus?"
+    normalized = "Which gene families occur in the corpus?"
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    title = "Highly variable Alpha gene families"
+    text = "The Alpha gene family is highly variable. " * 12
+    (chunks / "P1.jsonl").write_text(json.dumps({
+        "paper_id": "P1", "chunk_id": "C1", "title": title,
+        "section": "results", "text": text, "doi": "10.1000/example", "year": "2020",
+        "author": "Example", "quality_flags": [],
+    }) + "\n")
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tyear\tdoi\nP1\t" + title + "\t2020\t10.1000/example\n")
+    args = make_args(original, str(chunks), str(papers), "qwen")
+    args.understand_question = True
+    args.evidence_selector = "trace_flow"
+    prepared = {"status": "ready", "original_question": original, "normalized_question": normalized,
+                "intent": "corpus_inventory", "language": "de", "model": "test",
+                "search_queries": ["highly variable gene families", "Alpha gene family"]}
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **k: prepared)
+    extraction = []
+
+    def extract(question, records, retrieved, **kwargs):
+        extraction.append((question, records, retrieved))
+        return {"scope": "retrieved_reports_only", "status": "verified_mentions",
+                "items": [{"name": "Alpha", "paper_id": "P1", "quote": title}]}
+
+    monkeypatch.setattr(ask_corpus, "extract_inventory", extract)
+    monkeypatch.setattr(ask_corpus, "run_trace_selection", lambda *a, **k: pytest.fail(
+        "A descriptive inventory must not be represented as a sufficiency certificate"))
+    result = ask_corpus.run_question(args, tmp_path / "run")
+    assert result["resolved_task"] == "sources"
+    assert result["pack"]["question"] == original
+    assert result["pack"]["normalized_question"] == normalized
+    assert result["pack"]["corpus_inventory"]["items"][0]["name"] == "Alpha"
+    assert "automatic_lineage_signals" in result["pack"]
+    assert result["paper_search_results"]
+    assert extraction[0][0] == normalized
+    assert args.task == "answer" and args.evidence_selector == "trace_flow"
+    saved = json.loads((tmp_path / "run/run_config.json").read_text())
+    assert saved["question"] == original and saved["normalized_question"] == normalized
+    assert saved["answer_call_performed"] is False
+
+
+def test_translated_question_reaches_unchanged_trace_selector(tmp_path, monkeypatch):
+    original = "Welche Evidenz stützt diese Aussage?"
+    normalized = "What evidence supports this statement?"
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tdoi\n")
+    args = make_args(original, str(chunks), str(papers), "qwen")
+    args.understand_question = True
+    args.evidence_selector = "trace_flow"
+    args.trace_token_budget = 2000
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **k: {
+        "status": "ready", "original_question": original, "normalized_question": normalized,
+        "intent": "question", "language": "de", "model": "test",
+        "search_queries": ["empirical evidence statement"],
+    })
+
+    class ReachedTrace(Exception):
+        pass
+
+    def trace(question, task_mode, *a, **kwargs):
+        assert question == normalized
+        assert kwargs["selector"] == "trace_flow"
+        assert kwargs["token_budget"] == 2000
+        raise ReachedTrace
+
+    monkeypatch.setattr(ask_corpus, "run_trace_selection", trace)
+    with pytest.raises(ReachedTrace):
+        ask_corpus.run_question(args, tmp_path / "run")
+    assert args.question == original
+
+
 def make_args(question: str, chunks_dir: str, papers: str, backend: str) -> SimpleNamespace:
     return SimpleNamespace(
         question=question,

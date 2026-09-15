@@ -96,6 +96,17 @@ Recent conversation context supports follow-up questions; previous answers
 are not treated as scientific evidence. Use `--no-animation` for a static
 terminal interface or `--plain` for plain text.
 
+In model-backed chat, questions are prepared for search across languages, including
+obvious typing errors. You can also ask which methods, topics or families appear
+in your papers: the overview links named examples to retrieved sources and does
+not claim to exhaust the library or count independent studies.
+
+Choose **Summarize** beside a paper in **Library**, or enter `/summary DOI or exact title`
+in terminal chat. A short reading card covers the question, approach, findings and
+limitations, with source passages. It clearly marks abstract-only coverage and does
+not claim to have read omitted text. Summaries use the existing chat queue and are
+reused when their text basis and model are unchanged. Follow-up questions stay in chat.
+
 For later additions, use **Add papers** in the web app. Local use needs no
 account; sign in when using an authenticated shared server. While the
 service is running, uploads are automatically checked, named, categorised,
