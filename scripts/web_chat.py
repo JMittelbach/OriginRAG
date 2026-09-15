@@ -41,6 +41,7 @@ from originrag.analysis.faithfulness import citation_claim_blocks, direct_eviden
 from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
 from originrag.web_local_access import local_browser_request  # noqa: E402
 from originrag.library_topics import assign_library_topics  # noqa: E402
+from originrag.personal_shelf import PersonalShelf  # noqa: E402
 from originrag.provenance.library import (  # noqa: E402
     LibraryStatusResolver,
     normalize_doi,
@@ -1646,6 +1647,9 @@ def build_handler(
                     )
                 )
                 return
+            if parsed.path == "/api/shelf":
+                self.respond_json(PersonalShelf(current_app.out_dir).snapshot(library_catalog()))
+                return
             if parsed.path == "/api/library-stats":
                 self.respond_json(library_catalog_stats())
                 return
@@ -1743,6 +1747,16 @@ def build_handler(
             turn_jobs.recover_persisted(owner_key, current_app)
             if auth_store and not self.valid_csrf(session_token):
                 self.respond_json({"error": "invalid CSRF token"}, status=HTTPStatus.FORBIDDEN)
+                return
+            if parsed.path == "/api/shelf":
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({"error": "Use the local browser or sign in to save papers."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                try:
+                    payload = self.read_json_body()
+                    self.respond_json(PersonalShelf(current_app.out_dir).change(payload, library_catalog()))
+                except ValueError as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
             if parsed.path == "/api/logout" and auth_store and user:
                 auth_store.logout(session_token)
