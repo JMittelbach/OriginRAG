@@ -59,6 +59,20 @@ def browser_page(tmp_path):
             state.setdefault("chat_requests", []).append(request.post_data_json)
             payload = {"job_id": "summary-test", "state": "queued", "session_dir": request.post_data_json.get("session_dir", "")}
             code = 202
+        elif path == "/api/jobs":
+            payload["jobs"] = state.get("jobs", [])
+        elif path == "/api/job/cancel":
+            assert request.headers.get("x-csrf-token") == "test-csrf"
+            assert set(request.post_data_json) == {"job_id"}
+            state.setdefault("cancel_requests", []).append(request.post_data_json)
+            if state.get("cancel_error"):
+                payload = {"error": "Could not reach the server. Please retry."}
+                code = 503
+            else:
+                job = next(j for j in state["jobs"] if j["job_id"] == request.post_data_json["job_id"])
+                job["state"] = "cancelling" if job["state"] == "running" else "cancelled"
+                job["can_cancel"] = False
+                payload = job
         elif path == "/api/paper-import":
             assert request.method == "POST"
             assert request.post_data_json == {"doi": "10.1234/test"}
@@ -463,3 +477,64 @@ def test_shelf_empty_browse_and_save_from_chat(browser_page):
     assert page.locator("#shelfDetail").get_by_role("button", name="Summarize", exact=True).is_disabled()
     page.emulate_media(reduced_motion="reduce")
     assert page.locator(".shelf-book").evaluate("el => parseFloat(getComputedStyle(el).transitionDuration)") <= 0.001
+
+
+@pytest.mark.parametrize("selector", ["#composerStop", ".job-stop"])
+def test_stop_at_progress_and_composer_keeps_draft_and_other_chat(browser_page, selector):
+    page, state, requests, tmp = browser_page
+    page.locator("#guideSkip").click()
+    state["jobs"] = [
+        {"job_id": "a" * 32, "session_dir": "first", "state": "running", "can_cancel": True, "message": "Example", "progress": 40},
+        {"job_id": "b" * 32, "session_dir": "second", "state": "queued", "can_cancel": True, "message": "Another example"},
+    ]
+    page.evaluate("jobs => { currentSessionDir='first'; for (const job of jobs) { knownJobStates.set(job.job_id,job.state); rememberTurnJob(job); } addJobMessage(jobs[0]); }", state["jobs"])
+    page.locator("#message").fill("Keep this unsent question")
+    state["cancel_error"] = True
+    page.locator(selector).click()
+    page.wait_for_function("document.querySelector('#status').textContent.includes('Please retry')")
+    assert page.locator(selector).is_enabled()
+    state["cancel_error"] = False
+    page.locator(selector).click()
+    page.wait_for_function("document.querySelector('.working-stage-label').textContent.startsWith('Stopping')")
+    assert page.locator("#composerStop").is_disabled()
+    assert page.locator(".job-stop").is_disabled()
+    assert state["jobs"][1]["state"] == "queued"
+    assert page.locator("#message").input_value() == "Keep this unsent question"
+    assert not state.get("chat_requests")
+    page.screenshot(path=str(tmp / "stopping-request.png"))
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.evaluate('setSidebarOpen(false)')
+    page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 1")
+    assert page.locator('.working .bubble').evaluate('el => el.scrollWidth <= el.clientWidth + 1')
+    assert page.locator('#composerStop').is_visible()
+    page.wait_for_function("document.querySelector('.job-stop').getBoundingClientRect().right <= innerWidth")
+    page.screenshot(path=str(tmp / 'stopping-request-mobile.png'))
+    state["jobs"][0]["state"] = "cancelled"
+    page.evaluate("pollJobs()")
+    page.wait_for_function("document.querySelector('.working-stage-label').textContent === 'Stopped by you'")
+    assert page.locator("#composerStop").is_hidden()
+    assert page.locator(".job-stop").is_hidden()
+    page.evaluate("currentSessionDir='second'; updateComposerStop()")
+    assert page.locator("#composerStop").is_enabled()
+    page.locator("#composerStop").click()
+    page.wait_for_function("document.querySelector('#composerStop').hidden")
+    assert state["jobs"][1]["state"] == "cancelled"
+
+
+def test_stop_before_server_acknowledges_submission(browser_page):
+    page, state, requests, tmp = browser_page
+    page.locator('#guideSkip').click()
+    pending = []
+    page.route('**/api/chat', lambda route: pending.append(route))
+    page.locator('#message').fill('Synthetic test question')
+    page.locator('#send').click()
+    page.locator('[data-job-id^="submission-"] .job-stop').click()
+    assert page.locator('#composerStop').is_disabled()
+    assert 'waiting for server confirmation' in page.locator('.working-stage-label').inner_text()
+    assert len(pending) == 1
+    job = {'job_id': 'c' * 32, 'session_dir': page.evaluate('currentSessionDir'), 'state': 'queued', 'can_cancel': True}
+    state['jobs'] = [job]
+    pending[0].fulfill(status=202, content_type='application/json', body=json.dumps(job))
+    page.wait_for_function("!document.querySelector('[data-job-id^=submission]')")
+    assert state['cancel_requests'] == [{'job_id': 'c' * 32}]
+    assert state['jobs'][0]['state'] == 'cancelled'

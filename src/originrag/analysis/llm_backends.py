@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from originrag.paths import load_project_env
+from originrag.cancellation import current_cancellation, run_process, urlopen
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -99,6 +100,7 @@ def _call_queue(prompt: str) -> LLMResult:
     results_dir.mkdir(parents=True, exist_ok=True)
     job_path = jobs_dir / f"{job_id}.json"
     result_path = results_dir / f"{job_id}.json"
+    cancel_path = jobs_dir / f"{job_id}.cancel"
     _write_json_atomic(
         job_path,
         {
@@ -111,18 +113,33 @@ def _call_queue(prompt: str) -> LLMResult:
             "status": "pending",
         },
     )
+    token = current_cancellation.get()
+    release = token.register(lambda: cancel_path.touch()) if token else lambda: None
     deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        if result_path.exists():
-            result = _read_json(result_path)
-            answer = str(result.get("answer") or "").strip()
-            error = result.get("error")
-            return LLMResult(
-                backend="queue",
-                answer=answer or None,
-                error=str(error) if error else None,
-            )
-        time.sleep(1.0)
+    try:
+        while time.monotonic() < deadline:
+            if token and token.event.is_set():
+                try:
+                    job_path.replace(jobs_dir / f"{job_id}.cancelled")
+                except FileNotFoundError:
+                    pass
+                else:
+                    token.check()
+            if result_path.exists():
+                if token:
+                    token.check()
+                result = _read_json(result_path)
+                answer = str(result.get("answer") or "").strip()
+                error = result.get("error")
+                return LLMResult(
+                    backend="queue", answer=answer or None,
+                    error=str(error) if error else None,
+                )
+            time.sleep(0.2 if token else 1.0)
+        if token:
+            token.check()
+    finally:
+        release()
     return LLMResult(
         backend="queue",
         answer=None,
@@ -249,7 +266,7 @@ def _call_ollama_cli(
     timeout_seconds: int,
 ) -> LLMResult:
     try:
-        completed = subprocess.run(
+        completed = (run_process if current_cancellation.get() else subprocess.run)(
             ["ollama", "run", model],
             input=prompt,
             text=True,
@@ -302,7 +319,7 @@ def _post_json(url: str, payload: dict, headers: dict[str, str], timeout_seconds
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")

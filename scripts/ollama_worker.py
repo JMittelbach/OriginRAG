@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -17,6 +18,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from originrag.analysis.llm_backends import clean_ollama_cli_output  # noqa: E402
+from originrag.cancellation import Cancellation, TurnCancelled, cancellation_scope, current_cancellation, run_process, urlopen  # noqa: E402
 
 
 def main() -> int:
@@ -64,9 +66,18 @@ def process_once(
     base_url: str,
     timeout_seconds: int,
 ) -> bool:
-    job_paths = sorted(jobs_dir.glob("*.json"), key=lambda path: path.stat().st_mtime)
+    def modification_time(path):
+        try:
+            return path.stat().st_mtime
+        except FileNotFoundError:
+            return float('inf')
+
+    job_paths = sorted(jobs_dir.glob("*.json"), key=modification_time)
     for job_path in job_paths:
-        job = read_json(job_path)
+        try:
+            job = read_json(job_path)
+        except FileNotFoundError:
+            continue
         job_id = str(job.get("job_id") or job_path.stem)
         result_path = results_dir / f"{job_id}.json"
         if result_path.exists():
@@ -78,7 +89,30 @@ def process_once(
         except FileNotFoundError:
             continue
         print(f"Processing {job_id} with {job.get('model')}")
-        result = run_ollama_job(job, base_url=base_url, timeout_seconds=timeout_seconds)
+        token = Cancellation()
+        watcher_done = threading.Event()
+        cancel_path = job_path.with_suffix('.cancel')
+
+        def watch_cancel():
+            while not watcher_done.is_set():
+                if cancel_path.exists():
+                    token.cancel()
+                    return
+                watcher_done.wait(0.1)
+
+        watcher = threading.Thread(target=watch_cancel, daemon=True)
+        watcher.start()
+        try:
+            if cancel_path.exists():
+                token.cancel()
+            with cancellation_scope(token):
+                result = run_ollama_job(job, base_url=base_url, timeout_seconds=timeout_seconds)
+                token.commit()
+        except TurnCancelled:
+            result = {"job_id": job_id, "answer": None, "error": "cancelled", "status": "cancelled"}
+        finally:
+            watcher_done.set()
+            watcher.join(timeout=1)
         write_json_atomic(result_path, result)
         status = "ok" if result.get("answer") else "failed"
         archive_dir = completed_dir if result.get("answer") else failed_dir
@@ -148,7 +182,7 @@ def post_json(url: str, payload: dict, timeout_seconds: int) -> dict:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
@@ -157,7 +191,7 @@ def post_json(url: str, payload: dict, timeout_seconds: int) -> dict:
 
 def run_ollama_cli(prompt: str, model: str, timeout_seconds: int) -> tuple[str | None, str | None]:
     try:
-        completed = subprocess.run(
+        completed = (run_process if current_cancellation.get() else subprocess.run)(
             ["ollama", "run", model],
             input=prompt,
             text=True,

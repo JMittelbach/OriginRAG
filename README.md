@@ -108,6 +108,9 @@ not claim to have read omitted text. Web summaries use the existing chat queue.
 Saved summaries are reused when their text basis and model are unchanged.
 Follow-up questions stay in chat.
 
+Use **■ Stop** beside the progress indicator or above the chat input to cancel
+your request. Other users' requests are unaffected.
+
 Use **Save to shelf** in Library or chat references to keep papers close at hand.
 The **My shelf** button at the top opens your personal bookshelf, with quick access
 to each paper and its summary. On shared servers, shelves belong to individual

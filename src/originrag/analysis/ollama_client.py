@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from originrag.paths import load_project_env
+from originrag.cancellation import urlopen
 
 
 DEFAULT_BASE_URL = "http://localhost:11434"
@@ -249,7 +250,7 @@ def qwen_raw_chat_prompt(prompt: str, assistant_prefix: str) -> str:
 
 def get_json(url: str, timeout: int) -> dict[str, Any]:
     request = urllib.request.Request(url, method="GET")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -262,7 +263,7 @@ def post_json(url: str, payload: dict, timeout: int) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")

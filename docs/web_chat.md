@@ -160,6 +160,13 @@ internet.
 
 ## Jobs and queue
 
+**■ Stop** appears beside a request's progress and above the chat input. It removes
+your waiting request or stops your running request, including its model connection.
+The chat shows **Stopping…** until the request has finished stopping. A calculation
+already in progress may take a moment to stop. Other users' requests are unaffected,
+and an unsent draft stays in the input. Loaded models may remain in memory for later
+questions. Deployments using the separate queue worker must update that worker too.
+
 Submitting a question creates a server-side job. It continues if the user
 switches chats, reloads the page, or closes the submitting tab. Questions in
 the same chat remain ordered, while another chat may submit a second queued

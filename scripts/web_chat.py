@@ -16,7 +16,7 @@ import time
 import webbrowser
 from collections import Counter, deque
 from http.cookies import SimpleCookie
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime
 from functools import lru_cache
 from http import HTTPStatus
@@ -35,6 +35,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import ask_corpus  # noqa: E402
+from originrag.cancellation import Cancellation, TurnCancelled, cancellation_scope, cancellable_lock, checkpoint, commit_answer  # noqa: E402
 import import_paper_inbox  # noqa: E402
 from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
 from originrag.analysis.corpus_inventory import inventory_markdown  # noqa: E402
@@ -269,7 +270,7 @@ class WebChatApp:
 
 
 
-        with session_lock:
+        with cancellable_lock(session_lock):
             settings = merge_settings(self.settings, settings_update)
             previous_turns = [
                 turn_context_from_saved_turn(turn)
@@ -306,6 +307,7 @@ class WebChatApp:
                 turn_dir,
                 progress_callback=progress_callback,
             )
+            commit_answer()
             resolved_task = result.get("resolved_task", resolved_task)
             retrieval_question = result.get("retrieval_question", retrieval_question)
             append_turn_summary(
@@ -637,6 +639,7 @@ class TurnJob:
     result: dict | None = None
     error: str = ""
     completion_callback: object | None = None
+    cancellation: Cancellation = dataclass_field(default_factory=Cancellation)
 
 
 def write_json_atomically(path: Path, payload: object) -> None:
@@ -753,13 +756,13 @@ class TurnJobManager:
                 if (
                     not re.fullmatch(r"[0-9a-f]{32}", job_id)
                     or payload.get("owner_scope_hash") != owner_hash
-                    or state not in {"queued", "running", "failed", "interrupted"}
+                    or state not in {"queued", "running", "cancelling", "cancelled", "failed", "interrupted"}
                 ):
                     continue
                 session_dir = path.parents[1]
                 safe_session_dir(app.out_dir, str(session_dir))
                 completed_at = float(payload.get("completed_at") or 0)
-                if state in {"failed", "interrupted"} and completed_at < time.time() - 86400:
+                if state in {"failed", "interrupted", "cancelled"} and completed_at < time.time() - 86400:
                     continue
                 recovered = TurnJob(
                     job_id=job_id,
@@ -769,10 +772,10 @@ class TurnJobManager:
                     message=str(payload.get("message") or "Submitted question"),
                     settings_update={},
                     created_at=float(payload.get("created_at") or path.stat().st_mtime),
-                    state=("interrupted" if state in {"queued", "running"} else state),
+                    state=("interrupted" if state in {"queued", "running", "cancelling"} else state),
                     stage=(
                         "Interrupted by server restart"
-                        if state in {"queued", "running"}
+                        if state in {"queued", "running", "cancelling"}
                         else str(payload.get("stage") or "Failed")
                     ),
                     progress=int(payload.get("progress") or 0),
@@ -780,7 +783,7 @@ class TurnJobManager:
                     completed_at=(completed_at or time.time()),
                     error=(
                         "The server stopped before this job completed. Please submit it again."
-                        if state in {"queued", "running"}
+                        if state in {"queued", "running", "cancelling"}
                         else str(payload.get("error") or "")
                     ),
                 )
@@ -817,7 +820,7 @@ class TurnJobManager:
         with self.condition:
             details = []
             for job in self.jobs.values():
-                if job.state not in {"queued", "running"}:
+                if job.state not in {"queued", "running", "cancelling"}:
                     continue
                 if owner_key is not None and not hmac.compare_digest(
                     job.owner_key, str(owner_key)
@@ -826,7 +829,7 @@ class TurnJobManager:
                 snapshot = self._snapshot_locked(job)
                 snapshot["owner_key"] = job.owner_key
                 details.append(snapshot)
-        priority = {"running": 0, "queued": 1}
+        priority = {"running": 0, "cancelling": 0, "queued": 1}
         return sorted(
             details,
             key=lambda item: (
@@ -870,9 +873,31 @@ class TurnJobManager:
             return any(
                 hmac.compare_digest(job.owner_key, str(owner_key))
                 and job.session_dir.resolve() == target
-                and job.state in {"queued", "running"}
+                and job.state in {"queued", "running", "cancelling"}
                 for job in self.jobs.values()
             )
+
+    def cancel(self, owner_key: str, job_id: str) -> dict | None:
+        with self.condition:
+            job = self.jobs.get(job_id)
+            if not job or not hmac.compare_digest(job.owner_key, str(owner_key)):
+                return None
+            if job.state in self.terminal_states or job.state == "cancelling":
+                return self._snapshot_locked(job)
+            if not job.cancellation.cancel():
+                job.stage = "Finishing saved answer"
+                return self._snapshot_locked(job)
+            if job.state == "queued":
+                self.waiting.remove(job_id)
+                job.state = "cancelled"
+                job.stage = "Stopped before starting"
+                job.completed_at = time.time()
+            else:
+                job.state = "cancelling"
+                job.stage = "Stopping this request…"
+            self._persist_locked(job)
+            self.condition.notify_all()
+            return self._snapshot_locked(job)
 
     def wait_for_terminal(self, job_id: str, timeout: float = 5.0) -> dict:
         deadline = time.monotonic() + timeout
@@ -910,7 +935,7 @@ class TurnJobManager:
                 self._persist_locked(job)
                 self.condition.notify_all()
             try:
-                with self.corpus_lock:
+                with cancellation_scope(job.cancellation), cancellable_lock(self.corpus_lock):
                     result = job.app.run_turn_for_session(
                         job.session_dir,
                         job.message,
@@ -919,17 +944,25 @@ class TurnJobManager:
                             current, stage
                         ),
                     )
+                    with self.condition:
+                        job.cancellation.commit()
+                        job.result = result
+                        job.state = "complete"
+                        job.stage = "Complete"
+                        job.progress = 100
+                        job.completed_at = time.time()
+            except TurnCancelled:
                 with self.condition:
-                    job.result = result
-                    job.state = "complete"
-                    job.stage = "Complete"
-                    job.progress = 100
+                    job.result = None
+                    job.state = "cancelled"
+                    job.stage = "Stopped by you"
                     job.completed_at = time.time()
             except Exception as exc:
                 with self.condition:
-                    job.error = str(exc)
-                    job.state = "failed"
-                    job.stage = "Failed"
+                    cancelled = job.cancellation.event.is_set()
+                    job.error = "" if cancelled else str(exc)
+                    job.state = "cancelled" if cancelled else "failed"
+                    job.stage = "Stopped by you" if cancelled else "Failed"
                     job.completed_at = time.time()
             finally:
                 with self.condition:
@@ -937,7 +970,7 @@ class TurnJobManager:
                     self._persist_locked(job)
                     self.condition.notify_all()
                 callback = job.completion_callback
-                if callable(callback):
+                if callable(callback) and job.state != "cancelled":
                     try:
                         callback(job.result, job.error)
                     except Exception:
@@ -958,6 +991,7 @@ class TurnJobManager:
             self.workers.append(worker)
 
     def _set_progress(self, job_id: str, stage: str) -> None:
+        checkpoint()
         with self.condition:
             job = self.jobs.get(job_id)
             if not job or job.state != "running":
@@ -990,6 +1024,7 @@ class TurnJobManager:
             "started_at": job.started_at,
             "completed_at": job.completed_at,
             "error": job.error,
+            "can_cancel": job.state in {"queued", "running"} and not job.cancellation.committed,
         }
 
     def _persist_locked(self, job: TurnJob) -> None:
@@ -1755,6 +1790,21 @@ def build_handler(
             turn_jobs.recover_persisted(owner_key, current_app)
             if auth_store and not self.valid_csrf(session_token):
                 self.respond_json({"error": "invalid CSRF token"}, status=HTTPStatus.FORBIDDEN)
+                return
+            if parsed.path == "/api/job/cancel":
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({"error": "Use the local browser or sign in to stop a request."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                try:
+                    payload = self.read_json_body()
+                    job_id = payload.get("job_id")
+                    if set(payload) != {"job_id"} or not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id):
+                        raise ValueError("A valid job_id is required.")
+                    result = turn_jobs.cancel(owner_key, job_id)
+                except ValueError as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                self.respond_json(result or {"error": "Request not found."}, status=HTTPStatus.OK if result else HTTPStatus.NOT_FOUND)
                 return
             if parsed.path == "/api/shelf":
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
@@ -4088,7 +4138,7 @@ def sessions_with_job_status(sessions: list[dict], jobs: list[dict]) -> list[dic
         if str(job.get("state") or "") == "complete":
             continue
         jobs_by_session.setdefault(str(job.get("session_dir") or ""), []).append(job)
-    priority = {"running": 0, "queued": 1, "failed": 2, "interrupted": 3}
+    priority = {"running": 0, "cancelling": 0, "queued": 1, "failed": 2, "interrupted": 3}
     enriched = []
     for session in sessions:
         session_jobs = jobs_by_session.get(str(session.get("session_dir") or ""), [])
@@ -4865,6 +4915,7 @@ INDEX_HTML = r"""<!doctype html>
       border-radius: 999px;
     }
     .session-job-indicator.running,
+    .session-job-indicator.cancelling,
     .session-job-indicator.queued {
       border: 2px solid rgba(66, 214, 199, .24);
       border-top-color: var(--teal);
@@ -5842,6 +5893,14 @@ INDEX_HTML = r"""<!doctype html>
       padding: 8px;
       box-shadow: var(--shadow);
     }
+    #composerStop, .job-stop { width: auto; min-height: 30px; padding: 5px 12px; border-radius: 9px; font-size: 12px; white-space: nowrap; }
+    .job-stop { margin: 10px 0 0 12px; align-self: center; }
+    .composer-context { align-items: center; }
+    @media (max-width: 700px) {
+      .assistant.working .bubble { flex-wrap: wrap; }
+      .working-stage { min-width: 0; flex: 1 1 140px; }
+      .job-stop { margin-left: auto; }
+    }
     textarea {
       min-height: 44px;
       max-height: 170px;
@@ -6239,6 +6298,7 @@ INDEX_HTML = r"""<!doctype html>
       <form class="composer" id="form">
         <div class="composer-context">
           <span>Enter to send · Shift+Enter for a new line</span>
+          <button id="composerStop" type="button" hidden aria-label="Stop current request">■ Stop</button>
         </div>
         <div class="composer-inner">
           <label class="sr-only" for="message">Research question</label>
@@ -6422,7 +6482,11 @@ INDEX_HTML = r"""<!doctype html>
     const currentSessionStorageKey = "pfempire.currentSession";
     let currentSessionDir = "";
     let submittingTurn = false;
+    let cancelSubmittedTurn = false;
     let knownJobStates = new Map();
+    const activeTurnJobs = new Map();
+    const cancelRequests = new Set();
+    const composerStop = document.getElementById('composerStop');
     let jobPollBusy = false;
     let lastJobSignature = "";
     let sessionLoadSequence = 0;
@@ -6513,6 +6577,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function addJobMessage(job, includeUser = false) {
+      rememberTurnJob(job);
       const jobId = String(job.job_id || "");
       const existing = jobId
         ? Array.from(document.querySelectorAll("[data-job-id]")).find(
@@ -6552,6 +6617,11 @@ INDEX_HTML = r"""<!doctype html>
       stage.appendChild(progress);
       bubble.appendChild(dot);
       bubble.appendChild(stage);
+      const stop = document.createElement('button');
+      stop.type = 'button'; stop.className = 'job-stop'; stop.textContent = '■ Stop';
+      stop.setAttribute('aria-label', 'Stop this request');
+      stop.addEventListener('click', () => cancelTurnJob(jobId));
+      bubble.appendChild(stop);
       wrap.appendChild(roleEl);
       wrap.appendChild(bubble);
       chat.appendChild(wrap);
@@ -6561,6 +6631,9 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function jobStageLabel(job) {
+      if (job.state === 'submitting' && cancelSubmittedTurn) return 'Stop requested · waiting for server confirmation';
+      if (job.state === 'cancelling') return 'Stopping this request…';
+      if (job.state === 'cancelled') return job.stage || 'Stopped by you';
       if (job.state === "queued") {
         const ahead = Number(job.jobs_ahead || 0);
         if (ahead === 0) return "Waiting in queue · next to run";
@@ -6573,29 +6646,97 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function updateJobMessage(wrap, job) {
+      rememberTurnJob(job);
+      job = activeTurnJobs.get(job.job_id) || job;
       if (!wrap) return;
-      wrap.classList.toggle("working", ["submitting", "queued", "running"].includes(job.state));
+      wrap.classList.toggle("working", ["submitting", "queued", "running", "cancelling"].includes(job.state));
+      const stop = wrap.querySelector('.job-stop');
+      if (stop) {
+        stop.hidden = !['submitting', 'queued', 'running', 'cancelling'].includes(job.state);
+        stop.disabled = job.state === 'cancelling' || (job.state === 'submitting' && cancelSubmittedTurn) || job.can_cancel === false || cancelRequests.has(job.job_id);
+        stop.textContent = job.state === 'cancelling' || (job.state === 'submitting' && cancelSubmittedTurn) ? 'Stopping…' : '■ Stop';
+      }
       wrap.classList.toggle("job-failed", ["failed", "interrupted"].includes(job.state));
       const label = wrap.querySelector(".working-stage-label");
       if (label) label.textContent = jobStageLabel(job);
       const progress = wrap.querySelector(".working-progress");
       const bar = wrap.querySelector(".working-progress-bar");
-      if (progress) progress.hidden = job.state === "submitting";
+      if (progress) progress.hidden = ['submitting', 'cancelled'].includes(job.state);
       const bounded = Math.max(2, Math.min(100, Number(job.progress) || 2));
       if (progress) progress.setAttribute("aria-valuenow", String(bounded));
       if (bar) bar.style.width = `${bounded}%`;
       const dot = wrap.querySelector(".working-dot");
-      if (dot) dot.hidden = !["submitting", "queued", "running"].includes(job.state);
+      if (dot) dot.hidden = !["submitting", "queued", "running", "cancelling"].includes(job.state);
+    }
+
+    function rememberTurnJob(job) {
+      if (!job.job_id || job.state === 'submitting') return;
+      const previous = activeTurnJobs.get(job.job_id);
+      if (previous && ['cancelled', 'cancelling'].includes(previous.state) && ['queued', 'running'].includes(job.state)) return;
+      activeTurnJobs.set(job.job_id, job);
+      updateComposerStop();
+    }
+
+    function updateComposerStop() {
+      const jobs = [...activeTurnJobs.values()].filter(job => job.session_dir === currentSessionDir && ['queued','running','cancelling'].includes(job.state));
+      jobs.sort((a,b) => Number(a.state === 'queued') - Number(b.state === 'queued') || Number(a.created_at || 0) - Number(b.created_at || 0));
+      const job = jobs[0];
+      if (!job && submittingTurn && !sessionNavigationPending) {
+        composerStop.hidden = false;
+        composerStop.disabled = cancelSubmittedTurn;
+        composerStop.textContent = cancelSubmittedTurn ? 'Stopping…' : '■ Stop';
+        composerStop.onclick = () => cancelTurnJob('submission-pending');
+        return;
+      }
+      composerStop.hidden = !job || sessionNavigationPending;
+      composerStop.disabled = !job || job.state === 'cancelling' || job.can_cancel === false || cancelRequests.has(job.job_id);
+      composerStop.textContent = job?.state === 'cancelling' ? 'Stopping…' : '■ Stop';
+      composerStop.onclick = () => { if (job) cancelTurnJob(job.job_id); };
+    }
+
+    async function cancelTurnJob(jobId) {
+      if (jobId.startsWith('submission-')) {
+        cancelSubmittedTurn = true;
+        document.querySelectorAll('[data-job-id^="submission-"]').forEach(wrap => updateJobMessage(wrap, {job_id:wrap.dataset.jobId, state:'submitting'}));
+        updateComposerStop();
+        return;
+      }
+      if (cancelRequests.has(jobId)) return;
+      cancelRequests.add(jobId);
+      const update = job => {
+        rememberTurnJob(job);
+        const wrap = [...document.querySelectorAll('[data-job-id]')].find(el => el.dataset.jobId === jobId);
+        if (wrap) updateJobMessage(wrap, job);
+      };
+      const existing = activeTurnJobs.get(jobId);
+      if (existing) update(existing);
+      try {
+        const response = await fetch('/api/job/cancel', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({job_id:jobId})});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not stop the request.');
+        update(data);
+        statusEl.textContent = jobStageLabel(data);
+        pollJobs();
+      } catch (error) {
+        statusEl.textContent = error.message;
+      } finally {
+        cancelRequests.delete(jobId);
+        const job = activeTurnJobs.get(jobId);
+        if (job) update(job);
+        updateComposerStop();
+      }
     }
 
     function setSubmitting(isSubmitting) {
       submittingTurn = isSubmitting;
+      updateComposerStop();
       send.disabled = isSubmitting || libraryBusy || sessionNavigationPending;
       message.disabled = libraryBusy || sessionNavigationPending;
     }
 
     function setSessionNavigationPending(isPending) {
       sessionNavigationPending = isPending;
+      updateComposerStop();
       send.disabled = submittingTurn || libraryBusy || isPending;
       message.disabled = libraryBusy || isPending;
     }
@@ -7687,6 +7828,7 @@ INDEX_HTML = r"""<!doctype html>
       const text = message.value.trim();
       if (!text) return;
       const submittedSession = currentSessionDir;
+      cancelSubmittedTurn = false;
       addMessage("user", text);
       message.value = "";
       resizeComposer();
@@ -7712,7 +7854,8 @@ INDEX_HTML = r"""<!doctype html>
         if (data.session_dir === currentSessionDir) {
           addJobMessage(data);
         }
-        statusEl.textContent = data.state === "queued" ? "Question queued." : "Question started.";
+        if (cancelSubmittedTurn) await cancelTurnJob(data.job_id);
+        else statusEl.textContent = data.state === "queued" ? "Question queued." : "Question started.";
         loadSessions();
         pollJobs();
       } catch (error) {
@@ -7909,6 +8052,10 @@ INDEX_HTML = r"""<!doctype html>
         if (!response.ok) return;
         const data = await response.json();
         const jobs = data.jobs || [];
+        for (const job of jobs) rememberTurnJob(job);
+        const present = new Set(jobs.map(job => job.job_id));
+        for (const id of activeTurnJobs.keys()) if (!present.has(id) && !cancelRequests.has(id)) activeTurnJobs.delete(id);
+        updateComposerStop();
         updateQueueSummary(data.queue || {});
         let refreshCurrent = false;
         for (const job of jobs) {
@@ -8061,7 +8208,7 @@ INDEX_HTML = r"""<!doctype html>
           remove.className = "session-menu-item danger";
           remove.type = "button";
           remove.textContent = "Delete";
-          remove.disabled = ["queued", "running"].includes(session.job_state);
+          remove.disabled = ["queued", "running", "cancelling"].includes(session.job_state);
           if (remove.disabled) remove.title = "Wait for this chat's job to finish before deleting it.";
           remove.addEventListener("click", (event) => {
             event.stopPropagation();
@@ -8152,7 +8299,7 @@ INDEX_HTML = r"""<!doctype html>
           knownJobStates.set(job.job_id, job.state);
           addJobMessage(job, true);
         }
-        const activeJobs = (data.jobs || []).filter((job) => ["queued", "running"].includes(job.state));
+        const activeJobs = (data.jobs || []).filter((job) => ["queued", "running", "cancelling"].includes(job.state));
         statusEl.textContent = activeJobs.length
           ? `${activeJobs.length} ${activeJobs.length === 1 ? "job is" : "jobs are"} still active in this chat.`
           : "";
