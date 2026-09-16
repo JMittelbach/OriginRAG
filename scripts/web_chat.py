@@ -1402,6 +1402,7 @@ def library_catalog(
                 "year": year,
                 "journal": journal,
                 "doi": doi,
+                **{field: _catalog_text(row.get(field)) for field in ("authors", "full_authors", "volume", "issue", "pages", "publisher", "document_type") if row.get(field)},
                 "doi_url": f"https://doi.org/{doi}" if doi else "",
                 "collection": _catalog_text(row.get("collection")),
                 "category": _catalog_text(row.get("category") or row.get("domain")),

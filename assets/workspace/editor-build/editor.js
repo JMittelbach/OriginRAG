@@ -29,7 +29,7 @@ export function createLatexEditor(parent, onChange, onCursor) {
   const documents = new Map();
   let current = '', view;
   const theme = EditorView.theme({
-    '&': {height: '100%', color: 'var(--code-text)', backgroundColor: 'var(--code-bg)', fontSize: '14px'},
+    '&': {height: '100%', color: 'var(--code-text)', backgroundColor: 'var(--code-bg)', fontSize: 'var(--editor-font-size, 14px)'},
     '&.cm-focused': {outline: 'none'},
     '.cm-scroller': {overflow: 'auto', fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace', lineHeight: '1.65'},
     '.cm-content': {padding: '16px 0', caretColor: 'var(--code-text)'},
@@ -94,6 +94,14 @@ export function createLatexEditor(parent, onChange, onCursor) {
         view.dispatch({changes: {from, to, insert: start + text + '}'}, selection: {anchor: from + start.length, head: from + start.length + text.length}, userEvent: 'input'});
       }
       view.focus();
+    },
+    insertCitation(key) {
+      if (view.state.readOnly || !/^[A-Za-z0-9_.:-]+$/.test(key)) return false;
+      const {from, to} = view.state.selection.main;
+      const insert = '\\cite{' + key + '}';
+      view.dispatch({changes: {from, to, insert}, selection: {anchor: from + insert.length}, userEvent: 'input'});
+      view.focus();
+      return true;
     },
     measure() { view.requestMeasure(); },
   };

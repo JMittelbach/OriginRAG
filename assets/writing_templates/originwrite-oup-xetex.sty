@@ -1,0 +1,13 @@
+% MIT-licensed OriginWrite compatibility helper. The OUP class is unmodified.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{originwrite-oup-xetex}[2026/09/16 OUP preview compatibility]
+% The publisher class emits legacy PostScript pdfmark page boxes. XeTeX's
+% PDF backend already receives the paper size from crop and cannot read
+% those pdfmarks. Suppress only the legacy page-box hook under XeTeX.
+\ifdefined\XeTeXversion
+  \makeatletter
+  \let\shipout@PageObjects\relax
+  \let\rest@dvi@pages\relax
+  \makeatother
+\fi
+\endinput

@@ -1,0 +1,47 @@
+.writing #writerGrid[data-direction=stack][data-narrow=false][data-mode=split] {
+  grid-template-columns:var(--files-width) 6px minmax(0,1fr);
+  grid-template-rows:minmax(0,var(--code-fr)) 6px minmax(0,var(--pdf-fr));
+}
+.writing #writerGrid[data-direction=stack][data-narrow=false][data-mode=split][data-swapped=true] {
+  grid-template-rows:minmax(0,var(--pdf-fr)) 6px minmax(0,var(--code-fr));
+}
+.writing #writerGrid[data-direction=stack][data-narrow=false][data-mode=split][data-collapsed=true] {
+  grid-template-columns:0 0 minmax(0,1fr);
+}
+.writing #writerGrid[data-direction=stack][data-narrow=false][data-mode=split] .files,
+.writing #writerGrid[data-direction=stack][data-narrow=false][data-mode=split] .files-resize {
+  grid-row:1 / 4;
+}
+.writing #writerGrid[data-direction=stack][data-narrow=false][data-mode=split] .source-pane,
+.writing #writerGrid[data-direction=stack][data-narrow=false][data-mode=split] .preview-pane {
+  grid-column:3;
+}
+.writing #writerGrid[data-direction=stack][data-narrow=false][data-mode=split] .source-pane,
+.writing #writerGrid[data-direction=stack][data-narrow=false][data-mode=split][data-swapped=true] .preview-pane {
+  grid-row:1;
+}
+.writing #writerGrid[data-direction=stack][data-narrow=false][data-mode=split] .preview-pane,
+.writing #writerGrid[data-direction=stack][data-narrow=false][data-mode=split][data-swapped=true] .source-pane {
+  grid-row:3;
+}
+.writing #writerGrid[data-direction=stack] .panes-resize {grid-row:2;cursor:row-resize}
+.writing #writerGrid[data-direction=stack][data-narrow=false] .panes-resize {grid-column:3}
+.writing #writerGrid[data-direction=stack] .panes-resize::after {
+  top:2px;left:calc(50% - 14px);height:2px;width:28px;
+  background:repeating-linear-gradient(90deg,#94a3b7 0 2px,transparent 2px 4px);
+}
+.writing.resizing-rows {cursor:row-resize}
+.writing .code-zoom {display:flex;align-items:center;gap:2px;margin-left:4px}
+.writing .code-zoom button {font-size:15px;min-width:25px;padding:3px}
+.writing .code-zoom select,.writing #codeZoom {
+  width:62px;min-width:0;margin:0;padding:3px 2px;border-color:var(--code-line);
+  background:var(--code-gutter);color:var(--code-text);font-size:11px;
+}
+.writing .code-toolbar {flex-wrap:wrap}
+.writing #paneDirection {max-width:122px}
+.writing #paneDirection:disabled {opacity:.55}
+.writing .pdf-toolbar #pdfZoomIn,.writing .pdf-toolbar #pdfZoomOut {padding:4px 7px;min-width:26px}
+@media(max-width:759px) {
+  .writing #paneDirection {max-width:110px}
+  .writing .code-zoom {margin-left:auto}
+}

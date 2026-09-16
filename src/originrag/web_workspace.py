@@ -4,7 +4,8 @@ import sqlite3
 from urllib.parse import parse_qs
 
 from .writing import WritingConflict, WritingStore
-from .writing_compile import CompilerBusy, compile_project, compiler_status
+from .writing_compile import CompilerBusy, compiler_status
+from .writing_builds import compile_saved_project
 
 PAGES = {'/workspace', '/bookshelf', '/library', '/write'}
 
@@ -51,7 +52,7 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                 project = store.get(payload.get('id'))
                 if payload.get('revision') != project['revision']:
                     raise WritingConflict('The project changed before compilation. Save or reload first.')
-                result = compile_project(project)
+                result = compile_saved_project(project, owner_directory)
                 result['pdf'] = base64.b64encode(result['pdf']).decode('ascii')
                 handler.respond_json(result)
             else:

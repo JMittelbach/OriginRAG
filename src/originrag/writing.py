@@ -127,16 +127,211 @@ def unpack_project(encoded):
         raise ValueError('Use a UTF-8 LaTeX project ZIP with supported files only.') from exc
 
 
-def bibtex(papers):
+def citation_key(paper):
+    return 'paper' + hashlib.sha256(str(paper['paper_id']).encode()).hexdigest()[:12]
+
+
+def reference_entry(paper):
     replacements = {'\\': r'\textbackslash{}', '{': r'\{', '}': r'\}', '%': r'\%', '&': r'\&', '#': r'\#', '_': r'\_', '$': r'\$', '~': r'\textasciitilde{}', '^': r'\textasciicircum{}'}
+
     def escape(value):
         return ''.join(replacements.get(c, c) for c in str(value or '').replace('\n', ' ')[:4000])
-    entries = []
-    for p in papers:
-        key = 'paper' + hashlib.sha256(str(p['paper_id']).encode()).hexdigest()[:12]
-        fields = ',\n'.join('  ' + field + ' = {' + escape(p.get(source)) + '}' for field, source in [('title', 'title'), ('author', 'author'), ('year', 'year'), ('journal', 'journal'), ('doi', 'doi')] if p.get(source))
-        entries.append('@article{' + key + ',\n' + fields + '\n}')
-    return '\n\n'.join(entries) + '\n'
+
+    authors = paper.get('authors') or paper.get('full_authors') or paper.get('author') or ''
+    if isinstance(authors, str) and authors.lstrip().startswith('['):
+        try:
+            decoded = json.loads(authors)
+            if isinstance(decoded, list):
+                authors = decoded
+        except (ValueError, TypeError):
+            pass
+    if isinstance(authors, list):
+        names = []
+        for author in authors:
+            if isinstance(author, dict):
+                if author.get('family'):
+                    names.append(', '.join(escape(author.get(k)) for k in ('family', 'given') if author.get(k)))
+                elif author.get('name'):
+                    names.append('{' + escape(author['name']) + '}')
+            elif isinstance(author, str) and author.strip():
+                names.append(escape(author))
+        author_field = ' and '.join(names)
+    else:
+        author_field = escape(authors)
+    values = [(field, escape(paper.get(source))) for field, source in (
+        ('title', 'title'), ('year', 'year'), ('journal', 'journal'), ('volume', 'volume'),
+        ('number', 'issue'), ('pages', 'pages'), ('doi', 'doi'), ('url', 'doi_url'), ('publisher', 'publisher'))
+        if paper.get(source)]
+    if author_field:
+        values.insert(1, ('author', author_field))
+    kind = {'book': 'book', 'book-chapter': 'incollection', 'proceedings-article': 'inproceedings'}.get(paper.get('type') or paper.get('document_type'), 'article')
+    fields = ',\n'.join('  ' + field + ' = {' + value + '}' for field, value in values)
+    return '@' + kind + '{' + citation_key(paper) + ',\n' + fields + '\n}'
+
+
+def bibtex(papers):
+    return '\n\n'.join(reference_entry(p) for p in papers) + '\n'
+
+
+def collection_reference_data(collection, catalogue):
+    available = {p['paper_id']: p for p in catalogue}
+    references, missing = [], []
+    for paper_id in collection['papers']:
+        paper = available.get(paper_id)
+        if paper is None:
+            missing.append(paper_id)
+            continue
+        authors = paper.get('authors') or paper.get('full_authors') or paper.get('author') or ''
+        warnings = []
+        if not authors:
+            warnings.append('Author metadata is missing. Check the original publication.')
+        elif isinstance(authors, str) and (re.search(r'\bet\s+al\b', authors, re.I) or (' and ' not in authors and ',' not in authors)):
+            warnings.append('The author list may be abbreviated. Check it before submission.')
+        if not paper.get('year'):
+            warnings.append('Publication year is missing.')
+        references.append({**paper, 'key': citation_key(paper), 'entry': reference_entry(paper), 'warnings': warnings})
+    return {'id': collection['id'], 'name': collection['name'], 'revision': collection['revision'],
+            'references': references, 'missing': missing,
+            'bibtex': '\n\n'.join(r['entry'] for r in references) + ('\n' if references else '')}
+
+
+def bibtex_entries(source):
+    entries, seen, pos = {}, set(), 0
+    opener_pattern = re.compile(r'@([A-Za-z]+)\s*([({])')
+    key_pattern = re.compile(r'\s*([^\s,{}()]+)\s*,')
+    while pos < len(source):
+        if source[pos] == '%':
+            newline = source.find('\n', pos)
+            pos = len(source) if newline < 0 else newline + 1
+            continue
+        match = opener_pattern.match(source, pos) if source[pos] == '@' else None
+        if not match:
+            pos += 1
+            continue
+        start = pos
+        kind, opener = match.groups()
+        pos = match.end()
+        body_start = pos
+        braces = 1 if opener == '{' else 0
+        quoted = False
+        while pos < len(source):
+            char = source[pos]
+            if char == '\\':
+                pos += 2
+                continue
+            if char == '"' and braces == (1 if opener == '{' else 0):
+                quoted = not quoted
+            if not quoted:
+                if char == '{':
+                    braces += 1
+                elif char == '}':
+                    braces -= 1
+                    if braces < 0:
+                        raise ValueError('Unbalanced BibTeX braces. Fix the bibliography before synchronising.')
+                if (opener == '{' and braces == 0) or (opener == '(' and char == ')' and braces == 0):
+                    pos += 1
+                    break
+            pos += 1
+        else:
+            raise ValueError('Unterminated BibTeX entry. Fix the bibliography before synchronising.')
+        if kind.lower() in {'comment', 'string', 'preamble'}:
+            continue
+        key_match = key_pattern.match(source, body_start, pos - 1)
+        if not key_match:
+            raise ValueError('A BibTeX entry has no valid citation key.')
+        key = key_match.group(1)
+        if key.casefold() in seen:
+            raise ValueError('Duplicate BibTeX citation keys. Resolve duplicates before synchronising.')
+        seen.add(key.casefold())
+        entries[key] = {'start': start, 'end': pos, 'entry': source[start:pos]}
+    return entries
+
+
+def entry_digest(entry):
+    return hashlib.sha256(entry.strip().encode()).hexdigest()
+
+
+def tex_without_comments(source):
+    chars = list(source)
+    start = source.find('%')
+    while start >= 0:
+        backslashes = 0
+        pos = start - 1
+        while pos >= 0 and source[pos] == '\\':
+            backslashes += 1
+            pos -= 1
+        if backslashes % 2 == 0:
+            end = source.find('\n', start)
+            end = len(source) if end < 0 else end
+            chars[start:end] = ' ' * (end - start)
+            start = source.find('%', end)
+        else:
+            start = source.find('%', start + 1)
+    return ''.join(chars)
+
+
+def bibliography_connection(project, filename, connect_document):
+    source = project['files'][project['main']]
+    active = tex_without_comments(source)
+    configured = any(re.search(r'\\(?:bibliography|addbibresource|printbibliography)\b|\\begin\s*\{thebibliography\}|\\usepackage(?:\[[^\]]*\])?\s*\{[^}]*\bbiblatex\b', tex_without_comments(content))
+                     for name, content in project['files'].items() if name.lower().endswith(('.tex', '.sty', '.cls')))
+    endings = list(re.finditer(r'\\end\s*\{document\}', active))
+    needed = not configured
+    change = None
+    if needed and endings and connect_document:
+        pos = endings[-1].start()
+        command = '\\bibliographystyle{plain}\n\\bibliography{' + filename[:-4] + '}\n'
+        change = {'filename': project['main'], 'before': source, 'after': source[:pos] + command + source[pos:]}
+    return needed, change
+
+
+def bibliography_plan(project, collection, catalogue, filename, connect_document=False):
+    if not isinstance(connect_document, bool):
+        raise ValueError('Invalid bibliography connection option.')
+    file_name(filename)
+    if not filename.lower().endswith('.bib'):
+        raise ValueError('Choose a .bib file for the bibliography.')
+    source = project['files'].get(filename, '')
+    existing = bibtex_entries(source)
+    prior = project.get('bibliography_sync', {}).get(filename, {}).get('entries', {})
+    refs = collection_reference_data(collection, catalogue)
+    desired = {r['key']: r for r in refs['references']}
+    if len(desired) != len(refs['references']):
+        raise ValueError('Two papers have the same generated citation key. Resolve the collision before synchronising.')
+    added, updated, unchanged, conflicts = [], [], [], []
+    replacements, append, managed = [], [], dict(prior)
+    folded = {key.casefold(): key for key in existing}
+    for key, ref in desired.items():
+        previous = existing.get(key)
+        if previous is None and key.casefold() not in folded:
+            added.append(ref)
+            append.append(ref['entry'])
+            managed[key] = entry_digest(ref['entry'])
+        elif previous is not None and previous['entry'].strip() == ref['entry']:
+            unchanged.append(ref)
+            if key in prior:
+                managed[key] = entry_digest(ref['entry'])
+        elif previous is not None and prior.get(key) == entry_digest(previous['entry']):
+            updated.append(ref)
+            replacements.append((previous['start'], previous['end'], ref['entry']))
+            managed[key] = entry_digest(ref['entry'])
+        else:
+            conflicts.append({**ref, 'reason': 'This citation key already has a manually created or edited entry. It has not been changed.'})
+    merged = source
+    for start, end, value in sorted(replacements, reverse=True):
+        merged = merged[:start] + value + merged[end:]
+    if append:
+        merged += ('\n\n' if merged else '') + '\n\n'.join(append) + '\n'
+    retained = [key for key in existing if key not in desired]
+    connection_needed, document_change = bibliography_connection(project, filename, connect_document)
+    token_content = [project['id'], project['revision'], collection['id'], collection['revision'], filename,
+                     source, refs['references'], refs['missing'], prior, connect_document, document_change]
+    token = hashlib.sha256(json.dumps(token_content, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+    return {'project_id': project['id'], 'project_revision': project['revision'], 'collection_id': collection['id'],
+            'collection_revision': collection['revision'], 'filename': filename, 'added': added, 'updated': updated,
+            'unchanged': unchanged, 'retained': retained, 'conflicts': conflicts, 'missing': refs['missing'],
+            'bibtex': merged, 'preview_token': token, 'connect_document': connect_document,
+            'connection_needed': connection_needed, 'document_change': document_change}, managed
 
 
 class WritingStore:
@@ -177,10 +372,12 @@ class WritingStore:
 
     def change(self, payload, catalogue):
         action = payload.get('action')
-        allowed = {'create_project', 'save_project', 'create_collection', 'collection_paper'}
+        if action == 'sync_bibliography':
+            return self.sync_bibliography(payload, catalogue)
+        allowed = {'create_project', 'save_project', 'create_collection', 'collection_paper', 'rename_collection'}
         if not isinstance(action, str) or action not in allowed:
             raise ValueError('Unknown writing action.')
-        kind = 'collections' if action in {'create_collection', 'collection_paper'} else 'projects'
+        kind = 'collections' if action in {'create_collection', 'collection_paper', 'rename_collection'} else 'projects'
         create = action.startswith('create_')
         key = uuid.uuid4().hex if create else identifier(payload.get('id'))
         db = self.connect()
@@ -216,6 +413,11 @@ class WritingStore:
                             if not db.execute("SELECT 1 FROM documents WHERE id=? AND kind='collections'", (collection,)).fetchone():
                                 raise ValueError('Collection not found in your account.')
                         data.update(files=files, main=main, collection=collection)
+                    elif action == 'rename_collection':
+                        name = payload.get('name')
+                        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
+                            raise ValueError('Choose a name of 1–120 characters.')
+                        data['name'] = name.strip()
                     else:
                         paper = payload.get('paper_id')
                         if not isinstance(paper, str) or not isinstance(payload.get('remove', False), bool):
@@ -239,8 +441,60 @@ class WritingStore:
             db.close()
 
     def collection_bib(self, key, catalogue):
-        ids = set(self.get(key, 'collections')['papers'])
-        return bibtex([p for p in catalogue if p['paper_id'] in ids])
+        return self.collection_references(key, catalogue)['bibtex']
+
+    def collection_references(self, key, catalogue):
+        return collection_reference_data(self.get(key, 'collections'), catalogue)
+
+    def bibliography_preview(self, key, catalogue, filename='references.bib', connect_document=False):
+        project = self.get(key)
+        if not project.get('collection'):
+            raise ValueError('Link a personal library to this project first.')
+        collection = self.get(project['collection'], 'collections')
+        return bibliography_plan(project, collection, catalogue, filename, connect_document)[0]
+
+    def sync_bibliography(self, payload, catalogue):
+        key = identifier(payload.get('id'))
+        db = self.connect()
+        try:
+            with db:
+                db.execute('BEGIN IMMEDIATE')
+                row = db.execute("SELECT data, revision FROM documents WHERE id=? AND kind='projects'", (key,)).fetchone()
+                if not row:
+                    raise KeyError('Project not found.')
+                data, revision = json.loads(row[0]), row[1]
+                if type(payload.get('revision')) is not int or payload['revision'] != revision:
+                    raise WritingConflict('The project changed. Preview bibliography changes again.')
+                if not data.get('collection'):
+                    raise ValueError('Link a personal library to this project first.')
+                row = db.execute("SELECT data, revision FROM documents WHERE id=? AND kind='collections'", (data['collection'],)).fetchone()
+                if not row:
+                    raise KeyError('Personal library not found.')
+                collection = {**json.loads(row[0]), 'id': data['collection'], 'revision': row[1]}
+                if type(payload.get('collection_revision')) is not int or payload['collection_revision'] != collection['revision']:
+                    raise WritingConflict('The personal library changed. Preview bibliography changes again.')
+                filename = payload.get('filename', 'references.bib')
+                preview, managed = bibliography_plan({**data, 'id': key, 'revision': revision}, collection, catalogue,
+                                                    filename, payload.get('connect_document', False))
+                if payload.get('preview_token') != preview['preview_token']:
+                    raise WritingConflict('Bibliographic metadata or sync options changed. Preview changes again.')
+                if preview['conflicts']:
+                    raise WritingConflict('Some citation keys have manual changes. Resolve the listed conflicts before synchronising.')
+                data['files'][filename] = preview['bibtex']
+                if preview['document_change']:
+                    edit = preview['document_change']
+                    data['files'][edit['filename']] = edit['after']
+                data.setdefault('bibliography_sync', {})[filename] = {'entries': managed, 'collection': collection['id'],
+                                                                    'collection_revision': collection['revision']}
+                validate_files(data['files'], data['main'])
+                encoded = json.dumps(data)
+                used = db.execute('SELECT COALESCE(SUM(length(data)),0) FROM documents WHERE id != ?', (key,)).fetchone()[0]
+                if used + len(encoded) > 100_000_000:
+                    raise ValueError('Account writing storage limit reached (100 MB).')
+                db.execute('UPDATE documents SET data=?, revision=?, updated=? WHERE id=?', (encoded, revision + 1, time.time(), key))
+            return {**data, 'id': key, 'revision': revision + 1}
+        finally:
+            db.close()
 
     def export(self, key):
         project = self.get(key)
