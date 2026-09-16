@@ -19,7 +19,7 @@ def browser_page(tmp_path, request):
 
     def route_request(route):
         request = route.request
-        if request.url.startswith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'):
+        if request.url.startswith(('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/', 'chrome://resources/')):
             route.continue_()
             return
         assert request.url.startswith(base), request.url
@@ -39,7 +39,12 @@ def browser_page(tmp_path, request):
             import fitz
             with fitz.open() as document:
                 document.new_page().insert_text((72, 72), 'Synthetic shelf PDF')
-                route.fulfill(status=200, content_type='application/pdf', headers={'Content-Disposition': 'inline; filename="test.pdf"'}, body=document.tobytes())
+                route.fulfill(status=200, content_type='application/pdf', headers={
+                    'Content-Disposition': 'inline; filename="test.pdf"',
+                    'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+                    'X-Content-Type-Options': 'nosniff',
+                    'X-Frame-Options': 'DENY',
+                }, body=document.tobytes())
             return
         payload = {"jobs": [], "sessions": [], "queue": {}, "state": "idle", "groups": []}
         code = 200
