@@ -19,6 +19,9 @@ def browser_page(tmp_path, request):
 
     def route_request(route):
         request = route.request
+        if request.url.startswith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'):
+            route.continue_()
+            return
         assert request.url.startswith(base), request.url
         path = request.url.removeprefix(base)
         requests.append(path)
