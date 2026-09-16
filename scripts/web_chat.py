@@ -23,7 +23,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +45,7 @@ from originrag.personal_shelf import PersonalShelf  # noqa: E402
 from originrag.reader_notes import ReaderNotes, NoteConflict, document_key  # noqa: E402
 from originrag.web_reader import HTML as READER_HTML  # noqa: E402
 from originrag.web_workspace import HTML as WORKSPACE_HTML, PAGES as WORKSPACE_PAGES, handle_writing  # noqa: E402
+from originrag.writing_collaboration import WritingCollaboration  # noqa: E402
 from originrag.provenance.library import (  # noqa: E402
     LibraryStatusResolver,
     normalize_doi,
@@ -636,6 +637,10 @@ def environment_flag(name: str, *, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def safe_login_target(value):
+    return value if isinstance(value, str) and re.fullmatch(r'/write\?id=[0-9a-f]{32}', value) else '/'
 
 
 @dataclass
@@ -1662,6 +1667,8 @@ def build_handler(
         raise ValueError("Web chat requires an app.")
 
     anonymous_review_lock = threading.Lock()
+    writing_collaboration = WritingCollaboration(REPO_ROOT / app_registry.out_dir, auth_store) if auth_store and runtime_profile.write else None
+    collaboration_routes = {'/api/writing/collaboration', '/api/writing/collaborators'}
     topic_discovery = TopicDiscovery()
     paper_imports = PaperImports(library_manager)
     local_import_token = secrets.token_urlsafe(32)
@@ -1679,9 +1686,13 @@ def build_handler(
             if not runtime_profile.permits(parsed.path):
                 self.respond_json({'error': 'not found'}, status=HTTPStatus.NOT_FOUND)
                 return
+            if parsed.path in collaboration_routes and writing_collaboration is None:
+                self.respond_json({'error': 'not found'}, status=HTTPStatus.NOT_FOUND)
+                return
             if parsed.path == "/login" and auth_store:
                 if self.authenticated_context(send_error=False):
-                    self.respond_redirect("/")
+                    targets = parse_qs(parsed.query).get('next', [])
+                    self.respond_redirect(safe_login_target(targets[0] if len(targets) == 1 else None))
                 else:
                     self.respond_text(LOGIN_HTML, content_type="text/html; charset=utf-8")
                 return
@@ -1710,7 +1721,7 @@ def build_handler(
             if parsed.path in {"/", "/chat"}:
                 self.respond_text(INDEX_HTML, content_type="text/html; charset=utf-8")
                 return
-            if parsed.path in WORKSPACE_PAGES or parsed.path in {"/api/writing", "/api/writing/export", "/api/writing/bibliography"}:
+            if parsed.path in WORKSPACE_PAGES or parsed.path in {"/api/writing", "/api/writing/export", "/api/writing/bibliography"} | collaboration_routes:
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
                     self.respond_json({"error": "Use the local browser or sign in to open your workspace."}, status=HTTPStatus.FORBIDDEN)
                     return
@@ -1720,7 +1731,8 @@ def build_handler(
                     if not runtime_profile.write:
                         self.handle_collection_request(parsed, current_app)
                         return
-                    handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog())
+                    handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog(),
+                                   collaboration=writing_collaboration, user=user)
                 return
             if parsed.path in {"/reader", "/api/reader/paper", "/api/reader/notes"}:
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
@@ -1936,6 +1948,9 @@ def build_handler(
             if not runtime_profile.permits(parsed.path):
                 self.respond_json({'error': 'not found'}, status=HTTPStatus.NOT_FOUND)
                 return
+            if parsed.path in collaboration_routes and writing_collaboration is None:
+                self.respond_json({'error': 'not found'}, status=HTTPStatus.NOT_FOUND)
+                return
             if parsed.path == "/api/login" and auth_store:
                 self.handle_login()
                 return
@@ -1952,14 +1967,15 @@ def build_handler(
             if auth_store and not self.valid_csrf(session_token):
                 self.respond_json({"error": "invalid CSRF token"}, status=HTTPStatus.FORBIDDEN)
                 return
-            if parsed.path == "/api/writing":
+            if parsed.path == "/api/writing" or parsed.path in collaboration_routes:
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
                     self.respond_json({"error": "Use the local browser or sign in to write."}, status=HTTPStatus.FORBIDDEN)
                     return
                 if not runtime_profile.write:
                     self.handle_collection_request(parsed, current_app, post=True)
                     return
-                handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog(), post=True)
+                handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog(), post=True,
+                               collaboration=writing_collaboration, user=user)
                 return
             if parsed.path == "/api/job/cancel":
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
@@ -2310,7 +2326,8 @@ def build_handler(
                             status=HTTPStatus.UNAUTHORIZED,
                         )
                     else:
-                        self.respond_redirect("/login")
+                        target = safe_login_target(self.path)
+                        self.respond_redirect('/login?' + urlencode({'next': target}) if target != '/' else '/login')
                 return None
             return token, session.user, session
 
@@ -2428,7 +2445,7 @@ def build_handler(
 
         def read_json_body(self) -> dict:
             length = int(self.headers.get("Content-Length") or "0")
-            limit = 18_000_000 if urlparse(self.path).path == "/api/writing" else 1_000_000
+            limit = 36_000_000 if urlparse(self.path).path == "/api/writing" else 1_000_000
             if length < 0 or length > limit:
                 raise ValueError("Request body is too large.")
             raw = self.rfile.read(length).decode("utf-8")
@@ -4894,6 +4911,8 @@ LOGIN_HTML = r"""<!doctype html>
     [passwordInput, passwordConfirm, document.getElementById("registerUsername"), document.getElementById("registerName")]
       .forEach((element) => element.addEventListener("input", updatePasswordStrength));
 
+    const returnTargets = new URLSearchParams(window.location.search).getAll("next");
+    const loginTarget = returnTargets.length === 1 && /^\/write\?id=[0-9a-f]{32}$/.test(returnTargets[0]) ? returnTargets[0] : "/";
     document.getElementById("loginForm").addEventListener("submit", async (event) => {
       event.preventDefault();
       const message = document.getElementById("loginMessage");
@@ -4912,7 +4931,7 @@ LOGIN_HTML = r"""<!doctype html>
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Sign-in failed.");
         window.sessionStorage.removeItem("pfempire.currentSession");
-        window.location.replace("/");
+        window.location.replace(loginTarget);
       } catch (cause) {
         message.textContent = cause.message || "Sign-in failed.";
         submit.disabled = false;
@@ -4939,7 +4958,7 @@ LOGIN_HTML = r"""<!doctype html>
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Registration failed.");
         window.sessionStorage.removeItem("pfempire.currentSession");
-        window.location.replace("/");
+        window.location.replace(loginTarget);
       } catch (cause) {
         message.textContent = cause.message || "Registration failed.";
         submit.disabled = false;

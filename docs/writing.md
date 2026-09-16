@@ -21,7 +21,8 @@ The existing chat remains available at `/` and `/chat`.
 5. Inspect **Errors, warnings & compile log**. File/line diagnostics jump to the
    corresponding source when the engine supplies a location. A failed build
    keeps the previous preview, explicitly labelled as potentially out of date.
-6. **Export ZIP** downloads saved source and assets. **PDF ↓** downloads the last
+6. **Download LaTeX ZIP** saves the manuscript first, then downloads all source
+   files, bibliographies, classes, styles and figures in one archive. **PDF ↓** downloads the last
    successfully compiled PDF. **Download draft** preserves the current buffers
    as JSON, including unsaved changes, for recovery after a save conflict.
 
@@ -115,7 +116,8 @@ manuscript; project settings remain below the file tree.
 - Ctrl/Cmd+S: save; Ctrl/Cmd+Enter: recompile.
 - PDF **Fit width** or percentage zoom changes the preview without recompiling.
 
-ZIP export, draft download and **Reset layout** are in the **•••** project menu.
+**Download LaTeX ZIP** is in the manuscript toolbar. Draft download and
+**Reset layout** are in the **•••** project menu.
 The editor is bundled locally using CodeMirror. There are no CDN requests or
 additional runtime dependencies. Bundled licences are in
 `assets/workspace/EDITOR-LICENSES.txt`. To rebuild the bundle with Node.js, run
@@ -126,9 +128,38 @@ require this build step.
 Projects and personal collections are stored per account in `.writing.sqlite3`
 under the existing private user-data directory, excluded from Git. They are not
 stored in the shared corpus. Back up that directory along with account data.
-Two windows editing the same project cannot silently overwrite each other:
-a revision conflict pauses saving. Export the draft before reloading and reconcile
-its text manually. Simultaneous collaborative editing is not implemented.
+
+## Write together
+
+On an authenticated server, open a manuscript and choose **Share**. Search for
+an existing account by username or display name, then add it as an editor.
+The owner can add up to 20 editors and remove access again. Copy the project
+link to send it to them. A link alone does not grant access: recipients must
+sign in to an account that has been added to that manuscript.
+
+Shared manuscripts appear on each editor's writing desk. Editors can work on
+the source and figures, compile the manuscript, and download its LaTeX ZIP.
+They cannot invite other people or browse the owner's private collections,
+bookshelf or notes. The owner manages the linked personal library and its
+bibliography sync; the shared `.bib` files remain editable by all collaborators.
+Account search exposes only usernames and display names, not email addresses.
+
+Changes synchronise automatically every few seconds while the manuscript tab
+is visible. Edits to different files or separate passages are merged. If two
+drafts change the same passage incompatibly, saving pauses and the local draft
+stays in the editor. Download that draft before explicitly reloading the saved
+version and reconciling the conflicting passage. A long-disconnected tab may
+also need this step. This is automatic document synchronisation, not a
+per-keystroke remote-cursor view.
+
+Removing an editor blocks subsequent project requests. It cannot retract copies
+that person has already downloaded. Personal local use needs no account; project
+sharing requires a server started with `./web --auth`.
+
+The sharing database, `.writing-collaboration.sqlite3`, lives beside the private
+user-data directories. Back it up together with those directories and the account
+database. Manuscript source remains in the owner's existing writing database;
+sharing does not duplicate it into every collaborator's account.
 
 ## Importing and exporting projects
 

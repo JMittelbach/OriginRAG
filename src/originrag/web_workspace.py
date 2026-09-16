@@ -1,4 +1,5 @@
 import base64
+from contextlib import contextmanager
 from http import HTTPStatus
 import sqlite3
 from urllib.parse import parse_qs
@@ -6,6 +7,7 @@ from urllib.parse import parse_qs
 from .writing import WritingConflict, WritingStore
 from .writing_compile import CompilerBusy, compiler_status
 from .writing_builds import compile_saved_project
+from .writing_collaboration import LOCAL_COLLABORATION, ProjectAccess
 
 PAGES = {'/workspace', '/bookshelf', '/library', '/write'}
 
@@ -28,43 +30,113 @@ def binary_response(handler, data, content_type, name):
     handler.wfile.write(data)
 
 
-def handle_writing(handler, path, query, owner_directory, catalogue, *, post=False):
+@contextmanager
+def project_access(store, collaboration, user, key, *, owner_only=False):
+    if collaboration is not None:
+        with collaboration.access(user, key, owner_only=owner_only) as access:
+            yield access
+    else:
+        yield ProjectAccess(store, dict(LOCAL_COLLABORATION))
+
+
+def handle_writing(handler, path, query, owner_directory, catalogue, *, post=False, collaboration=None, user=None):
     store = WritingStore(owner_directory)
     try:
+        if path in {'/api/writing/collaboration', '/api/writing/collaborators'}:
+            if collaboration is None or user is None:
+                handler.respond_json({'error': 'not found'}, status=HTTPStatus.NOT_FOUND)
+                return
+            if post:
+                if path != '/api/writing/collaboration':
+                    raise KeyError('Route not found.')
+                handler.respond_json(collaboration.change(user, handler.read_json_body()))
+            else:
+                params = parse_qs(query)
+                field = 'query' if path.endswith('/collaborators') else 'id'
+                if set(params) != {field} or len(params[field]) != 1:
+                    raise ValueError('Invalid collaboration request.')
+                handler.respond_json(collaboration.search(user, params[field][0]) if field == 'query'
+                                     else collaboration.members(user, params[field][0]))
+            return
         if not post:
             params = parse_qs(query)
             if path == '/api/writing/export':
-                binary_response(handler, store.export(params.get('id', [''])[0]), 'application/zip', 'manuscript.zip')
+                key = params.get('id', [''])[0]
+                with project_access(store, collaboration, user, key) as access:
+                    data = access.store.export(key)
+                binary_response(handler, data, 'application/zip', 'manuscript.zip')
             elif path == '/api/writing/bibliography':
                 handler.respond_json({'bibtex': store.collection_bib(params.get('id', [''])[0], catalogue)})
             elif 'collection_refs' in params:
                 handler.respond_json(store.collection_references(params['collection_refs'][0], catalogue))
             elif 'bib_preview' in params:
-                handler.respond_json(store.bibliography_preview(params['bib_preview'][0], catalogue,
-                    filename=params.get('filename', ['references.bib'])[0],
-                    connect_document=params.get('connect_document', ['0'])[0] == '1'))
+                key = params['bib_preview'][0]
+                with project_access(store, collaboration, user, key, owner_only=True) as access:
+                    result = access.store.bibliography_preview(key, catalogue,
+                        filename=params.get('filename', ['references.bib'])[0],
+                        connect_document=params.get('connect_document', ['0'])[0] == '1')
+                handler.respond_json(result)
+            elif 'revision' in params:
+                key = params['revision'][0]
+                with project_access(store, collaboration, user, key) as access:
+                    result = {'id': key, 'revision': access.store.revision(key), 'collaboration': access.info}
+                handler.respond_json(result)
             elif 'id' in params:
                 kind = params.get('kind', ['projects'])[0]
-                data = store.get(params['id'][0], kind)
                 if kind == 'collections':
+                    data = store.get(params['id'][0], kind)
                     ids = set(data['papers'])
                     data['items'] = [p for p in catalogue if p['paper_id'] in ids]
+                elif kind == 'projects':
+                    key = params['id'][0]
+                    with project_access(store, collaboration, user, key) as access:
+                        data = access.public(access.store.get(key))
+                else:
+                    raise ValueError('Invalid document type.')
                 handler.respond_json(data)
             else:
-                handler.respond_json({**store.snapshot(), 'compiler': compiler_status()})
+                snapshot = collaboration.snapshot(user, store) if collaboration else store.snapshot()
+                if not collaboration:
+                    for item in snapshot['projects']:
+                        item['collaboration'] = dict(LOCAL_COLLABORATION)
+                handler.respond_json({**snapshot, 'compiler': compiler_status()})
         else:
             payload = handler.read_json_body()
             if payload.get('action') == 'compile':
-                project = store.get(payload.get('id'))
-                if payload.get('revision') != project['revision']:
-                    raise WritingConflict('The project changed before compilation. Save or reload first.')
-                if not isinstance(payload.get('force', False), bool):
-                    raise ValueError('Invalid compile option.')
-                result = compile_saved_project(project, owner_directory, force=payload.get('force', False))
+                key = payload.get('id')
+                with project_access(store, collaboration, user, key) as access:
+                    project = access.store.get(key)
+                    if payload.get('revision') != project['revision']:
+                        raise WritingConflict('The project changed before compilation. Save or reload first.')
+                    if not isinstance(payload.get('force', False), bool):
+                        raise ValueError('Invalid compile option.')
+                    compile_directory = access.store.directory
+                result = compile_saved_project(project, compile_directory, force=payload.get('force', False))
+                with project_access(store, collaboration, user, key):
+                    pass
                 result['pdf'] = base64.b64encode(result['pdf']).decode('ascii')
                 handler.respond_json(result)
+            elif payload.get('action') in {'save_project', 'sync_bibliography'}:
+                key = payload.get('id')
+                with project_access(store, collaboration, user, key,
+                                    owner_only=payload['action'] == 'sync_bibliography') as access:
+                    if access.info['role'] == 'editor':
+                        if payload.get('collection'):
+                            raise PermissionError('Only the owner can link a personal library to this project.')
+                        current = access.store.get(key)
+                        payload['collection'] = current.get('collection', '')
+                        if isinstance(payload.get('base'), dict):
+                            payload['base'] = {**payload['base'], 'collection': current.get('collection', '')}
+                    data = access.public(access.store.change(payload, catalogue))
+                handler.respond_json(data)
             else:
-                handler.respond_json(store.change(payload, catalogue))
+                data = store.change(payload, catalogue)
+                if payload.get('action') == 'create_project':
+                    with project_access(store, collaboration, user, data['id']) as access:
+                        data = access.public(data)
+                handler.respond_json(data)
+    except PermissionError as exc:
+        handler.respond_json({'error': str(exc)}, status=HTTPStatus.FORBIDDEN)
     except (WritingConflict, CompilerBusy) as exc:
         handler.respond_json({'error': str(exc)}, status=HTTPStatus.CONFLICT)
     except KeyError:

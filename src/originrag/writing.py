@@ -13,6 +13,7 @@ import uuid
 import zipfile
 
 from .writing_templates import list_templates, template_files
+from .writing_merge import MergeConflict, merge_files, merge_value, project_basis_digest
 
 TEXT_TYPES = {'.tex', '.bib', '.sty', '.cls', '.bst', '.bbl', '.txt', '.md', '.csv'}
 BINARY_TYPES = {'.png', '.jpg', '.jpeg', '.pdf'}
@@ -396,7 +397,24 @@ class WritingStore:
         os.chmod(self.path, 0o600)
         db.execute('CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, kind TEXT, data TEXT, revision INTEGER, updated REAL)')
         db.execute('CREATE INDEX IF NOT EXISTS documents_updated ON documents(updated DESC)')
+        db.execute('CREATE TABLE IF NOT EXISTS writing_bases (document_id TEXT, revision INTEGER, digest TEXT NOT NULL, PRIMARY KEY(document_id, revision))')
         return db
+
+    @staticmethod
+    def _remember_basis(db, key, revision, data):
+        db.execute('INSERT OR REPLACE INTO writing_bases VALUES(?,?,?)', (key, revision, project_basis_digest(data)))
+        db.execute('DELETE FROM writing_bases WHERE document_id=? AND revision NOT IN '
+                   '(SELECT revision FROM writing_bases WHERE document_id=? ORDER BY revision DESC LIMIT 64)', (key, key))
+
+    def revision(self, key):
+        db = self.connect()
+        try:
+            row = db.execute("SELECT revision FROM documents WHERE id=? AND kind='projects'", (identifier(key),)).fetchone()
+            if not row:
+                raise KeyError('Project not found.')
+            return row[0]
+        finally:
+            db.close()
 
     def snapshot(self):
         db = self.connect()
@@ -466,12 +484,30 @@ class WritingStore:
                     if not row:
                         raise KeyError('Project or collection not found.')
                     data, revision = json.loads(row[0]), row[1]
-                    if type(payload.get('revision')) is not int or payload['revision'] != revision:
+                    concurrent_save = action == 'save_project' and 'base' in payload
+                    if type(payload.get('revision')) is not int or (payload['revision'] != revision and not concurrent_save):
                         raise WritingConflict('Changed in another window. Export your draft before reloading.')
                     if action == 'save_project':
                         files, main = payload.get('files'), payload.get('main')
                         validate_files(files, main)
                         collection = payload.get('collection', '')
+                        self._remember_basis(db, key, revision, data)
+                        if concurrent_save:
+                            base = payload['base']
+                            if not isinstance(base, dict) or type(base.get('revision')) is not int or base['revision'] != payload['revision']:
+                                raise ValueError('Invalid synchronisation basis.')
+                            validate_files(base.get('files'), base.get('main'))
+                            expected = db.execute('SELECT digest FROM writing_bases WHERE document_id=? AND revision=?',
+                                                  (key, base['revision'])).fetchone()
+                            if not expected or expected[0] != project_basis_digest(base):
+                                raise WritingConflict('The saved basis is outdated or does not match this manuscript. Keep your draft and reload the saved version.')
+                            try:
+                                files = merge_files(base['files'], files, data['files'], TEXT_TYPES)
+                                main = merge_value(base['main'], main, data['main'])
+                                collection = merge_value(base.get('collection', ''), collection, data.get('collection', ''))
+                            except MergeConflict as exc:
+                                raise WritingConflict(f'Concurrent changes need review. {exc} Your draft has not overwritten the saved manuscript.') from exc
+                            validate_files(files, main)
                         if collection:
                             identifier(collection)
                             if not db.execute("SELECT 1 FROM documents WHERE id=? AND kind='collections'", (collection,)).fetchone():
@@ -500,6 +536,8 @@ class WritingStore:
                     raise ValueError('Account writing storage limit reached (100 MB).')
                 db.execute('INSERT INTO documents VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data, revision=excluded.revision, updated=excluded.updated',
                            (key, kind, encoded, revision + 1, time.time()))
+                if kind == 'projects':
+                    self._remember_basis(db, key, revision + 1, data)
             return {**data, 'id': key, 'revision': revision + 1}
         finally:
             db.close()
@@ -544,6 +582,7 @@ class WritingStore:
                     raise WritingConflict('Bibliographic metadata or sync options changed. Preview changes again.')
                 if preview['conflicts']:
                     raise WritingConflict('Some citation keys have manual changes. Resolve the listed conflicts before synchronising.')
+                self._remember_basis(db, key, revision, data)
                 data['files'][filename] = preview['bibtex']
                 if preview['document_change']:
                     edit = preview['document_change']
@@ -556,6 +595,7 @@ class WritingStore:
                 if used + len(encoded) > 100_000_000:
                     raise ValueError('Account writing storage limit reached (100 MB).')
                 db.execute('UPDATE documents SET data=?, revision=?, updated=? WHERE id=?', (encoded, revision + 1, time.time(), key))
+                self._remember_basis(db, key, revision + 1, data)
             return {**data, 'id': key, 'revision': revision + 1}
         finally:
             db.close()

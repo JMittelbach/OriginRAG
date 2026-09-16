@@ -2,11 +2,12 @@ import {renderTemplates, openTemplateGallery} from './writing-templates.mjs';
 import {openReferences} from './writing-references.mjs';
 import {createPDFPreview} from './pdf-preview.mjs';
 import {openLibraryImport} from './library-import.mjs';
+import {collaborationStyle, snapshotProject, rebaseDraft, openSharing, openProjectCitations} from './writing-collaboration.mjs';
 
 const $ = id => document.getElementById(id);
 const content = $('content');
 const mode = location.pathname;
-let sourceEditor, writerLayout, outlineTimer;
+let sourceEditor, writerLayout, outlineTimer, diffTextChanges, serverProject, syncTimer, syncBusy = false, syncFailures = 0;
 const textTypes = /\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i;
 let state, project, activeFile, editVersion = 0, savedVersion = 0, saving = null;
 let appProfile = {profile: 'full', features: {rag: true, write: true}};
@@ -127,6 +128,7 @@ function newManuscript(template = {id: 'article'}, collection = '') {
   });
 }
 async function projects() {
+  collaborationStyle();
   content.classList.add('write-home');
   const h = node('div', undefined, 'write-heading'), title = node('div'), actions = node('div', undefined, 'desk-actions');
   title.append(node('p', 'YOUR WRITING DESK', 'eyebrow'), node('h1', 'OriginWrite'), node('p', 'Your manuscripts, templates and personal libraries.', 'muted'));
@@ -159,6 +161,7 @@ async function projects() {
       const row = link('', '/write?id=' + p.id, 'manuscript-row'), text = node('div');
       const date = p.updated ? new Date(p.updated * 1000) : null;
       text.append(node('h3', p.name), node('p', `${p.count} files${date && !Number.isNaN(date.valueOf()) ? ' · Updated ' + date.toLocaleDateString() : ''}`));
+      if (p.collaboration?.shared) text.querySelector('h3').append(node('span', 'Shared', 'sharing-badge'));
       row.append(node('span', 'TₑX', 'manuscript-icon'), text, node('span', 'Open →')); list.append(row);
     }
     if (!state.projects.length) {
@@ -186,27 +189,105 @@ function outline() {
 function changed() {
   editVersion++; $('savedState').textContent = 'Unsaved changes'; $('previewState').textContent = 'Source changed · preview needs recompiling';
   clearTimeout(saveTimer); clearTimeout(compileTimer);
+  if (saveBlocked) { $('savedState').textContent = 'Draft kept · saving paused'; return; }
   saveTimer = setTimeout(() => save().catch(e => notice(e.message, true)), 650);
   if ($('autoCompile').checked) compileTimer = setTimeout(() => compile().catch(e => notice(e.message, true)), 1600);
+}
+function pauseSaving(problem) {
+  saveBlocked = true; clearTimeout(saveTimer); clearTimeout(compileTimer);
+  $('savedState').textContent = 'Draft kept · saving paused'; $('syncState').textContent = 'Review changes';
+  $('collaborationConflict').hidden = false;
+  $('conflictMessage').textContent = problem.message + ' Download your draft before replacing it with the saved version.';
+}
+function collaborationControls() {
+  const access = project.collaboration || {enabled: false, role: 'local'};
+  $('shareProject').disabled = !access.enabled;
+  $('shareProject').title = access.enabled ? 'Manage access to this manuscript' : 'Sharing is available when signed in to a shared server.';
+  const editorOnly = access.role === 'editor';
+  $('projectLibrary').disabled = editorOnly; $('updateBibliography').hidden = editorOnly;
+  $('librarySyncHint').textContent = editorOnly ? 'The owner manages the linked personal library. The project BibTeX files are shared.' : 'Preview bibliography changes before applying them. Your existing entries are kept.';
+  $('projectLibrary').value = project.collection || '';
+  $('projectShared').hidden = !access.shared;
+}
+async function finishComposition() {
+  const deadline = Date.now() + 30000;
+  while (sourceEditor?.isComposing()) {
+    if (Date.now() > deadline) throw new Error('Text input is still in progress. Your draft has not been replaced.');
+    await new Promise(resolve => setTimeout(resolve, 80));
+  }
+}
+function adoptProject(updated, accepted = updated, dirty = false) {
+  const name = activeFile in updated.files ? activeFile : updated.main;
+  const treeChanged = name !== activeFile || project.main !== updated.main || Object.keys(project.files).sort().join('\0') !== Object.keys(updated.files).sort().join('\0');
+  const editable = textTypes.test(name);
+  if (!sourceEditor.open(name, editable ? updated.files[name] : 'Binary asset. Included in compilation and ZIP export.', editable)) {
+    throw new Error('These changes are too large to safely apply in the open editor. Your draft has been kept.');
+  }
+  project = updated; serverProject = snapshotProject(accepted); activeFile = name;
+  editVersion++;
+  if (!dirty) savedVersion = editVersion;
+  if (treeChanged) fileList(); else selectFile(activeFile);
+  collaborationControls();
+  $('savedState').textContent = dirty ? 'Unsaved changes' : 'All changes saved';
+  $('previewState').textContent = 'Source updated · preview needs recompiling';
 }
 async function save() {
   if (saveBlocked) throw new Error('Automatic saving paused after an error. Download your draft before reloading.');
   if (saving) { await saving; return save(); }
   if (editVersion === savedVersion) return;
   const version = editVersion;
-  const payload = {action: 'save_project', id: project.id, revision: project.revision, files: {...project.files}, main: project.main, collection: project.collection};
+  const sent = snapshotProject(project);
+  const payload = {action: 'save_project', id: project.id, ...sent, base: snapshotProject(serverProject)};
   $('savedState').textContent = 'Saving…';
-  saving = (async () => { try { const result = await api('/api/writing', payload); project.revision = result.revision; savedVersion = version; $('savedState').textContent = editVersion === savedVersion ? 'All changes saved' : 'Unsaved changes'; }
-    catch (e) { saveBlocked = true; $('savedState').textContent = 'Not saved · download draft'; throw e; } })();
+  saving = (async () => { try {
+    const result = await api('/api/writing', payload); await finishComposition();
+    const dirty = editVersion !== version;
+    const updated = dirty ? rebaseDraft(sent, project, result, diffTextChanges) : result;
+    adoptProject(updated, result, dirty);
+    if (dirty) savedVersion = version;
+  } catch (e) { pauseSaving(e); throw e; } })();
   try { await saving; } finally { saving = null; }
   if (editVersion !== savedVersion) await save();
 }
 function selectFile(name) {
-  activeFile = name; $('fileLabel').textContent = name; const editable = textTypes.test(name);
-  sourceEditor.open(name, editable ? project.files[name] : 'Binary asset. Included in compilation and ZIP export.', editable);
+  const editable = textTypes.test(name);
+  if (!sourceEditor.open(name, editable ? project.files[name] : 'Binary asset. Included in compilation and ZIP export.', editable)) {
+    if (sourceEditor.isComposing()) {
+      $('source').addEventListener('compositionend', () => setTimeout(() => { if (name in project.files) selectFile(name); }, 0), {once: true});
+      return;
+    }
+    pauseSaving(new Error('The selected file could not be updated safely. Your current editor contents have been kept.')); return;
+  }
+  activeFile = name; $('fileLabel').textContent = name;
   for (const b of $('fileList').querySelectorAll('[data-file]')) { b.classList.toggle('active', b.dataset.file === name); b.setAttribute('aria-current', String(b.dataset.file === name)); }
   for (const b of document.querySelectorAll('[data-edit-command]')) b.disabled = !editable && b.dataset.editCommand !== 'search';
   outline();
+}
+async function synchronizeProject() {
+  clearTimeout(syncTimer);
+  if (syncBusy || document.hidden || saveBlocked || !project?.collaboration?.enabled) { scheduleSync(); return; }
+  syncBusy = true;
+  try {
+    const remote = await api('/api/writing?revision=' + encodeURIComponent(project.id));
+    project.collaboration = remote.collaboration; collaborationControls();
+    if (remote.revision !== serverProject.revision) {
+      if (saving || editVersion !== savedVersion) await save();
+      else if (!sourceEditor.isComposing()) {
+        const updated = await api('/api/writing?id=' + encodeURIComponent(project.id));
+        if (editVersion !== savedVersion || saving) await save();
+        else if (updated.revision > serverProject.revision && !sourceEditor.isComposing()) adoptProject(updated);
+      }
+    }
+    syncFailures = 0; if (!saveBlocked) $('syncState').textContent = project.collaboration.shared ? 'Live sync' : '';
+  } catch (error) {
+    syncFailures++;
+    if ([401, 403, 404].includes(error.status)) pauseSaving(new Error('Project access is no longer available. Your local draft is still here.'));
+    else if (!saveBlocked) $('syncState').textContent = 'Sync reconnecting…';
+  } finally { syncBusy = false; scheduleSync(); }
+}
+function scheduleSync() {
+  clearTimeout(syncTimer);
+  if (project?.collaboration?.enabled && !saveBlocked) syncTimer = setTimeout(synchronizeProject, Math.min(30000, 2500 * 2 ** Math.min(syncFailures, 4)));
 }
 function fileList() {
   $('fileList').replaceChildren(); $('mainFile').replaceChildren();
@@ -259,13 +340,17 @@ async function compile(force = false, retry = 0) {
 }
 
 async function editor(id) {
-  const [{createLatexEditor}, {setupWriterLayout}] = await Promise.all([import('./latex-editor.mjs'), import('./writer-layout.mjs')]);
+  const [editorModule, {setupWriterLayout}] = await Promise.all([import('./latex-editor.mjs'), import('./writer-layout.mjs')]);
+  const {createLatexEditor} = editorModule; diffTextChanges = editorModule.diffTextChanges; collaborationStyle();
   project = await api('/api/writing?id=' + encodeURIComponent(id)); document.body.classList.add('writing'); document.title = project.name + ' · OriginWrite';
+  serverProject = snapshotProject(project);
   content.innerHTML = `
     <div class="writer-toolbar">
       <a href="/write" class="button back-projects" title="Back to projects">← Projects</a>
-      <div class="project-heading"><h1 id="projectTitle"></h1><span id="savedState" role="status">All changes saved</span></div>
+      <div class="project-heading"><h1><span id="projectTitle"></span><span id="projectShared" class="sharing-badge" hidden>Shared</span></h1><span id="savedState" role="status">All changes saved</span><span id="syncState" role="status"></span></div>
       <div class="writer-actions">
+        <button id="shareProject">Share</button>
+        <a id="exportZip" class="button">Download LaTeX ZIP</a>
         <button id="referenceButton" title="Personal library, citations and bibliography">References</button>
         <button id="templateButton" title="Start a new manuscript from a template">Templates</button>
         <button id="toggleFiles" aria-controls="filesPane" aria-expanded="true" title="Show or hide the file sidebar">☷ <span>Files</span></button>
@@ -274,10 +359,11 @@ async function editor(id) {
         <button id="swapPanes" title="Swap code and PDF positions" aria-label="Swap code and PDF positions">⇄</button>
         <button id="editorTheme" title="Toggle dark code editor" aria-label="Dark code editor" aria-pressed="false">◐</button>
         <details class="writer-menu"><summary aria-label="Project options" title="Project options">•••</summary><div>
-          <a id="exportZip" class="button">Export ZIP</a><button id="draft">Download draft</button><button id="resetLayout">Reset layout</button>
+          <button id="draft">Download draft</button><button id="resetLayout">Reset layout</button>
         </div></details>
       </div>
     </div>
+    <aside id="collaborationConflict" class="writing-conflict" role="alert" hidden><p id="conflictMessage"></p><button id="conflictDraft">Download draft</button><button id="conflictReload">Reload saved version</button></aside>
     <div class="editor-grid" id="writerGrid">
       <aside class="files" id="filesPane" aria-label="Project files">
         <div class="files-heading"><strong>File tree</strong><button id="hideFiles" title="Hide file sidebar" aria-label="Hide file sidebar">×</button></div>
@@ -287,7 +373,7 @@ async function editor(id) {
         <details class="project-settings"><summary>Project settings & references</summary>
           <label>Main document<select id="mainFile"></select></label>
           <label>Project library<select id="projectLibrary"><option value="">No collection</option></select></label>
-          <button id="updateBibliography">Manage references</button><p class="hint">Preview bibliography changes before applying them. Your existing entries are kept.</p>
+          <button id="updateBibliography">Manage references</button><p class="hint" id="librarySyncHint">Preview bibliography changes before applying them. Your existing entries are kept.</p>
         </details>
       </aside>
       <div id="filesResize" class="splitter files-resize" role="separator" tabindex="0" aria-label="Resize file sidebar" aria-controls="filesPane" aria-orientation="vertical" aria-valuemin="160" aria-valuemax="400" aria-valuenow="230" title="Drag to resize files · double-click to reset"></div>
@@ -333,22 +419,41 @@ async function editor(id) {
   $('addFile').onclick = () => askName('New text file (e.g. sections/methods.tex)', async name => { if (!textTypes.test(name) || !/^[A-Za-z0-9_][A-Za-z0-9_./ -]*$/.test(name) || name.split('/').some(p => !p || p.startsWith('.'))) throw new Error('Choose a safe relative text filename.'); if (name in project.files) throw new Error('That file already exists.'); project.files[name] = ''; activeFile = name; fileList(); changed(); });
   $('uploadFile').onclick = () => $('fileUpload').click();
   $('fileUpload').onchange = async () => { try { for (const f of $('fileUpload').files) { if (f.size > 8000000) throw new Error('Individual uploads are limited to 8 MB.'); if (!/\.(tex|bib|sty|cls|bst|bbl|txt|md|csv|png|jpg|jpeg|pdf)$/i.test(f.name)) throw new Error('Unsupported file type.'); if (f.name in project.files) throw new Error(`${f.name} already exists. Edit it or choose another name.`); project.files[f.name] = textTypes.test(f.name) ? await f.text() : bytes64(await f.arrayBuffer()); changed(); } fileList(); } catch (e) { notice(e.message, true); } };
-  const references = () => openReferences({api, getProject: () => project, save, notice,
+  const insertCitation = key => { if (!/\.tex$/i.test(activeFile)) selectFile(project.main); writerLayout.showCode(); return sourceEditor.insertCitation(key); };
+  const references = () => {
+    if (project.collaboration?.role === 'editor') { openProjectCitations(project, insertCitation); return; }
+    return openReferences({api, getProject: () => project, save, notice,
     linkCollection: async id => {
       project.collection = id; changed(); await save(); await refresh();
       $('projectLibrary').replaceChildren(new Option('No collection', ''));
       state.collections.forEach(c => $('projectLibrary').append(new Option(c.name, c.id))); $('projectLibrary').value = id;
     },
     acceptProject: updated => {
-      clearTimeout(saveTimer); Object.assign(project, updated); savedVersion = ++editVersion; fileList();
+      clearTimeout(saveTimer);
+      try { adoptProject(updated); } catch (error) { pauseSaving(error); throw error; }
       $('savedState').textContent = 'All changes saved'; $('previewState').textContent = 'Bibliography updated · recompile to see changes';
       if ($('autoCompile').checked) { clearTimeout(compileTimer); compileTimer = setTimeout(() => compile().catch(e => notice(e.message, true)), 1600); }
     },
-    insertCitation: key => { if (!/\.tex$/i.test(activeFile)) selectFile(project.main); writerLayout.showCode(); return sourceEditor.insertCitation(key); }
-  }).catch(e => notice(e.message, true));
+    insertCitation
+  }).catch(e => notice(e.message, true)); };
   $('referenceButton').onclick = $('insertCitation').onclick = $('updateBibliography').onclick = references;
   $('templateButton').onclick = () => openTemplateGallery(state.templates, item => newManuscript(item, project.collection));
   $('draft').onclick = () => download(JSON.stringify({name: project.name, main: project.main, files: project.files}, null, 2), 'originwrite-draft.json', 'application/json');
+  $('conflictDraft').onclick = $('draft').onclick;
+  $('conflictReload').onclick = async () => {
+    if (!confirm('Replace your open draft with the saved project? Download your draft first if you want to keep it.')) return;
+    try {
+      const updated = await api('/api/writing?id=' + encodeURIComponent(project.id));
+      await finishComposition();
+      sourceEditor.destroy();
+      sourceEditor = createLatexEditor($('source'), (name, text) => { project.files[name] = text; changed(); clearTimeout(outlineTimer); outlineTimer = setTimeout(outline, 300); }, (line, col) => { $('cursorPosition').textContent = `Ln ${line}, Col ${col}`; });
+      adoptProject(updated); saveBlocked = false; $('collaborationConflict').hidden = true; notice('Saved version loaded.'); scheduleSync();
+    } catch (error) { notice(error.message, true); }
+  };
+  $('shareProject').onclick = () => openSharing({api, project, notice, changed: access => { project.collaboration = access; collaborationControls(); }}).catch(error => notice(error.message, true));
+  collaborationControls(); scheduleSync();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) synchronizeProject(); });
+  window.addEventListener('pagehide', () => clearTimeout(syncTimer));
   $('exportZip').href = '/api/writing/export?id=' + project.id;
   $('exportZip').onclick = async e => { e.preventDefault(); try { await save(); location.href = $('exportZip').href; } catch (err) { notice(err.message, true); } };
   $('compile').disabled = $('compileCode').disabled = !state.compiler.configured; $('autoCompile').disabled = !state.compiler.configured;

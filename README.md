@@ -168,6 +168,9 @@ the Library and **OriginWrite**, depending on your enabled modules. Create perso
 paper collections, connect one to a manuscript, preview bibliography changes,
 and insert citations using stable keys. OriginWrite includes editable templates,
 autosave, adjustable code/PDF panes, optional auto-compile and ZIP import/export.
+On an authenticated server, **Share** adds collaborators to a manuscript.
+They can edit together with automatic synchronisation and conflict protection,
+without gaining access to each other's private collections or notes.
 PDF compilation requires an isolated TeX setup; editing and export work without it.
 See [the writing guide](docs/writing.md) for installation and template details.
 

@@ -4,7 +4,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root = path.dirname(fileURLToPath(import.meta.url));
 process.chdir(root);
-const result = await build({entryPoints: ['editor.js'], outfile: '../latex-editor.mjs', bundle: true,
+const result = await build({absWorkingDir: root, entryPoints: ['editor.js'], outfile: '../latex-editor.mjs', bundle: true,
   format: 'esm', minify: true, target: ['es2022'], legalComments: 'eof', metafile: true});
 const packages = new Set(Object.keys(result.metafile.inputs).filter(p => p.includes('node_modules/')).map(p => {
   const parts = p.split('node_modules/').pop().split('/');
