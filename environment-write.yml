@@ -1,0 +1,8 @@
+name: originrag
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - python-dotenv
+  - pymupdf=1.27.2.2
+  - pip

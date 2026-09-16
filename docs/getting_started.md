@@ -13,25 +13,61 @@ is:
 ```bash
 git clone https://github.com/JMittelbach/OriginRAG.git
 cd OriginRAG
-./setup.sh
+./setup.sh --profile full
 conda activate originrag
 ```
 
-Use `./setup.sh --recreate` to rebuild the environment. A standard virtual
-environment is also supported:
+Choose `full` for OriginRAG and OriginWrite, `rag` for OriginRAG, or `write`
+for OriginWrite. Library, Bookshelf, PDF Reader and accounts are shared in
+every profile. A new `write` installation contains only the shared Python
+dependencies (python-dotenv and PyMuPDF), not the retrieval/terminal dependencies
+or a language model. A fresh full/rag installation adds those dependencies.
+
+```bash
+./setup.sh --profile write
+./web
+```
+
+Setup records `ORIGINRAG_APP_PROFILE` in `.env`, preserving other settings.
+Without `--profile`, an existing choice is reused; a fresh installation
+defaults to `full`. Updating a profile does not remove unrelated packages
+or delete accounts, papers or manuscripts. To obtain a separate lean environment:
+
+```bash
+ORIGINRAG_CONDA_ENV=originwrite ./setup.sh --profile write
+ORIGINRAG_CONDA_ENV=originwrite ./web
+```
+
+Use `./setup.sh --recreate` only when deliberately replacing the selected
+Conda environment. A standard virtual environment is also supported:
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e '.[dev]'
-cp .env.example .env
+python -m pip install -e '.[full]'
+python scripts/configure_app_profile.py --profile full
+./web
 ```
+
+For OriginWrite alone, replace `full` with `write` in both installation and
+configuration commands. Use `rag` for OriginRAG alone. To install another
+module later, install the corresponding extra and update the saved profile.
+`./web --profile write` selects a profile for just that process; it does not
+install dependencies or change the saved configuration.
 
 The launcher uses an active virtual environment, a local `.venv`, or the
 `originrag` Conda environment, in that order.
 
+OriginWrite editing and ZIP export are available immediately. PDF compilation
+requires a separately prepared, isolated TeX compiler and cached packages;
+see [OriginWrite setup](writing.md). There is no model requirement for writing,
+reference management or reading PDFs. Skip the model and RAG-indexing sections
+below when using the `write` profile.
+
 ## 2. Configure the local model
+
+For `rag` and `full` profiles only.
 
 Generated answers use Ollama, with Qwen as the default model family. Other
 Ollama text models are configurable. See [Choosing a model](models.md) for
@@ -325,12 +361,20 @@ support a defensible exact count.
 
 ## 6. Self-host on a private server
 
-Install OriginRAG, Ollama, and the corpus on the server, then start the
-authenticated loopback service:
+Install the required profile on the server, then start the authenticated
+loopback service. The same command works for full, RAG-only and writing-only
+installations:
 
 ```bash
 ORIGINRAG_WEB_OPEN=0 ./web --auth --strict-port
 ```
+
+The saved `ORIGINRAG_APP_PROFILE` chooses the available modules. All enabled
+modules use the same login and personal library; separate service processes
+or accounts are not required. Add `--profile write`, `--profile rag` or
+`--profile full` to override the choice for this run. RAG answers additionally
+need a model and indexed papers. OriginWrite additionally needs an isolated
+TeX compiler only for PDF compilation.
 
 From an authorised workstation, create an SSH tunnel:
 
@@ -356,7 +400,8 @@ access controls, backups, and a production application server.
 On a Linux server with systemd, a user service keeps OriginRAG running without
 an open SSH session. First verify that `./web --auth --strict-port` starts
 successfully, then stop that foreground process before enabling the service.
-Keep Ollama, or your chosen model backend, running separately.
+Keep Ollama, or your chosen model backend, running separately when using
+RAG answers. Writing-only servers do not need a model service.
 
 Create `~/.config/systemd/user/originrag.service` with the following content.
 Replace **all three** `/absolute/path/to/OriginRAG` paths with your installation
@@ -367,13 +412,14 @@ interactive Conda activation or use `~` in these paths.
 
 ```ini
 [Unit]
-Description=OriginRAG literature assistant
+Description=Origin research workspace
 
 [Service]
 Type=simple
 WorkingDirectory=/absolute/path/to/OriginRAG
 Environment=ORIGINRAG_PYTHON=/absolute/path/to/OriginRAG/.venv/bin/python
 Environment=ORIGINRAG_WEB_OPEN=0
+Environment=ORIGINRAG_APP_PROFILE=full
 ExecStart=/absolute/path/to/OriginRAG/web --auth --strict-port
 Restart=on-failure
 RestartSec=5
@@ -385,6 +431,8 @@ WantedBy=default.target
 ```
 
 Load and start it:
+
+Set the profile above to `write` or `rag` for a module-specific server.
 
 ```bash
 systemctl --user daemon-reload

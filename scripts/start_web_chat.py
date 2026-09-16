@@ -13,6 +13,8 @@ import web_chat  # noqa: E402
 
 
 def main() -> int:
+    web_chat.load_project_env(web_chat.REPO_ROOT / '.env')
+    profile = web_chat.parse_args(sys.argv[1:]).profile
     defaults = [
         "--backend",
         "qwen",
@@ -25,6 +27,8 @@ def main() -> int:
         "--repair-attempts",
         "1",
     ]
+    if profile == 'write':
+        defaults = []
     if environment_flag("ORIGINRAG_WEB_OPEN", default=True):
         defaults.append("--open")
     return web_chat.main([*defaults, *sys.argv[1:]])

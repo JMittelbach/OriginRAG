@@ -34,11 +34,9 @@ if str(SRC_DIR) not in sys.path:
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-import ask_corpus  # noqa: E402
+from originrag.app_profiles import app_profile, PROFILES, COLLECTION_ACTIONS, LazyModule, lazy_function  # noqa: E402
 from originrag.cancellation import Cancellation, TurnCancelled, cancellation_scope, cancellable_lock, checkpoint, commit_answer  # noqa: E402
-import import_paper_inbox  # noqa: E402
 from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
-from originrag.analysis.corpus_inventory import inventory_markdown  # noqa: E402
 from originrag.analysis.faithfulness import citation_claim_blocks, direct_evidence_text  # noqa: E402
 from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
 from originrag.web_local_access import local_browser_request  # noqa: E402
@@ -55,19 +53,7 @@ from originrag.provenance.library import (  # noqa: E402
     normalize_title,
 )
 from originrag.provenance.requests import queue_missing_sources  # noqa: E402
-from originrag.provenance.resolver import (  # noqa: E402
-    enrich_reference_online,
-    resolve_reference_against_library,
-)
 from originrag.provenance.source_type import classify_source_document  # noqa: E402
-from originrag.retrieval.query_plan import (  # noqa: E402
-    classify_paper_search_mode,
-    has_sufficient_curated_source_expansions,
-)
-from originrag.retrieval.index_cache import (  # noqa: E402
-    configured_cache_path,
-    prime_read_index_cache,
-)
 from originrag.utils.io import write_json  # noqa: E402
 from originrag.web_appearance import with_appearance  # noqa: E402
 from originrag.web_onboarding import with_onboarding  # noqa: E402
@@ -82,6 +68,16 @@ from originrag.web_auth import (  # noqa: E402
     MAX_SAVED_CHATS,
     QuotaExceededError,
 )
+
+ask_corpus = LazyModule('ask_corpus')
+import_paper_inbox = LazyModule('import_paper_inbox')
+inventory_markdown = lazy_function('originrag.analysis.corpus_inventory', 'inventory_markdown')
+enrich_reference_online = lazy_function('originrag.provenance.resolver', 'enrich_reference_online')
+resolve_reference_against_library = lazy_function('originrag.provenance.resolver', 'resolve_reference_against_library')
+classify_paper_search_mode = lazy_function('originrag.retrieval.query_plan', 'classify_paper_search_mode')
+has_sufficient_curated_source_expansions = lazy_function('originrag.retrieval.query_plan', 'has_sufficient_curated_source_expansions')
+configured_cache_path = lazy_function('originrag.retrieval.index_cache', 'configured_cache_path')
+prime_read_index_cache = lazy_function('originrag.retrieval.index_cache', 'prime_read_index_cache')
 
 
 TITLE_FILENAME = "session_title.txt"
@@ -173,6 +169,7 @@ TITLE_TOKEN_OVERRIDES = {
 
 @dataclass
 class WebChatSettings:
+    app_profile: str = 'full'
     backend: str = "qwen"
     planner_backend: str = "ollama"
     planner_model: str | None = None
@@ -455,6 +452,12 @@ class WebChatApp:
         )
 
 
+class WorkspaceApp:
+    def __init__(self, settings: WebChatSettings, out_dir: str | Path):
+        self.settings = settings
+        self.out_dir = Path(out_dir)
+
+
 class AuthenticatedWebChatRegistry:
     """Keep chat navigation state separate for every authenticated browser session."""
 
@@ -470,7 +473,8 @@ class AuthenticatedWebChatRegistry:
         with self.lock:
             if key not in self.apps:
                 user_out_dir = self.out_dir / "users" / user.user_id
-                self.apps[key] = WebChatApp(self.settings, out_dir=str(user_out_dir))
+                factory = WebChatApp if app_profile(self.settings.app_profile).rag else WorkspaceApp
+                self.apps[key] = factory(self.settings, out_dir=str(user_out_dir))
             return self.apps[key]
 
     def discard(self, user: AuthenticatedUser, session_token: str) -> None:
@@ -481,6 +485,8 @@ class AuthenticatedWebChatRegistry:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Self-hosted local OriginRAG web chat.")
+    parser.add_argument('--profile', choices=PROFILES, default=os.environ.get('ORIGINRAG_APP_PROFILE', 'full'),
+                        help='Run the full workspace, RAG tools or OriginWrite without chat/model services.')
     parser.add_argument("--host", default=os.environ.get("PFEMPIRE_WEB_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PFEMPIRE_WEB_PORT", "8765")))
     parser.add_argument(
@@ -507,7 +513,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--planner-model")
     parser.add_argument("--answer-model")
-    parser.add_argument("--preset", choices=sorted(ask_corpus.PRESETS), default="pro")
+    parser.add_argument("--preset", choices=['balanced', 'deep', 'pro', 'quick', 'wide'], default="pro")
     parser.add_argument(
         "--task",
         choices=["auto", "answer", "gaps", "hypothesis", "sources"],
@@ -556,7 +562,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     load_project_env(REPO_ROOT / ".env")
     args = parse_args(argv)
+    profile = app_profile(args.profile)
     settings = WebChatSettings(
+        app_profile=profile.name,
         backend=args.backend,
         planner_backend=args.planner_backend,
         planner_model=args.planner_model,
@@ -573,12 +581,14 @@ def main(argv: list[str] | None = None) -> int:
             "The local password pilot may bind only to loopback. Do not expose it on the LAN; "
             "Use an SSH tunnel for remote access."
         )
-    app = None if auth_store else WebChatApp(settings=settings, out_dir=args.out_dir)
+    factory = WebChatApp if profile.rag else WorkspaceApp
+    app = None if auth_store else factory(settings=settings, out_dir=args.out_dir)
     registry = AuthenticatedWebChatRegistry(settings, args.out_dir) if auth_store else None
     corpus_lock = threading.RLock()
     library_manager = LibrarySyncManager(
         REPO_ROOT / "bib" / "inbox",
         corpus_lock=corpus_lock,
+        metadata_only=not profile.rag,
     )
     handler = build_handler(
         app,
@@ -587,6 +597,7 @@ def main(argv: list[str] | None = None) -> int:
         secure_cookies=args.secure_cookies,
         max_concurrent_turns=max(1, args.max_concurrent_turns),
         library_manager=library_manager,
+        profile=profile.name,
     )
     server = create_server(
         args.host,
@@ -596,13 +607,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     bound_host, bound_port = server.server_address[:2]
     url = os.environ.get("PFEMPIRE_PUBLIC_URL") or f"http://{bound_host}:{bound_port}"
-    print(f"OriginRAG web chat running at {url}")
-    if app:
+    print(f"OriginRAG {profile.name} workspace running at {url}")
+    if app and profile.rag:
         print(f"Session dir: {relative_path(app.session_dir)}")
-    else:
+    elif auth_store:
         print(f"Authenticated user chats: {relative_path(Path(args.out_dir) / 'users')}")
         print("Account-name registration: enabled")
-    if settings.backend == "queue":
+    if profile.rag and settings.backend == "queue":
         print(
             "Queue backend selected. Keep `python scripts/ollama_worker.py` running in another terminal."
         )
@@ -613,7 +624,8 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nbye")
     finally:
-        handler.turn_job_manager.shutdown()
+        if handler.turn_job_manager:
+            handler.turn_job_manager.shutdown()
         handler.paper_import_manager.shutdown()
         server.server_close()
     return 0
@@ -630,7 +642,7 @@ def environment_flag(name: str, *, default: bool) -> bool:
 class TurnJob:
     job_id: str
     owner_key: str
-    app: WebChatApp
+    app: WebChatApp | None
     session_dir: Path
     message: str
     settings_update: dict
@@ -641,12 +653,14 @@ class TurnJob:
     started_at: float = 0.0
     completed_at: float = 0.0
     result: dict | None = None
+    result_path: Path | None = None
+    result_output_dir: str = ''
     error: str = ""
     completion_callback: object | None = None
     cancellation: Cancellation = dataclass_field(default_factory=Cancellation)
 
 
-def write_json_atomically(path: Path, payload: object) -> None:
+def write_json_atomically(path: Path, payload: object, *, mode: int | None = None) -> None:
     """Replace a JSON snapshot without exposing a partially written file."""
 
     target = Path(path)
@@ -654,6 +668,8 @@ def write_json_atomically(path: Path, payload: object) -> None:
     temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
     try:
         with temporary.open("x", encoding="utf-8") as handle:
+            if mode is not None:
+                os.fchmod(handle.fileno(), mode)
             json.dump(payload, handle, indent=2, ensure_ascii=False)
             handle.write("\n")
             handle.flush()
@@ -736,6 +752,7 @@ class TurnJobManager:
 
     def global_status(self) -> dict[str, int]:
         with self.condition:
+            self._prune_locked()
             return {
                 "queued": len(self.waiting),
                 "running": len(self.active),
@@ -754,6 +771,8 @@ class TurnJobManager:
             self.recovered_scopes.add(scope)
         for path in base.glob("*/turn_jobs/*.json"):
             try:
+                if not re.fullmatch(r'[0-9a-f]{32}\.json', path.name):
+                    continue
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 job_id = str(payload.get("job_id") or "")
                 state = str(payload.get("state") or "")
@@ -771,7 +790,7 @@ class TurnJobManager:
                 recovered = TurnJob(
                     job_id=job_id,
                     owner_key=str(owner_key),
-                    app=app,
+                    app=None,
                     session_dir=session_dir,
                     message=str(payload.get("message") or "Submitted question"),
                     settings_update={},
@@ -795,6 +814,7 @@ class TurnJobManager:
                     if job_id not in self.jobs:
                         self.jobs[job_id] = recovered
                         self._persist_locked(recovered)
+                        self._prune_locked()
             except (OSError, ValueError, TypeError):
                 continue
 
@@ -852,6 +872,7 @@ class TurnJobManager:
     ) -> list[dict]:
         target = session_dir.resolve()
         with self.condition:
+            self._prune_locked()
             jobs = [
                 self._snapshot_locked(job)
                 for job in self.jobs.values()
@@ -863,13 +884,23 @@ class TurnJobManager:
 
     def job(self, owner_key: str, job_id: str) -> dict | None:
         with self.condition:
+            self._prune_locked()
             job = self.jobs.get(str(job_id))
             if not job or not hmac.compare_digest(job.owner_key, str(owner_key)):
                 return None
             snapshot = self._snapshot_locked(job)
             if job.state == "complete" and job.result is not None:
                 snapshot["result"] = job.result
-            return snapshot
+            result_path = job.result_path if job.state == 'complete' and job.result is None else None
+            session_dir = job.session_dir
+        if result_path is not None:
+            result = self._read_result(result_path, str(owner_key), str(job_id), session_dir)
+            if result is not None:
+                snapshot['result'] = result
+            else:
+                snapshot['result_unavailable'] = True
+                snapshot['error'] = 'The saved job response is unavailable. Reopen the chat to read its saved answer.'
+        return snapshot
 
     def session_busy(self, owner_key: str, session_dir: Path) -> bool:
         target = session_dir.resolve()
@@ -896,6 +927,9 @@ class TurnJobManager:
                 job.state = "cancelled"
                 job.stage = "Stopped before starting"
                 job.completed_at = time.time()
+                job.app = None
+                job.completion_callback = None
+                job.settings_update = {}
             else:
                 job.state = "cancelling"
                 job.stage = "Stopping this request…"
@@ -939,6 +973,7 @@ class TurnJobManager:
                 self._persist_locked(job)
                 self.condition.notify_all()
             try:
+                result = None
                 with cancellation_scope(job.cancellation), cancellable_lock(self.corpus_lock):
                     result = job.app.run_turn_for_session(
                         job.session_dir,
@@ -981,6 +1016,11 @@ class TurnJobManager:
 
 
                         pass
+                with self.condition:
+                    self._release_terminal_locked(job)
+                    callback = None
+                    result = None
+                    self.condition.notify_all()
 
     def _start_workers_locked(self) -> None:
         if not self.auto_worker or self.workers:
@@ -1040,7 +1080,7 @@ class TurnJobManager:
                 schema_version="pfempire_turn_job_v1",
                 owner_scope_hash=hashlib.sha256(job.owner_key.encode("utf-8")).hexdigest(),
                 result_output_dir=(
-                    str((job.result or {}).get("output_dir") or "")
+                    str((job.result or {}).get("output_dir") or job.result_output_dir)
                     if job.state == "complete"
                     else ""
                 ),
@@ -1050,6 +1090,44 @@ class TurnJobManager:
 
 
             pass
+
+    def _release_terminal_locked(self, job: TurnJob) -> None:
+        if job.state not in self.terminal_states:
+            return
+        if job.state == 'complete' and job.result is not None:
+            try:
+                directory = job.session_dir / 'turn_jobs'
+                if directory.is_symlink() or directory.resolve().parent != job.session_dir.resolve():
+                    raise OSError('Unsafe job result directory.')
+                result_path = directory / f'{job.job_id}.result.json'
+                write_json_atomically(result_path, {'schema_version': 'originrag_job_result_v1', 'job_id': job.job_id,
+                    'owner_scope_hash': hashlib.sha256(job.owner_key.encode()).hexdigest(), 'result': job.result}, mode=0o600)
+                job.result_output_dir = str(job.result.get('output_dir') or '')
+                job.result_path = result_path
+                job.result = None
+            except (OSError, ValueError, TypeError):
+                pass
+        job.app = None
+        job.completion_callback = None
+        job.settings_update = {}
+
+    @staticmethod
+    def _read_result(path: Path, owner_key: str, job_id: str, session_dir: Path) -> dict | None:
+        expected = session_dir / 'turn_jobs' / f'{job_id}.result.json'
+        try:
+            if path != expected or path.is_symlink() or path.parent.is_symlink():
+                return None
+            if path.resolve().parent.parent != session_dir.resolve():
+                return None
+            with path.open(encoding='utf-8') as handle:
+                payload = json.load(handle)
+            if (payload.get('schema_version') != 'originrag_job_result_v1' or payload.get('job_id') != job_id
+                    or payload.get('owner_scope_hash') != hashlib.sha256(owner_key.encode()).hexdigest()
+                    or not isinstance(payload.get('result'), dict)):
+                return None
+            return payload['result']
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
 
     def _prune_locked(self) -> None:
         """Bound in-memory terminal history while preserving on-disk job records."""
@@ -1083,18 +1161,20 @@ class LibrarySyncManager:
         self,
         inbox: Path,
         *,
-        importer=import_paper_inbox.import_inbox,
+        importer=None,
         corpus_lock: threading.RLock | None = None,
         read_cache_refresh=None,
         refresh_callback=None,
         auto_worker: bool = True,
+        metadata_only: bool = False,
     ) -> None:
         self.inbox = Path(inbox)
         self.inbox.mkdir(parents=True, exist_ok=True)
-        self.importer = importer
+        self.metadata_only = metadata_only
+        self.importer = importer or self._import
         self.corpus_lock = corpus_lock or threading.RLock()
         self.read_cache_refresh = (
-            read_cache_refresh or refresh_configured_retrieval_index_cache
+            read_cache_refresh or (lambda: None) if metadata_only else read_cache_refresh or refresh_configured_retrieval_index_cache
         )
         self.refresh_callback = refresh_callback or clear_runtime_library_caches
         self.lock = threading.Lock()
@@ -1123,6 +1203,9 @@ class LibrarySyncManager:
             self.worker.start()
             if any(self.inbox.glob("*.pdf")):
                 self.schedule()
+
+    def _import(self, inbox, **kwargs):
+        return import_paper_inbox.import_inbox(inbox, build_retrieval=not self.metadata_only, **kwargs)
 
     @property
     def busy(self) -> bool:
@@ -1322,7 +1405,9 @@ def clear_runtime_library_caches() -> None:
     library_catalog.cache_clear()
     paper_metadata_by_id.cache_clear()
     paper_design_context.cache_clear()
-    ask_corpus._cached_document_lineage_context.cache_clear()
+    loaded = sys.modules.get('ask_corpus')
+    if loaded is not None:
+        loaded._cached_document_lineage_context.cache_clear()
 
 
 def refresh_configured_retrieval_index_cache() -> Path | None:
@@ -1567,7 +1652,10 @@ def build_handler(
     secure_cookies: bool = False,
     max_concurrent_turns: int = 1,
     library_manager: LibrarySyncManager | None = None,
+    profile: str | None = None,
 ) -> type[BaseHTTPRequestHandler]:
+    runtime_profile = app_profile(profile if profile is not None else (
+        app_registry.settings.app_profile if app_registry else app.settings.app_profile if app else None))
     if auth_store and not app_registry:
         raise ValueError("Authenticated web chat requires an app registry.")
     if not auth_store and not app:
@@ -1581,13 +1669,16 @@ def build_handler(
     turn_jobs = TurnJobManager(
         max_concurrent_turns,
         corpus_lock=corpus_lock,
-    )
+    ) if runtime_profile.rag else None
 
     class OriginRAGWebHandler(BaseHTTPRequestHandler):
         server_version = "OriginRAGWebChat/0.1"
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if not runtime_profile.permits(parsed.path):
+                self.respond_json({'error': 'not found'}, status=HTTPStatus.NOT_FOUND)
+                return
             if parsed.path == "/login" and auth_store:
                 if self.authenticated_context(send_error=False):
                     self.respond_redirect("/")
@@ -1607,7 +1698,15 @@ def build_handler(
                 return
             current_app, user, _ = context
             owner_key = user.user_id if user else "anonymous"
-            turn_jobs.recover_persisted(owner_key, current_app)
+            if turn_jobs is not None:
+                turn_jobs.recover_persisted(owner_key, current_app)
+            if parsed.path == '/api/app-profile':
+                self.respond_json({**runtime_profile.public(), 'authenticated': bool(user),
+                                   'user': public_user(user) if user else None})
+                return
+            if parsed.path == '/' and not runtime_profile.rag:
+                self.respond_redirect(runtime_profile.home)
+                return
             if parsed.path in {"/", "/chat"}:
                 self.respond_text(INDEX_HTML, content_type="text/html; charset=utf-8")
                 return
@@ -1618,6 +1717,9 @@ def build_handler(
                 if parsed.path in WORKSPACE_PAGES:
                     self.respond_text(WORKSPACE_HTML, content_type="text/html; charset=utf-8")
                 else:
+                    if not runtime_profile.write:
+                        self.handle_collection_request(parsed, current_app)
+                        return
                     handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog())
                 return
             if parsed.path in {"/reader", "/api/reader/paper", "/api/reader/notes"}:
@@ -1650,6 +1752,10 @@ def build_handler(
                 self.handle_asset_request(parsed.path)
                 return
             if parsed.path == "/api/status":
+                if not runtime_profile.rag:
+                    self.respond_json({**runtime_profile.public(), 'library_access': self.library_access(user),
+                                       'user': public_user(user) if user else None})
+                    return
                 owner_key = user.user_id if user else "anonymous"
                 payload = {
                     "session_dir": relative_path(current_app.session_dir),
@@ -1827,6 +1933,9 @@ def build_handler(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if not runtime_profile.permits(parsed.path):
+                self.respond_json({'error': 'not found'}, status=HTTPStatus.NOT_FOUND)
+                return
             if parsed.path == "/api/login" and auth_store:
                 self.handle_login()
                 return
@@ -1838,13 +1947,17 @@ def build_handler(
                 return
             current_app, user, session_token = context
             owner_key = user.user_id if user else "anonymous"
-            turn_jobs.recover_persisted(owner_key, current_app)
+            if turn_jobs is not None:
+                turn_jobs.recover_persisted(owner_key, current_app)
             if auth_store and not self.valid_csrf(session_token):
                 self.respond_json({"error": "invalid CSRF token"}, status=HTTPStatus.FORBIDDEN)
                 return
             if parsed.path == "/api/writing":
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
                     self.respond_json({"error": "Use the local browser or sign in to write."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                if not runtime_profile.write:
+                    self.handle_collection_request(parsed, current_app, post=True)
                     return
                 handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog(), post=True)
                 return
@@ -2125,6 +2238,48 @@ def build_handler(
                 return
             self.respond_json(response, status=HTTPStatus.ACCEPTED)
 
+        def handle_collection_request(self, parsed, current_app, *, post=False):
+            from originrag.writing import WritingStore, WritingConflict
+            store = WritingStore(REPO_ROOT / current_app.out_dir)
+            try:
+                params = parse_qs(parsed.query)
+                if post:
+                    payload = self.read_json_body()
+                    if payload.get('action') not in COLLECTION_ACTIONS:
+                        self.respond_json({'error': 'not found'}, status=HTTPStatus.NOT_FOUND)
+                        return
+                    self.respond_json(store.change(payload, library_catalog()))
+                elif parsed.path == '/api/writing/bibliography':
+                    self.respond_json({'bibtex': store.collection_bib(params.get('id', [''])[0], library_catalog())})
+                elif 'collection_refs' in params:
+                    self.respond_json(store.collection_references(params['collection_refs'][0], library_catalog()))
+                elif 'id' in params and params.get('kind', ['projects'])[0] == 'collections':
+                    data = store.get(params['id'][0], 'collections')
+                    ids = set(data['papers'])
+                    self.respond_json({**data, 'items': [p for p in library_catalog() if p['paper_id'] in ids]})
+                elif params:
+                    self.respond_json({'error': 'not found'}, status=HTTPStatus.NOT_FOUND)
+                else:
+                    db = store.connect()
+                    try:
+                        rows = db.execute("SELECT id, data, revision FROM documents WHERE kind='collections' ORDER BY updated DESC").fetchall()
+                        collections = []
+                        for key, raw, revision in rows:
+                            data = json.loads(raw)
+                            collections.append({'id': key, 'name': data['name'], 'revision': revision, 'count': len(data['papers']), 'collection': ''})
+                    finally:
+                        db.close()
+                    self.respond_json({'collections': collections, 'projects': [], 'templates': [],
+                                       'compiler': {'available': False, 'reason': 'OriginWrite is not enabled in this profile.'}})
+            except WritingConflict as exc:
+                self.respond_json({'error': str(exc)}, status=HTTPStatus.CONFLICT)
+            except KeyError:
+                self.respond_json({'error': 'Collection not found in your account.'}, status=HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self.respond_json({'error': str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            except (OSError, sqlite3.Error):
+                self.respond_json({'error': 'Your library is temporarily unavailable.'}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+
         def request_context(
             self,
         ) -> tuple[WebChatApp, AuthenticatedUser | None, str] | None:
@@ -2136,6 +2291,8 @@ def build_handler(
                 return None
             token, user, _ = context
             assert app_registry is not None
+            if not runtime_profile.rag:
+                return WorkspaceApp(app_registry.settings, app_registry.out_dir / 'users' / user.user_id), user, token
             return app_registry.for_session(user, token), user, token
 
         def authenticated_context(

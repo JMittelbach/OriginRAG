@@ -4,14 +4,20 @@ set -euo pipefail
 ENV_NAME="${ORIGINRAG_CONDA_ENV:-${PFEMPIRE_CONDA_ENV:-${HYPORAG_CONDA_ENV:-originrag}}}"
 RECREATE=0
 RUN_CHECKS=1
+APP_PROFILE=""
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./setup.sh [--recreate] [--no-checks]
+  ./setup.sh [--profile full|rag|write] [--recreate] [--no-checks]
 
-Creates or updates the Conda environment from environment.yml, installs OriginRAG
-as an editable local package, and prepares a local .env file if one is missing.
+Installs the selected modules and records the profile in .env. Existing private
+settings are preserved. Without --profile, the saved profile is reused (full
+for a new installation). No language model is downloaded by setup.
+
+  full   OriginRAG + OriginWrite, with shared Library, Bookshelf and Reader
+  rag    OriginRAG, with shared Library, Bookshelf and Reader
+  write  OriginWrite, with shared Library, Bookshelf and Reader; no LLM required
 
 After setup, activate the environment with:
   conda activate originrag
@@ -20,6 +26,17 @@ EOF
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --profile)
+      if [ "$#" -lt 2 ]; then
+        echo "--profile needs full, rag or write." >&2
+        exit 2
+      fi
+      APP_PROFILE="$2"
+      shift
+      ;;
+    --profile=*)
+      APP_PROFILE="${1#*=}"
+      ;;
     --recreate)
       RECREATE=1
       ;;
@@ -47,8 +64,24 @@ if ! command -v conda >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -f environment.yml ]; then
-  echo "Missing environment.yml in $REPO_ROOT" >&2
+if [ -n "$APP_PROFILE" ]; then
+  APP_PROFILE="$(conda run -n base python scripts/configure_app_profile.py --read --profile "$APP_PROFILE")"
+else
+  APP_PROFILE="$(conda run -n base python scripts/configure_app_profile.py --read)"
+fi
+case "$APP_PROFILE" in
+  write) ENVIRONMENT_FILE=environment-write.yml ;;
+  full|rag) ENVIRONMENT_FILE=environment.yml ;;
+  *) echo "Choose an application profile: full, rag or write." >&2; exit 2 ;;
+esac
+
+if [[ ! "$ENV_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+  echo "Use a Conda environment name containing letters, digits, dots, underscores or hyphens." >&2
+  exit 2
+fi
+
+if [ ! -f "$ENVIRONMENT_FILE" ]; then
+  echo "Missing $ENVIRONMENT_FILE in $REPO_ROOT" >&2
   exit 1
 fi
 
@@ -57,50 +90,39 @@ env_exists() {
 }
 
 if [ "$RECREATE" -eq 1 ] && env_exists; then
+  if [ "$ENV_NAME" = base ] || [ "$ENV_NAME" = root ]; then
+    echo "Refusing to recreate the base/root Conda environment." >&2
+    exit 2
+  fi
   echo "Removing existing Conda environment: $ENV_NAME"
   conda env remove -n "$ENV_NAME" -y
 fi
 
 if env_exists; then
   echo "Updating Conda environment: $ENV_NAME"
-  conda env update -n "$ENV_NAME" -f environment.yml --prune
+  conda env update -n "$ENV_NAME" -f "$ENVIRONMENT_FILE"
 else
   echo "Creating Conda environment: $ENV_NAME"
-  conda env create -f environment.yml
+  conda env create -n "$ENV_NAME" -f "$ENVIRONMENT_FILE"
 fi
 
 echo "Installing OriginRAG as an editable local package."
-conda run -n "$ENV_NAME" python -m pip install -e . --no-deps
+conda run -n "$ENV_NAME" python -m pip install -e ".[${APP_PROFILE}]" --no-deps
+conda run -n "$ENV_NAME" python scripts/configure_app_profile.py --profile "$APP_PROFILE"
 
-if [ ! -f .env ]; then
-  if [ -d ../bib ]; then
-    BIB_DIR="$(cd ../bib && pwd)"
-    {
-      echo "ORIGINRAG_BIB_DIR=$BIB_DIR"
-      echo "ORIGINRAG_DOMAIN=malaria"
-      echo "ORIGINRAG_OLLAMA_BASE_URL=http://localhost:11434"
-      echo "ORIGINRAG_OLLAMA_MODEL=qwen3:30b"
-      echo "ORIGINRAG_QWEN_BASE_URL=http://localhost:11434"
-      echo "ORIGINRAG_QWEN_MODEL=qwen3:30b"
-      echo "ORIGINRAG_QUEUE_MODEL=qwen3:30b"
-      echo "ORIGINRAG_LLM_TIMEOUT_SECONDS=1200"
-      echo "ORIGINRAG_OLLAMA_NUM_CTX=65536"
-      echo "ORIGINRAG_OLLAMA_NUM_PREDICT=2200"
-    } > .env
-    echo "Created .env using sibling bib directory: $BIB_DIR"
-  else
-    cp .env.example .env
-    echo "Created .env from .env.example. Edit ORIGINRAG_BIB_DIR before ingesting PDFs."
-  fi
+if [ "$APP_PROFILE" != write ]; then
+  conda run -n "$ENV_NAME" python scripts/init_local_data.py
 fi
-
-conda run -n "$ENV_NAME" python scripts/init_local_data.py
 conda run -n "$ENV_NAME" python scripts/install_git_hooks.py
 
 if [ "$RUN_CHECKS" -eq 1 ]; then
   echo "Running environment checks."
-  conda run -n "$ENV_NAME" python scripts/check_environment.py
-  conda run -n "$ENV_NAME" python scripts/validate_metadata.py
+  if [ "$APP_PROFILE" = write ]; then
+    conda run -n "$ENV_NAME" python -c 'from originrag.writing_compile import compiler_status; import fitz, dotenv; print("OriginWrite installed."); print(compiler_status()["message"])'
+  else
+    conda run -n "$ENV_NAME" python scripts/check_environment.py
+    conda run -n "$ENV_NAME" python scripts/validate_metadata.py
+  fi
 fi
 
 cat <<EOF
@@ -110,9 +132,11 @@ Setup complete.
 Activate it in this terminal with:
   conda activate $ENV_NAME
 
-Then run, for example:
-  ./originrag setup-model
-  ./originrag doctor
-  ./originrag search-papers "EPCR-binding PfEMP1"
+Open the selected workspace:
   ./web
+
+For generated answers (full/rag only), configure your model separately:
+  ./originrag setup-model
+
+OriginWrite PDF compilation needs an isolated TeX compiler. See docs/writing.md.
 EOF

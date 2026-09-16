@@ -15,6 +15,8 @@ support they provide, including when their relationships are uncertain.
 - **Chat with your papers** using a local model through Ollama.
 - **Inspect the evidence:** follow citations, read source passages and review
   possible study overlap.
+- **Write manuscripts** in OriginWrite, with LaTeX/PDF side-by-side, journal
+  starters and references from your personal paper collections.
 
 Library topic groups are generated from your paper titles, with up to ten groups
 for larger collections and fewer for small libraries. No subject-specific category
@@ -34,11 +36,28 @@ uses Conda or Miniforge:
 ```bash
 git clone https://github.com/JMittelbach/OriginRAG.git
 cd OriginRAG
-./setup.sh
+./setup.sh --profile full
+./web
 ```
 
-Setup creates the `originrag` environment and a local `.env` file.
-For virtual-environment installation, see [Getting started](docs/getting_started.md#1-install).
+Choose the modules you need:
+
+| Profile | Included |
+| --- | --- |
+| `full` | OriginRAG + OriginWrite |
+| `rag` | OriginRAG |
+| `write` | OriginWrite, without a language model |
+
+All profiles include Library, Bookshelf and PDF Reader. On a shared server,
+one account covers every enabled module. Use `./setup.sh --profile write`
+or `./setup.sh --profile rag` to enable just that application. The `write`
+profile also omits the RAG dependencies and does not load a search index. Setup saves the
+choice in `.env`; `./web` reuses it. `./web --profile full` overrides it for
+one run, provided the corresponding dependencies are installed.
+
+Setup creates the `originrag` Conda environment and preserves existing private
+settings. It does not download a language model or install a TeX compiler.
+For a virtual environment, see [Getting started](docs/getting_started.md#1-install).
 
 Generated answers additionally need [Ollama](https://ollama.com/), a compatible
 text model (Qwen by default) and legally obtained PDFs. Check the
@@ -48,7 +67,8 @@ the Python wheel alone does not include the launchers or corpus.
 
 ## Try it
 
-Search the included bibliographic catalogue immediately — no model or PDFs needed:
+In the `rag` or `full` profile, search the included bibliographic catalogue
+immediately — no model or PDFs needed:
 
 ```bash
 ./originrag search-papers "EPCR-binding PfEMP1"
@@ -66,6 +86,9 @@ To preview the terminal interface without a model:
 ```
 
 ## Ask about your own papers
+
+This section applies to `rag` and `full`. For writing without a model, open
+`./web` and choose **OriginWrite**.
 
 Set `ORIGINRAG_BIB_DIR` in `.env` to an absolute path for your PDF library.
 Then configure the model, preview the import, apply it and build the index:
@@ -141,12 +164,12 @@ paper discovery and open-access downloads.
 ## Read, collect and write
 
 Choose **Workspace** in the web header to move between OriginRAG, your Bookshelf,
-the Library and **OriginWrite**. Create personal paper collections for individual
-projects. OriginWrite is an initial LaTeX editor with autosave, an optional
-auto-compile PDF preview, error logs, project ZIP import/export and bibliography
-import from your collections. PDF compilation requires an isolated TeX setup.
-See [the workspace and writing guide](docs/writing.md), including local/server
-setup, journal-template sources and the prototype's current limits.
+the Library and **OriginWrite**, depending on your enabled modules. Create personal
+paper collections, connect one to a manuscript, preview bibliography changes,
+and insert citations using stable keys. OriginWrite includes editable templates,
+autosave, adjustable code/PDF panes, optional auto-compile and ZIP import/export.
+PDF compilation requires an isolated TeX setup; editing and export work without it.
+See [the writing guide](docs/writing.md) for installation and template details.
 
 ## Understand the evidence
 
@@ -161,11 +184,15 @@ missed. Check cited papers before using generated details in a publication.
 
 ## Self-host privately
 
-Install and prepare the corpus on your server, then run:
+Install your chosen profile on the server, then run:
 
 ```bash
 ORIGINRAG_WEB_OPEN=0 ./web --auth --strict-port
 ```
+
+The same command serves `full`, `rag` or `write`, using the saved profile.
+Only RAG answers require a model and an indexed corpus. OriginWrite can be
+hosted independently, with the same private accounts and libraries.
 
 From your own computer, connect through an SSH tunnel:
 

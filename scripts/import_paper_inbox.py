@@ -26,15 +26,15 @@ import fitz  # noqa: E402
 from originrag.ingestion.chunking import chunk_pages  # noqa: E402
 from originrag.ingestion.pdf_text import extract_pdf_text  # noqa: E402
 from originrag.provenance.library import normalize_doi, normalize_title  # noqa: E402
-from originrag.retrieval.fts_index import (  # noqa: E402
-    RetrievalIndexError,
-    build_fts_index,
-    corpus_fingerprint,
-    ensure_current_index,
-    index_has_candidate_record_store,
-    update_fts_index,
-)
+from originrag.app_profiles import LazyModule, lazy_function  # noqa: E402
 from originrag.utils.io import write_json, write_jsonl  # noqa: E402
+
+fts_index = LazyModule('originrag.retrieval.fts_index')
+build_fts_index = lazy_function('originrag.retrieval.fts_index', 'build_fts_index')
+corpus_fingerprint = lazy_function('originrag.retrieval.fts_index', 'corpus_fingerprint')
+ensure_current_index = lazy_function('originrag.retrieval.fts_index', 'ensure_current_index')
+index_has_candidate_record_store = lazy_function('originrag.retrieval.fts_index', 'index_has_candidate_record_store')
+update_fts_index = lazy_function('originrag.retrieval.fts_index', 'update_fts_index')
 
 
 MAX_PDF_BYTES = 250 * 1024 * 1024
@@ -111,6 +111,7 @@ def import_inbox(
     *,
     timeout: int = 30,
     progress: Callable[[dict[str, object]], None] | None = None,
+    build_retrieval: bool = True,
 ) -> dict:
     inbox.mkdir(parents=True, exist_ok=True)
     if any(path.is_symlink() for path in inbox.iterdir()):
@@ -126,7 +127,13 @@ def import_inbox(
     extracted_dir = REPO_ROOT / "data/extracted_text"
     index_path = REPO_ROOT / "data/indexes/pfempire_fts.sqlite"
     bib_dir = REPO_ROOT / "bib"
-    previous_corpus_fingerprint = corpus_fingerprint(chunks_dir, papers_path)
+    previous_corpus_fingerprint = corpus_fingerprint(chunks_dir, papers_path) if build_retrieval else None
+    initial_fields = ['paper_id', 'bib_key', 'title', 'author', 'year', 'journal', 'doi', 'collection', 'category',
+                      'domain', 'topics', 'paper_type', 'fulltext_status', 'local_pdf_relpath', 'extracted_text_relpath',
+                      'landing_url', 'filename', 'citation_short', 'citation_apa', 'metadata_source', 'notes']
+    for path in (papers_path, registry_path):
+        if not path.exists():
+            write_tsv_atomic(path, [], initial_fields)
     paper_rows, paper_fields = read_tsv(papers_path)
     registry_rows, registry_fields = read_tsv(registry_path)
     metadata_only = metadata_only_records(paper_rows + registry_rows)
@@ -172,6 +179,7 @@ def import_inbox(
                 known_ids=known_ids,
                 known_keys=known_keys,
                 metadata_only=metadata_only,
+                build_retrieval=build_retrieval,
             )
         except DuplicatePaper as exc:
             duplicates.append((source, str(exc)))
@@ -246,50 +254,42 @@ def import_inbox(
                 pdf_target = bib_dir / candidate.target_relpath
                 extracted_target = extracted_dir / f"{candidate.paper_id}.json"
                 chunks_target = chunks_dir / f"{candidate.paper_id}.jsonl"
-                for target in (pdf_target, extracted_target, chunks_target):
+                targets = (pdf_target, extracted_target, chunks_target) if build_retrieval else (pdf_target,)
+                for target in targets:
                     if target.exists():
                         raise FileExistsError(f"Refusing to overwrite product asset: {target}")
                     target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(candidate.source), str(pdf_target))
                 moved_sources.append((pdf_target, candidate.source))
-                write_json(
-                    extracted_target,
-                    {
-                        "paper_id": candidate.paper_id,
-                        "source_pdf": candidate.target_relpath,
-                        "pages": candidate.pages,
-                    },
-                )
-                write_jsonl(chunks_target, candidate.chunks)
-                installed_paths.extend([extracted_target, chunks_target])
-            notify_progress(
-                progress,
-                stage="Adding papers to the searchable index",
-                total=len(sources),
-                processed=len(sources),
-                imported=len(accepted),
-                duplicates=len(duplicates),
-            )
-            try:
-                update_fts_index(
-                    chunks_dir,
-                    papers_path,
-                    [candidate.paper_id for candidate in accepted],
-                    index_path,
-                    expected_previous_fingerprint=previous_corpus_fingerprint,
-                )
-            except RetrievalIndexError:
-
-
+                if build_retrieval:
+                    write_json(
+                        extracted_target,
+                        {
+                            "paper_id": candidate.paper_id,
+                            "source_pdf": candidate.target_relpath,
+                            "pages": candidate.pages,
+                        },
+                    )
+                    write_jsonl(chunks_target, candidate.chunks)
+                    installed_paths.extend([extracted_target, chunks_target])
+            if build_retrieval:
                 notify_progress(
                     progress,
-                    stage="Rebuilding the searchable library index",
+                    stage="Adding papers to the searchable index",
                     total=len(sources),
                     processed=len(sources),
                     imported=len(accepted),
                     duplicates=len(duplicates),
                 )
-                build_fts_index(chunks_dir, papers_path, index_path)
+                try:
+                    update_fts_index(
+                        chunks_dir, papers_path, [candidate.paper_id for candidate in accepted], index_path,
+                        expected_previous_fingerprint=previous_corpus_fingerprint,
+                    )
+                except fts_index.RetrievalIndexError:
+                    notify_progress(progress, stage="Rebuilding the searchable library index", total=len(sources),
+                                    processed=len(sources), imported=len(accepted), duplicates=len(duplicates))
+                    build_fts_index(chunks_dir, papers_path, index_path)
             try:
                 save_known_pdf_hashes(known_hashes)
                 for candidate in accepted:
@@ -319,6 +319,7 @@ def import_inbox(
         "inbox": str(inbox),
         "scanned": len(sources),
         "imported": len(accepted),
+        "retrieval_prepared": build_retrieval,
         "duplicates": len(duplicates),
         "review_required": sum(row["status"] == "review_required" for row in reports),
         "rejected": sum(row["status"] == "rejected" for row in reports),
@@ -576,7 +577,7 @@ def recover_imported_metadata(*, timeout: int = 5) -> dict:
         else:
             try:
                 ensure_current_index(index_path, chunks_dir, papers_path)
-            except RetrievalIndexError:
+            except fts_index.RetrievalIndexError:
                 build_fts_index(chunks_dir, papers_path, index_path)
                 index_rebuilt = True
         candidate_record_store_ready = bool(
@@ -693,6 +694,7 @@ def inspect_candidate(
     known_ids: set[str],
     known_keys: set[str],
     metadata_only: dict[str, dict[str, str]] | None = None,
+    build_retrieval: bool = True,
 ) -> Candidate:
     if source.stat().st_size > MAX_PDF_BYTES:
         raise ValueError("PDF exceeds the 250 MB inbox limit")
@@ -746,9 +748,9 @@ def inspect_candidate(
         bib_key = existing.get("bib_key") or bib_key
     filename = safe_filename(f"{author}{year}{' '.join(title.split()[:6])}") + ".pdf"
     target_relpath = unique_pdf_relpath(category, filename)
-    pages = extract_pdf_text(source)
-    chunks = chunk_pages(paper_id, pages)
-    if not chunks:
+    pages = extract_pdf_text(source) if build_retrieval else []
+    chunks = chunk_pages(paper_id, pages) if build_retrieval else []
+    if build_retrieval and not chunks:
         raise ReviewRequired("no searchable text chunks could be produced")
     return Candidate(
         source=source,
@@ -812,9 +814,9 @@ def paper_metadata_row(candidate: Candidate, fields: list[str]) -> dict[str, str
         "domain": paper_domain(candidate.category),
         "topics": candidate.category,
         "paper_type": "journal article",
-        "fulltext_status": "chunked",
+        "fulltext_status": "chunked" if candidate.chunks else "pdf_available",
         "local_pdf_relpath": candidate.target_relpath,
-        "extracted_text_relpath": f"data/extracted_text/{candidate.paper_id}.json",
+        "extracted_text_relpath": f"data/extracted_text/{candidate.paper_id}.json" if candidate.pages else '',
         "notes": "local_inbox; DOI metadata verified through Crossref",
     }
     return {field: values.get(field, "") for field in fields}

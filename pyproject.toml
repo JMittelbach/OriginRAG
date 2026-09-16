@@ -26,15 +26,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 dependencies = [
-    "pandas",
-    "pydantic",
-    "pyyaml",
     "python-dotenv",
     "pymupdf",
-    "typer",
-    "rich",
-    "prompt-toolkit>=3.0.48,<4",
-    "rapidfuzz",
 ]
 
 [project.urls]
@@ -44,7 +37,33 @@ Repository = "https://github.com/JMittelbach/OriginRAG.git"
 Issues = "https://github.com/JMittelbach/OriginRAG/issues"
 
 [project.optional-dependencies]
+write = []
+rag = [
+    "pandas",
+    "pydantic>=2,<3",
+    "pyyaml",
+    "typer",
+    "rich",
+    "prompt-toolkit>=3.0.48,<4",
+    "rapidfuzz",
+]
+full = [
+    "pandas",
+    "pydantic>=2,<3",
+    "pyyaml",
+    "typer",
+    "rich",
+    "prompt-toolkit>=3.0.48,<4",
+    "rapidfuzz",
+]
 dev = [
+    "pandas",
+    "pydantic>=2,<3",
+    "pyyaml",
+    "typer",
+    "rich",
+    "prompt-toolkit>=3.0.48,<4",
+    "rapidfuzz",
     "pytest",
     "ruff",
 ]

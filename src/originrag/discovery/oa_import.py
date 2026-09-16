@@ -388,21 +388,30 @@ class PaperImports:
             filename = f"discovered-{job_id}.pdf"
             self.update(job_id, "indexing", "Waiting for library processing")
             with self.library.corpus_lock:
-                self.library.store_upload(io.BytesIO(data), content_length=len(data), filename=filename, doi=job["doi"], uploaded_by=job["owner"], schedule_import=False)
+                size = len(data)
+                with io.BytesIO(data) as upload:
+                    del data
+                    self.library.store_upload(upload, content_length=size, filename=filename, doi=job["doi"], uploaded_by=job["owner"], schedule_import=False)
                 summary = self.library.run_pending_now()
             result = next((row for row in summary.get("results", []) if row.get("source_file") == filename), None)
             if result and result.get("status") == "accepted":
-                self.update(job_id, "imported", "Added to library and indexed")
+                self.update(job_id, "imported", "Added to library" if getattr(self.library, 'metadata_only', False) else "Added to library and indexed")
             elif result and result.get("status") == "duplicate":
                 self.update(job_id, "duplicate", "Already present or duplicate detected; check Library")
             else:
-                self.update(job_id, "review_required", "PDF downloaded, but library processing needs attention. Not confirmed ready for RAG. Check the library update report.")
+                message = "PDF downloaded, but library processing needs attention. Not confirmed ready for RAG. Check the library update report."
+                if getattr(self.library, 'metadata_only', False):
+                    message = "PDF downloaded, but library processing needs attention. Check the library update report."
+                self.update(job_id, "review_required", message)
         except ManualUploadRequired as exc:
             with self.lock:
                 self.jobs[job_id].update(reason=exc.reason, download_url=exc.download_url)
             self.update(job_id, "failed", str(exc))
         except Exception:
-            self.update(job_id, "error", "Import could not complete. Not confirmed ready for RAG. Check the library status before retrying.")
+            message = "Import could not complete. Not confirmed ready for RAG. Check the library status before retrying."
+            if getattr(self.library, 'metadata_only', False):
+                message = "Import could not complete. Check the library status before retrying."
+            self.update(job_id, "error", message)
 
     def shutdown(self):
         with self.lock:

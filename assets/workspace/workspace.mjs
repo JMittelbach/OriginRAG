@@ -1,5 +1,7 @@
 import {renderTemplates, openTemplateGallery} from './writing-templates.mjs';
 import {openReferences} from './writing-references.mjs';
+import {createPDFPreview} from './pdf-preview.mjs';
+import {openLibraryImport} from './library-import.mjs';
 
 const $ = id => document.getElementById(id);
 const content = $('content');
@@ -7,7 +9,8 @@ const mode = location.pathname;
 let sourceEditor, writerLayout, outlineTimer;
 const textTypes = /\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i;
 let state, project, activeFile, editVersion = 0, savedVersion = 0, saving = null;
-let saveTimer, compileTimer, compiling = false, saveBlocked = false, pdfURL = '', pdfDocument, pdfLoadingTask;
+let appProfile = {profile: 'full', features: {rag: true, write: true}};
+let saveTimer, compileTimer, compiling = false, saveBlocked = false, pdfURL = '', pdfPreview;
 function node(tag, text, cls) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; }
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
 async function api(path = '/api/writing', payload) {
@@ -45,7 +48,7 @@ function home() {
   [['01', 'OriginRAG', 'Ask questions of your corpus and follow the evidence.', '/chat'],
    ['02', 'Bookshelf', 'Your current reads, highlights and thoughts.', '/bookshelf'],
    ['03', 'Library', 'Explore the corpus. Gather papers into personal project collections.', '/library'],
-   ['04', 'OriginWrite', 'Your LaTeX manuscript, source and PDF side by side.', '/write']].forEach(([num, name, desc, href]) => {
+   ['04', 'OriginWrite', 'Your LaTeX manuscript, source and PDF side by side.', '/write']].filter(item => (item[3] !== '/chat' || appProfile.features.rag) && (item[3] !== '/write' || appProfile.features.write)).forEach(([num, name, desc, href]) => {
     const card = link('', href, 'card'); card.append(node('span', num, 'number'), node('h2', name), node('p', desc)); $('modules').append(card);
   });
 }
@@ -66,7 +69,7 @@ async function shelf() {
 async function library() {
   const h = heading('Library', 'One shared corpus. Personal collections for each project.');
   h.append(button('+ Collection', () => askName('New collection', async name => { await api('/api/writing', {action: 'create_collection', name}); await refresh(); content.replaceChildren(); await library(); })));
-  h.append(link('Find or import papers', '/chat', 'button'));
+  h.append(button('Find or import papers', () => openLibraryImport({notice, changed: () => load()})));
   content.insertAdjacentHTML('beforeend', '<div class="library-layout"><aside><p class="eyebrow">MY COLLECTIONS</p><div id="collections" class="collection-list"></div></aside><section><form id="searchForm" class="search"><input id="query" type="search" placeholder="Search title, author, journal…" aria-label="Search library"><button>Search</button></form><p id="libraryCount" class="muted"></p><div id="papers"></div><div class="actions"><button id="previousPapers">Previous</button><button id="nextPapers">Next</button></div></section></div>');
   const params = new URLSearchParams(location.search);
   let selected = state.collections.some(c => c.id === params.get('collection')) ? params.get('collection') : '', offset = 0, sequence = 0;
@@ -91,7 +94,7 @@ async function library() {
       tools.append(node('p', collection.name + ' · private to your account', 'muted'));
       tools.append(button('Export BibTeX', async () => { const result = await api('/api/writing?collection_refs=' + selected); download(result.bibtex, 'references.bib'); }));
       tools.append(button('Rename', () => askName('Rename personal library', async name => { await api('/api/writing', {action: 'rename_collection', id: selected, revision: collection.revision, name}); await refresh(); content.replaceChildren(); await library(); })));
-      tools.append(button('Write with this library', () => newManuscript({id: 'article'}, selected)));
+      if (appProfile.features.write) tools.append(button('Write with this library', () => newManuscript({id: 'article'}, selected)));
     }
     $('papers').replaceChildren(); $('libraryCount').textContent = `${data.total} papers`; $('previousPapers').disabled = offset === 0; $('nextPapers').disabled = offset + 40 >= data.total;
     for (const p of data.items) {
@@ -223,24 +226,11 @@ function fileList() {
   $('mainFile').value = project.main; selectFile(activeFile in project.files ? activeFile : project.main);
 }
 function zoomPDF() {
-  const zoom = $('pdfZoom').value;
-  for (const canvas of $('pdfPages').querySelectorAll('canvas')) {
-    canvas.style.width = zoom === 'fit' ? '100%' : `${Number(canvas.dataset.pageWidth) * Number(zoom)}px`;
-    canvas.style.maxWidth = zoom === 'fit' ? '100%' : 'none';
-  }
+  pdfPreview?.zoom($('pdfZoom').value);
 }
 async function renderPDF(bytes) {
-  if (pdfLoadingTask) await pdfLoadingTask.destroy();
-  const pdfjs = await import('/assets/vendor/pdfjs/legacy/build/pdf.min.mjs');
-  pdfjs.GlobalWorkerOptions.workerSrc = '/assets/vendor/pdfjs/legacy/build/pdf.worker.min.mjs';
-  pdfLoadingTask = pdfjs.getDocument({data: bytes, isEvalSupported: false, cMapUrl: '/assets/vendor/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/assets/vendor/pdfjs/standard_fonts/', wasmUrl: '/assets/vendor/pdfjs/wasm/'});
-  pdfDocument = await pdfLoadingTask.promise;
-  $('pdfPages').replaceChildren();
-  for (let n = 1; n <= Math.min(pdfDocument.numPages, 40); n++) {
-    const page = await pdfDocument.getPage(n); const unscaled = page.getViewport({scale: 1}); const scale = Math.min(2, Math.sqrt(2000000 / (unscaled.width * unscaled.height))); const viewport = page.getViewport({scale}); const canvas = node('canvas'); canvas.width = viewport.width; canvas.height = viewport.height; canvas.dataset.pageWidth = unscaled.width; canvas.setAttribute('aria-label', `PDF page ${n}`); $('pdfPages').append(canvas); zoomPDF(); await page.render({canvasContext: canvas.getContext('2d'), viewport}).promise;
-  }
-  if (pdfDocument.numPages > 40) $('pdfPages').append(node('p', 'Preview shows the first 40 pages. Download the PDF for all pages.'));
-  $('pdfCount').textContent = `${pdfDocument.numPages} ${pdfDocument.numPages === 1 ? 'page' : 'pages'}`;
+  if (!pdfPreview) pdfPreview = createPDFPreview($('pdfPages'), $('pdfCount'), error => notice('PDF preview: ' + error.message, true));
+  zoomPDF(); await pdfPreview.load(bytes);
 }
 async function compile(force = false, retry = 0) {
   if (compiling) return;
@@ -372,6 +362,13 @@ async function editor(id) {
 }
 
 try {
+  appProfile = await api('/api/app-profile');
+  for (const item of document.querySelectorAll('[data-feature]')) item.hidden = !appProfile.features[item.dataset.feature];
+  if (appProfile.user) {
+    $('workspaceUser').textContent = appProfile.user.display_name || appProfile.user.username || '';
+    $('workspaceLogout').hidden = false;
+    $('workspaceLogout').onclick = async () => { try { if (project) await save(); await api('/api/logout', {}); location.href = '/login'; } catch (error) { notice(error.message, true); } };
+  }
   await refresh();
   if (mode === '/bookshelf') await shelf();
   else if (mode === '/library') await library();

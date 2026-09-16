@@ -12,12 +12,13 @@ usage() {
 Usage:
   ./terminal                Start terminal chat with local Qwen
   ./terminal --demo         Preview the terminal interface without a model
-  ./web                     Start browser UI with local Qwen
-  ./originrag                  Start terminal chat with local Qwen
+  ./web [--profile full|rag|write]
+                            Open the selected web workspace
+  ./originrag                  Open terminal chat (or web in write profile)
   ./originrag --version        Print the project version
   ./originrag doctor           Check the corpus, installation, Ollama, and model
   ./originrag console          Start terminal chat with local Qwen
-  ./originrag web              Start browser UI with local Qwen
+  ./originrag web              Open browser UI; no model needed to start
   ./originrag users ...        Manage invite-only local web accounts
   ./originrag ask "question"   Ask one question and write outputs/answers
   ./originrag setup-model      Pull/configure the preferred local Qwen model
@@ -46,7 +47,7 @@ Live library updates:
   For shell imports/index updates, stop the web service and restart afterwards.
 
 Examples:
-  ./setup.sh
+  ./setup.sh --profile full    # or rag / write
   ./originrag setup-model
   ./originrag doctor
   ./originrag search-papers "EPCR-binding PfEMP1"
@@ -73,6 +74,12 @@ read_env_value() {
 
 activate_python_environment() {
   select_python_environment
+  if ! "$ORIGINRAG_PYTHON" -c 'import pandas, pydantic, yaml, rich, prompt_toolkit, typer, rapidfuzz' >/dev/null 2>&1; then
+    echo "This terminal command needs the OriginRAG module." >&2
+    echo "Install it with ./setup.sh --profile rag, or python -m pip install -e '.[rag]'." >&2
+    echo "Your OriginWrite workspace remains available through ./web." >&2
+    exit 1
+  fi
   "$ORIGINRAG_PYTHON" scripts/init_local_data.py
 }
 
@@ -83,25 +90,25 @@ select_python_environment() {
   local env_name
 
   if [ -n "${ORIGINRAG_PYTHON:-}" ] && [ -x "$ORIGINRAG_PYTHON" ]; then
-    if "$ORIGINRAG_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+    if "$ORIGINRAG_PYTHON" -c 'import dotenv, fitz' >/dev/null 2>&1; then
       return
     fi
     echo "ORIGINRAG_PYTHON is missing OriginRAG dependencies: $ORIGINRAG_PYTHON" >&2
-    echo "Repair with: \"$ORIGINRAG_PYTHON\" -m pip install -e '.[dev]'" >&2
+    echo "Repair with: \"$ORIGINRAG_PYTHON\" -m pip install -e '.[write]' (or '.[rag]' / '.[full]')" >&2
     exit 1
   fi
   if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
     ORIGINRAG_PYTHON="$VIRTUAL_ENV/bin/python"
-    if "$ORIGINRAG_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+    if "$ORIGINRAG_PYTHON" -c 'import dotenv, fitz' >/dev/null 2>&1; then
       return
     fi
     echo "The active virtual environment is missing OriginRAG dependencies." >&2
-    echo "Repair with: python -m pip install -e '.[dev]'" >&2
+    echo "Repair with: python -m pip install -e '.[write]' (or '.[rag]' / '.[full]')" >&2
     exit 1
   fi
   if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
     ORIGINRAG_PYTHON="$ROOT_DIR/.venv/bin/python"
-    if "$ORIGINRAG_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+    if "$ORIGINRAG_PYTHON" -c 'import dotenv, fitz' >/dev/null 2>&1; then
       return
     fi
   fi
@@ -130,10 +137,10 @@ select_python_environment() {
     echo "Conda environment '$env_name' has no executable Python at $ORIGINRAG_PYTHON." >&2
     exit 1
   fi
-  if ! "$ORIGINRAG_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
-    echo "Conda environment '$env_name' is missing OriginRAG dependencies (PyYAML)." >&2
+  if ! "$ORIGINRAG_PYTHON" -c 'import dotenv, fitz' >/dev/null 2>&1; then
+    echo "Conda environment '$env_name' is missing shared workspace dependencies." >&2
     echo "Checked interpreter: $ORIGINRAG_PYTHON" >&2
-    echo "Repair with: conda run -n '$env_name' python -m pip install -e ." >&2
+    echo "Repair with: conda run -n '$env_name' python -m pip install -e '.[full]' (or '.[write]')" >&2
     exit 1
   fi
 }
@@ -232,6 +239,12 @@ ensure_ollama_server() {
 }
 
 cmd="${1:-console}"
+if [ "$#" -eq 0 ]; then
+  select_python_environment
+  if [ "$("$ORIGINRAG_PYTHON" scripts/configure_app_profile.py --read)" = write ]; then
+    cmd=web
+  fi
+fi
 if [[ "$cmd" == "help" || "$cmd" == "-h" || "$cmd" == "--help" ]]; then
   usage
   exit 0
@@ -260,14 +273,11 @@ case "$cmd" in
     exec "$ORIGINRAG_PYTHON" scripts/chat_corpus.py --backend qwen --preset pro --task auto "$@"
     ;;
   web)
-    activate_python_environment
-    ensure_ollama_server
-    configure_local_model
-    report_accelerator
+    select_python_environment
     exec "$ORIGINRAG_PYTHON" scripts/start_web_chat.py "$@"
     ;;
   users)
-    activate_python_environment
+    select_python_environment
     exec "$ORIGINRAG_PYTHON" scripts/manage_web_users.py "$@"
     ;;
   ask)
@@ -312,7 +322,11 @@ case "$cmd" in
     exec "$ORIGINRAG_PYTHON" scripts/import_local_papers.py "$@"
     ;;
   doctor)
-    activate_python_environment
+    select_python_environment
+    if [ "$("$ORIGINRAG_PYTHON" scripts/configure_app_profile.py --read)" = write ]; then
+      exec "$ORIGINRAG_PYTHON" -c 'from originrag.writing_compile import compiler_status; print("OriginWrite shared workspace is installed."); print(compiler_status()["message"])'
+    fi
+    "$ORIGINRAG_PYTHON" scripts/init_local_data.py
     "$ORIGINRAG_PYTHON" scripts/check_environment.py
     if ! command -v ollama >/dev/null 2>&1; then
       echo ""

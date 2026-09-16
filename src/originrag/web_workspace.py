@@ -12,7 +12,7 @@ PAGES = {'/workspace', '/bookshelf', '/library', '/write'}
 HTML = '''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Workspace · OriginRAG</title><link rel="stylesheet" href="/assets/workspace/workspace.css"><link rel="stylesheet" href="/assets/workspace/writer.css"><link rel="stylesheet" href="/assets/workspace/writer-layout.css"><link rel="stylesheet" href="/assets/workspace/writing-library.css"></head>
-<body><header><a class="brand" href="/workspace">Origin<span> / workspace</span></a><nav aria-label="Your workspace"><a href="/chat">OriginRAG</a><a href="/bookshelf">Bookshelf</a><a href="/library">Library</a><a href="/write">OriginWrite</a></nav></header>
+<body><header><a class="brand" href="/workspace">Origin<span> / workspace</span></a><nav aria-label="Your workspace"><a href="/chat" data-feature="rag">OriginRAG</a><a href="/bookshelf">Bookshelf</a><a href="/library">Library</a><a href="/write" data-feature="write">OriginWrite</a></nav><div class="workspace-account"><span id="workspaceUser"></span><button id="workspaceLogout" hidden>Sign out</button></div></header>
 <div id="notice" role="status" aria-live="polite"></div><main id="content"></main>
 <dialog id="createDialog"><form id="createForm"><h2 id="createTitle">New project</h2><label>Name<input id="newName" maxlength="120" required autocomplete="off"></label><p id="createError" role="alert"></p><div class="actions"><button type="button" id="cancelCreate">Cancel</button><button class="primary">Create</button></div></form></dialog>
 <script type="module" src="/assets/workspace/workspace.mjs"></script></body></html>'''

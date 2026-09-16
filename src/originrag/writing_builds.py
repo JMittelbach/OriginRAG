@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sys
 import threading
 import time
 
@@ -13,9 +14,53 @@ from .writing_compile import compile_project, select_compiler_backend
 
 _CACHE = OrderedDict()
 _LOCK = threading.Lock()
-_MAX_BYTES = 64_000_000
+_MAX_BYTES = 32 * 1024 * 1024
 _MAX_ITEMS = 16
 _TTL = 1800
+
+
+def _cache_budget():
+    value = os.environ.get('ORIGINWRITE_BUILD_CACHE_MIB')
+    if value is None:
+        return _MAX_BYTES
+    try:
+        return min(128, max(0, int(value))) * 1024 * 1024
+    except ValueError:
+        return _MAX_BYTES
+
+
+def _object_bytes(value, seen=None):
+    seen = set() if seen is None else seen
+    if id(value) in seen:
+        return 0
+    seen.add(id(value))
+    size = sys.getsizeof(value)
+    if isinstance(value, dict):
+        size += sum(_object_bytes(k, seen) + _object_bytes(v, seen) for k, v in value.items())
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        size += sum(_object_bytes(item, seen) for item in value)
+    return size
+
+
+def _prune_cache(budget):
+    now = time.monotonic()
+    for key in list(_CACHE):
+        if now - _CACHE[key][0] > _TTL:
+            _CACHE.pop(key)
+    while _CACHE and (len(_CACHE) > _MAX_ITEMS or sys.getsizeof(_CACHE) + sum(entry[2] for entry in _CACHE.values()) > budget):
+        _CACHE.popitem(last=False)
+
+
+def _project_digest(project, configuration):
+    digest = hashlib.sha256(b'originwrite-build-v2\0')
+    digest.update(json.dumps({'main': project['main'], 'compiler': configuration}, sort_keys=True).encode())
+    for name, content in sorted(project['files'].items()):
+        digest.update(hashlib.sha256(name.encode()).digest())
+        file_digest = hashlib.sha256()
+        for offset in range(0, len(content), 65536):
+            file_digest.update(content[offset:offset + 65536].encode())
+        digest.update(file_digest.digest())
+    return digest.hexdigest()
 
 
 def _path_identity(value):
@@ -60,12 +105,9 @@ def compile_saved_project(project, owner_directory, *, force=False):
         raise ValueError('The force option must be true or false.')
     validate_files(project['files'], project['main'])
     configuration = compiler_fingerprint()
-    content = json.dumps({'files': project['files'], 'main': project['main'], 'compiler': configuration}, sort_keys=True).encode()
-    key = (str(Path(owner_directory).resolve()), project.get('id', ''), hashlib.sha256(content).hexdigest())
+    key = (str(Path(owner_directory).resolve()), project.get('id', ''), _project_digest(project, configuration))
     with _LOCK:
-        for old in list(_CACHE):
-            if time.monotonic() - _CACHE[old][0] > _TTL:
-                _CACHE.pop(old)
+        _prune_cache(_cache_budget())
         if force:
             _CACHE.pop(key, None)
         elif key in _CACHE:
@@ -75,9 +117,15 @@ def compile_saved_project(project, owner_directory, *, force=False):
             return result
     result = compile_project(project)
     if result['ok']:
-        size = len(result['pdf']) + len(result.get('log', '').encode()) + 100_000
         with _LOCK:
-            _CACHE[key] = (time.monotonic(), deepcopy(result), size)
-            while len(_CACHE) > _MAX_ITEMS or sum(entry[2] for entry in _CACHE.values()) > _MAX_BYTES:
-                _CACHE.popitem(last=False)
+            budget = _cache_budget()
+            if budget and _object_bytes((key, (0.0, result, 0))) < budget:
+                cached = deepcopy(result)
+                size = _object_bytes((key, (0.0, cached, 0))) + sys.getsizeof(0)
+                _CACHE.pop(key, None)
+                while _CACHE and (len(_CACHE) >= _MAX_ITEMS or sys.getsizeof(_CACHE) + sum(entry[2] for entry in _CACHE.values()) + size + 512 > budget):
+                    _CACHE.popitem(last=False)
+                if size + sys.getsizeof(_CACHE) + 512 <= budget:
+                    _CACHE[key] = (time.monotonic(), cached, size)
+            _prune_cache(budget)
     return {**result, 'cached': False}

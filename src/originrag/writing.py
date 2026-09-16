@@ -395,12 +395,13 @@ class WritingStore:
         db = sqlite3.connect(self.path, timeout=10)
         os.chmod(self.path, 0o600)
         db.execute('CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, kind TEXT, data TEXT, revision INTEGER, updated REAL)')
+        db.execute('CREATE INDEX IF NOT EXISTS documents_updated ON documents(updated DESC)')
         return db
 
     def snapshot(self):
         db = self.connect()
         try:
-            rows = db.execute('SELECT id, kind, data, revision, updated FROM documents ORDER BY updated DESC').fetchall()
+            rows = db.execute('SELECT id, kind, data, revision, updated FROM documents ORDER BY updated DESC')
             result = {'projects': [], 'collections': [], 'templates': TEMPLATES}
             for key, kind, raw, revision, updated in rows:
                 data = json.loads(raw)

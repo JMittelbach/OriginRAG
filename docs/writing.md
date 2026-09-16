@@ -37,14 +37,15 @@ your account. A paper can belong to several libraries without duplicating its
 PDF. Removing it from a personal library does not remove the corpus paper or its
 bookshelf bookmark.
 
-Inside a manuscript:
+Inside a manuscript, place the cursor where the citation should go before opening
+**References**:
 
 1. Open **References** and choose a **Personal library**, or enter a name and
    select **+ New personal library**.
 2. Open **Search corpus**, search by title, author or journal, and choose
    **Add to personal library** beside the papers you need.
-3. Return to **Your library**. Place the cursor in a `.tex` file and choose
-   **Insert citation** for a paper. When its BibTeX entry is missing, a preview
+3. Return to **Your library** and choose **Insert citation** for a paper.
+   When its BibTeX entry is missing, a preview
    shows the proposed bibliography changes first.
 4. Review the preview, then choose **Apply sync and insert citation**. This adds
    the reference and inserts `\cite{...}` at your editing position.
@@ -137,7 +138,9 @@ other files, symlinks, unsafe paths or duplicate paths are rejected, not partial
 imported. Remove unsupported packaging files from a copy if needed. Limits:
 12 MB and 200 files per project, 100 MB of serialised source data per account,
 150 projects/collections per account, 500 papers per collection. The browser
-preview renders the first 40 PDF pages; the PDF download contains all pages.
+preview supports up to 1,000 PDF pages and keeps at most four page canvases
+resident at a time. Distant pages are released and rendered again as you scroll;
+the PDF download contains all pages.
 
 ## Configure PDF compilation
 
@@ -165,7 +168,10 @@ inside that dedicated cache, or restart the web service, to invalidate cached
 builds. For a changed container image under the same tag, update
 `ORIGINWRITE_TEX_REVISION` or restart the service. Immutable image digests avoid
 that ambiguity. Cached builds are private to the account and project, held in
-memory for at most 30 minutes, and discarded on restart.
+memory for at most 30 minutes, and discarded on restart. The shared build cache
+defaults to 32 MiB; set `ORIGINWRITE_BUILD_CACHE_MIB` between `0` (disabled) and
+`128` to change that budget. This is a cache budget, not a limit on total server
+or compiler memory. A fresh build is still available with **Recompile**.
 
 ### macOS
 
