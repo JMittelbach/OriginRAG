@@ -24,9 +24,19 @@ def test_persistence_isolation_and_removal(tmp_path):
     missing = alice.snapshot([])["items"][0]
     assert missing["title"] == "Numerical methods"
     assert not missing["available"] and not missing["summary_available"]
+    assert missing["pdf_url"] == ""
     assert alice.change({"action": "remove", "paper_id": "P1"}, [])["items"] == []
     assert alice.change({"action": "remove", "paper_id": "P1"}, [])["items"] == []
     assert CATALOGUE[0]["local_pdf_relpath"] == "private/path.pdf"
+
+
+def test_existing_bookmark_gets_current_pdf_without_resaving(tmp_path):
+    shelf = PersonalShelf(tmp_path)
+    shelf.change({"action": "add", "paper_id": "P1"}, CATALOGUE)
+    assert shelf.snapshot(CATALOGUE)["items"][0]["pdf_url"] == ""
+    updated = [{**CATALOGUE[0], "local_pdf": True}]
+    assert shelf.snapshot(updated)["items"][0]["pdf_url"] == "/api/library/pdf?paper_id=P1"
+    assert shelf.snapshot(CATALOGUE)["items"][0]["pdf_url"] == ""
 
 
 @pytest.mark.parametrize("payload", [None, [], {}, {"action": [], "paper_id": "P1"},

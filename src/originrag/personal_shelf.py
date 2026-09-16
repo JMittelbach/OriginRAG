@@ -5,6 +5,7 @@ import os
 import sqlite3
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 FIELDS = ("paper_id", "title", "author", "year", "journal", "doi", "doi_url")
 MAX_BOOKS = 200
@@ -37,6 +38,7 @@ class PersonalShelf:
             paper = dict(current.get(paper_id) or json.loads(metadata))
             items.append({**{key: str(paper.get(key) or "") for key in FIELDS},
                           "available": paper_id in current,
+                          "pdf_url": f"/api/library/pdf?paper_id={quote(paper_id, safe='')}" if paper_id in current and paper.get("local_pdf") else "",
                           "summary_available": bool(paper.get("summary_available") or paper.get("searchable")) if paper_id in current else False,
                           "saved_at": saved_at})
         return {"items": items, "limit": MAX_BOOKS}

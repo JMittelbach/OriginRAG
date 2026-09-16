@@ -69,6 +69,7 @@ from originrag.utils.io import write_json  # noqa: E402
 from originrag.web_appearance import with_appearance  # noqa: E402
 from originrag.web_onboarding import with_onboarding  # noqa: E402
 from originrag.web_shelf import with_shelf  # noqa: E402
+from originrag.library_pdf import open_registered_pdf, byte_range  # noqa: E402
 from originrag.discovery.topic_search import TopicDiscovery, DiscoveryBusy, DiscoveryUnavailable  # noqa: E402
 from originrag.discovery.oa_import import PaperImports, ImportBusy  # noqa: E402
 from originrag.web_auth import (  # noqa: E402
@@ -1693,6 +1694,17 @@ def build_handler(
                 except (OSError, sqlite3.Error):
                     self.respond_json({"error": "Your shelf is temporarily unavailable. Please try again."}, status=HTTPStatus.SERVICE_UNAVAILABLE)
                 return
+            if parsed.path == "/api/library/pdf":
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({"error": "Use the local browser or sign in to read library PDFs."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                params = parse_qs(parsed.query)
+                ids = params.get("paper_id", [])
+                if set(params) != {"paper_id"} or len(ids) != 1 or not 1 <= len(ids[0]) <= 160:
+                    self.respond_json({"error": "A single paper_id is required."}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                self.handle_library_pdf(ids[0])
+                return
             if parsed.path == "/api/library-stats":
                 self.respond_json(library_catalog_stats())
                 return
@@ -2250,6 +2262,44 @@ def build_handler(
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def handle_library_pdf(self, paper_id: str) -> None:
+            load_project_env(REPO_ROOT / ".env")
+            try:
+                bib_dir = get_bib_dir()
+            except OriginRAGConfigError:
+                bib_dir = REPO_ROOT / "bib"
+            headers_sent = False
+            try:
+                with open_registered_pdf(paper_id, metadata_files=[REPO_ROOT / "data/metadata/papers.tsv", REPO_ROOT / "data/metadata/paper_registry.tsv"], bib_roots=[bib_dir, REPO_ROOT / "bib"]) as handle:
+                    size = os.fstat(handle.fileno()).st_size
+                    requested_range = self.headers.get("Range")
+                    try:
+                        start, end = byte_range(requested_range, size)
+                    except ValueError:
+                        self.respond_json({"error": "Requested PDF range is unavailable."}, status=HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, extra_headers=[("Content-Range", f"bytes */{size}")])
+                        return
+                    self.send_response(HTTPStatus.PARTIAL_CONTENT if requested_range else HTTPStatus.OK)
+                    self.send_security_headers()
+                    self.send_header("Content-Type", "application/pdf")
+                    self.send_header("Content-Disposition", 'inline; filename="paper.pdf"')
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Content-Length", str(end - start + 1))
+                    if requested_range:
+                        self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+                    self.end_headers()
+                    headers_sent = True
+                    handle.seek(start)
+                    remaining = end - start + 1
+                    while remaining > 0:
+                        chunk = handle.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
+            except (FileNotFoundError, ValueError, OSError, RuntimeError):
+                if not headers_sent:
+                    self.respond_json({"error": "No local PDF is available for this paper. It may have been moved or removed."}, status=HTTPStatus.NOT_FOUND)
 
         def respond_json(
             self,

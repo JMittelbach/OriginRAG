@@ -115,6 +115,8 @@ Use **Save to shelf** in Library or chat references to keep papers close at hand
 The **My shelf** button at the top opens your personal bookshelf, with quick access
 to each paper and its summary. On shared servers, shelves belong to individual
 accounts. Removing a bookmark does not remove the paper from the corpus.
+**Open PDF** opens the copy stored in your corpus directly. **Publisher page**
+is available separately; papers without a local PDF are clearly marked.
 
 For later additions, use **Add papers** in the web app. Local use needs no
 account; sign in when using an authenticated shared server. While the

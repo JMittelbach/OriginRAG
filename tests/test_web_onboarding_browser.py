@@ -32,6 +32,12 @@ def browser_page(tmp_path):
             else:
                 route.fulfill(status=404)
             return
+        if path.startswith('/api/library/pdf?'):
+            import fitz
+            with fitz.open() as document:
+                document.new_page().insert_text((72, 72), 'Synthetic shelf PDF')
+                route.fulfill(status=200, content_type='application/pdf', headers={'Content-Disposition': 'inline; filename="test.pdf"'}, body=document.tobytes())
+            return
         payload = {"jobs": [], "sessions": [], "queue": {}, "state": "idle", "groups": []}
         code = 200
         if path == "/api/status":
@@ -51,7 +57,7 @@ def browser_page(tmp_path):
                 assert request.headers.get("x-csrf-token") == "test-csrf"
                 if change["action"] == "add":
                     paper = next(p for p in state["library"] if p["paper_id"] == change["paper_id"])
-                    shelf[paper["paper_id"]] = {**paper, "available": True, "summary_available": paper.get("searchable", False)}
+                    shelf[paper["paper_id"]] = {**paper, "available": True, "summary_available": paper.get("searchable", False), "pdf_url": f'/api/library/pdf?paper_id={paper["paper_id"]}' if paper.get("local_pdf") else ""}
                 else:
                     shelf.pop(change["paper_id"], None)
             payload = {"items": list(shelf.values()), "limit": 200}
@@ -419,7 +425,7 @@ def test_personal_shelf_save_reload_summary_and_remove(browser_page):
     page.wait_for_function("document.querySelectorAll('.shelf-book').length === 6")
     page.locator(".shelf-book").first.click()
     assert page.locator("#shelfDetail h3").inner_text() == state["library"][0]["title"]
-    assert page.get_by_role("link", name="Open paper", exact=True).get_attribute("href") == "https://doi.org/10.1234/p0"
+    assert page.get_by_role("link", name="Publisher page", exact=True).get_attribute("href") == "https://doi.org/10.1234/p0"
     page.screenshot(path=str(tmp / "bookshelf-desktop.png"))
     for theme in ("light", "dark"):
         page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
@@ -474,6 +480,8 @@ def test_shelf_empty_browse_and_save_from_chat(browser_page):
     page.locator(".shelf-book").click()
     assert page.locator("#shelfDetail h3").inner_text() == paper["title"]
     assert page.locator("#shelfDialog img").count() == 0
+    assert page.get_by_role('link', name='Open PDF', exact=True).count() == 0
+    assert 'No PDF is stored' in page.locator('#shelfDetail').inner_text()
     assert page.locator("#shelfDetail").get_by_role("button", name="Summarize", exact=True).is_disabled()
     page.emulate_media(reduced_motion="reduce")
     assert page.locator(".shelf-book").evaluate("el => parseFloat(getComputedStyle(el).transitionDuration)") <= 0.001
@@ -538,3 +546,26 @@ def test_stop_before_server_acknowledges_submission(browser_page):
     page.wait_for_function("!document.querySelector('[data-job-id^=submission]')")
     assert state['cancel_requests'] == [{'job_id': 'c' * 32}]
     assert state['jobs'][0]['state'] == 'cancelled'
+
+
+def test_shelf_opens_local_pdf_not_publisher_page(browser_page):
+    page, state, requests, tmp = browser_page
+    page.locator('#guideSkip').click()
+    state['shelves'] = {'alice': {'P1': {
+        'paper_id': 'P1', 'title': 'Previously saved paper', 'author': 'Example',
+        'available': True, 'pdf_url': '/api/library/pdf?paper_id=P1',
+        'doi_url': 'https://doi.org/10.1234/example', 'summary_available': True,
+    }}}
+    page.locator('#shelfButton').click()
+    page.locator('.shelf-book').click()
+    pdf = page.get_by_role('link', name='Open PDF', exact=True)
+    assert pdf.get_attribute('href') == '/api/library/pdf?paper_id=P1'
+    assert page.locator('#shelfDetail a').first.inner_text() == 'Open PDF'
+    assert page.get_by_role('link', name='Publisher page', exact=True).get_attribute('href') == 'https://doi.org/10.1234/example'
+    with page.expect_popup() as opened:
+        pdf.click()
+    reader = opened.value
+    reader.wait_for_url('**/api/library/pdf?paper_id=P1')
+    assert '/api/library/pdf?paper_id=P1' in requests
+    assert page.locator('#shelfDialog').evaluate('el => el.open')
+    reader.close()

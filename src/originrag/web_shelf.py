@@ -142,8 +142,16 @@ SCRIPT = r"""
         detail.append(textNode('h3', paper.title), textNode('p', [paper.author,paper.year,paper.journal].filter(Boolean).join(' · ')));
         if (!paper.available) detail.append(textNode('p', 'This paper is no longer in the current library. Your bookmark is still here.'));
         const actions = textNode('div', '', 'shelf-detail-actions');
+        if (paper.available && paper.pdf_url) {
+          const open = textNode('a', 'Open PDF');
+          open.href = '/api/library/pdf?paper_id=' + encodeURIComponent(paper.paper_id);
+          open.target = '_blank'; open.rel = 'noopener noreferrer';
+          actions.append(open);
+        } else if (paper.available) {
+          detail.append(textNode('p', 'No PDF is stored in the library for this paper yet.'));
+        }
         if (/^https?:\/\//.test(paper.doi_url || '')) {
-          const open = textNode('a', 'Open paper');
+          const open = textNode('a', 'Publisher page');
           open.href = paper.doi_url; open.target = '_blank'; open.rel = 'noopener noreferrer';
           actions.append(open);
         }
