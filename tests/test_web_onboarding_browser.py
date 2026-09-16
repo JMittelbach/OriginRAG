@@ -12,7 +12,7 @@ import web_chat  # noqa: E402
 
 
 @pytest.fixture
-def browser_page(tmp_path):
+def browser_page(tmp_path, request):
     state = {"user_id": "alice", "authenticated": True, "local_imports": False, "total": 0, "searchable": 0, "local_pdf": 0, "error": False, "imports": []}
     requests = []
     base = "http://127.0.0.1:39843"
@@ -112,7 +112,7 @@ def browser_page(tmp_path):
         route.fulfill(status=code, content_type="application/json", body=json.dumps(payload))
 
     with playwright.sync_playwright() as p:
-        browser = p.chromium.launch()
+        browser = p.chromium.launch(channel='chromium' if getattr(request, 'param', None) == 'pdf' else None)
         context = browser.new_context(viewport={"width": 1280, "height": 900})
         context.add_cookies([{"name": "pfempire_csrf", "value": "test-csrf", "url": base}])
         context.route("**/*", route_request)
@@ -548,6 +548,7 @@ def test_stop_before_server_acknowledges_submission(browser_page):
     assert state['jobs'][0]['state'] == 'cancelled'
 
 
+@pytest.mark.parametrize('browser_page', ['pdf'], indirect=True)
 def test_shelf_opens_local_pdf_not_publisher_page(browser_page):
     page, state, requests, tmp = browser_page
     page.locator('#guideSkip').click()
@@ -565,7 +566,7 @@ def test_shelf_opens_local_pdf_not_publisher_page(browser_page):
     with page.expect_popup() as opened:
         pdf.click()
     reader = opened.value
-    reader.wait_for_url('**/api/library/pdf?paper_id=P1')
+    reader.wait_for_url('**/api/library/pdf?paper_id=P1', wait_until='domcontentloaded', timeout=10000)
     assert '/api/library/pdf?paper_id=P1' in requests
     assert page.locator('#shelfDialog').evaluate('el => el.open')
     reader.close()
