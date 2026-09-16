@@ -11,7 +11,7 @@ PAGES = {'/workspace', '/bookshelf', '/library', '/write'}
 
 HTML = '''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Workspace · OriginRAG</title><link rel="stylesheet" href="/assets/workspace/workspace.css"><link rel="stylesheet" href="/assets/workspace/writer.css"></head>
+<title>Workspace · OriginRAG</title><link rel="stylesheet" href="/assets/workspace/workspace.css"><link rel="stylesheet" href="/assets/workspace/writer.css"><link rel="stylesheet" href="/assets/workspace/writer-layout.css"><link rel="stylesheet" href="/assets/workspace/writing-library.css"></head>
 <body><header><a class="brand" href="/workspace">Origin<span> / workspace</span></a><nav aria-label="Your workspace"><a href="/chat">OriginRAG</a><a href="/bookshelf">Bookshelf</a><a href="/library">Library</a><a href="/write">OriginWrite</a></nav></header>
 <div id="notice" role="status" aria-live="polite"></div><main id="content"></main>
 <dialog id="createDialog"><form id="createForm"><h2 id="createTitle">New project</h2><label>Name<input id="newName" maxlength="120" required autocomplete="off"></label><p id="createError" role="alert"></p><div class="actions"><button type="button" id="cancelCreate">Cancel</button><button class="primary">Create</button></div></form></dialog>
@@ -37,6 +37,12 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                 binary_response(handler, store.export(params.get('id', [''])[0]), 'application/zip', 'manuscript.zip')
             elif path == '/api/writing/bibliography':
                 handler.respond_json({'bibtex': store.collection_bib(params.get('id', [''])[0], catalogue)})
+            elif 'collection_refs' in params:
+                handler.respond_json(store.collection_references(params['collection_refs'][0], catalogue))
+            elif 'bib_preview' in params:
+                handler.respond_json(store.bibliography_preview(params['bib_preview'][0], catalogue,
+                    filename=params.get('filename', ['references.bib'])[0],
+                    connect_document=params.get('connect_document', ['0'])[0] == '1'))
             elif 'id' in params:
                 kind = params.get('kind', ['projects'])[0]
                 data = store.get(params['id'][0], kind)
@@ -52,7 +58,9 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                 project = store.get(payload.get('id'))
                 if payload.get('revision') != project['revision']:
                     raise WritingConflict('The project changed before compilation. Save or reload first.')
-                result = compile_saved_project(project, owner_directory)
+                if not isinstance(payload.get('force', False), bool):
+                    raise ValueError('Invalid compile option.')
+                result = compile_saved_project(project, owner_directory, force=payload.get('force', False))
                 result['pdf'] = base64.b64encode(result['pdf']).decode('ascii')
                 handler.respond_json(result)
             else:

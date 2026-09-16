@@ -9,9 +9,6 @@ The existing chat remains available at `/` and `/chat`.
 - **Library**: search the shared corpus and create personal project collections.
 - **OriginWrite**: edit a LaTeX project with its PDF preview alongside the source.
 
-This is an initial writing prototype, not a replacement for all collaborative
-editing features of Overleaf. The existing chat and reader are unchanged.
-
 ## Write a manuscript
 
 1. Open **OriginWrite → New manuscript**, or import a LaTeX project ZIP.
@@ -28,20 +25,88 @@ editing features of Overleaf. The existing chat and reader are unchanged.
    successfully compiled PDF. **Download draft** preserves the current buffers
    as JSON, including unsaved changes, for recovery after a save conflict.
 
-### Make the editor yours
+Unchanged successful builds can reuse a cached PDF from your own project.
+**Recompile** requests a fresh build. A bibliography error or unresolved citation
+is reported even if the LaTeX engine produced a PDF; it is not presented as a
+successful new preview.
 
-Drag the separators to resize the file sidebar and the code/PDF panes. Double-click
-a separator to reset its width, or focus it and use the arrow keys. **Files** hides
-or restores the sidebar. Use the layout selector for **Code & PDF**, **Code only**
-or **PDF only**, and **⇄** to swap their positions. On narrow screens the panes stack
-vertically. **◐** switches the code editor between light and dark. These display
-preferences are remembered in this browser, not saved as manuscript content.
+## Connect your papers
+
+Personal libraries are collections of papers from the shared corpus, private to
+your account. A paper can belong to several libraries without duplicating its
+PDF. Removing it from a personal library does not remove the corpus paper or its
+bookshelf bookmark.
+
+Inside a manuscript:
+
+1. Open **References** and choose a **Personal library**, or enter a name and
+   select **+ New personal library**.
+2. Open **Search corpus**, search by title, author or journal, and choose
+   **Add to personal library** beside the papers you need.
+3. Return to **Your library**. Place the cursor in a `.tex` file and choose
+   **Insert citation** for a paper. When its BibTeX entry is missing, a preview
+   shows the proposed bibliography changes first.
+4. Review the preview, then choose **Apply sync and insert citation**. This adds
+   the reference and inserts `\cite{...}` at your editing position.
+
+The default target is `references.bib`; another `.bib` filename can be selected.
+**Connect to the main document if it has no bibliography yet** can add the
+bibliography commands for a straightforward project. Existing bibliography
+configurations are left alone. Imported projects with custom classes, `biblatex`
+or complex includes may need their existing setup adjusted manually.
+
+To refresh references later, use **Preview bibliography sync**, inspect added
+and updated entries, then **Apply bibliography sync**. Linking a library alone
+does not rewrite the manuscript. Existing entries are retained, including those
+for papers removed from the collection. Handwritten entries and manually edited
+generated entries are never silently overwritten: conflicting keys block the
+sync until you resolve them. If another window changes the project or library,
+preview again before applying.
+
+Citation keys remain stable for the same corpus paper. The references panel
+shows each key and flags incomplete metadata. Check author names, titles,
+publication types and other fields before submission. Personal libraries can
+also be managed from **Library** and reused across manuscripts.
+
+## Start from a template
+
+Browse the scrollable **Templates** gallery from OriginWrite or an open project.
+Choose a template to create a **new manuscript** with its source, class files,
+bibliography styles and licences already included. The current project is saved
+and kept separately; selecting a template does not replace its files.
+
+The bundled gallery includes:
+
+- **Research article**: a lightweight, general-purpose LaTeX starter.
+- **Bioinformatics**: an OriginWrite starter using the official OUP authoring class.
+- **G3 · OUP authoring**: a starter using the generic OUP class offered by G3,
+  not the separate GSA template.
+
+Templates load directly inside OriginWrite, without downloading a ZIP yourself.
+The included OUP distribution retains its publisher licence and original files.
+Check the journal's author instructions before submission; a working template
+does not establish compliance with every journal requirement. Other lawfully
+obtained LaTeX templates can still be imported as project ZIPs.
+
+## Make the editor yours
+
+Drag the separators to resize the file sidebar and the code/PDF panes. Choose
+**Side by side** to adjust pane widths, or **Stacked** to adjust their heights.
+Each arrangement remembers its own proportions. Double-click the code/PDF divider
+for equal panes, or focus a separator and use the arrow keys. **Files** hides or restores the
+sidebar. **Code & PDF**, **Code only** and **PDF only** control which panes are
+visible; **⇄** swaps their positions. Small screens stack the panes automatically.
+
+Change the code font size with its zoom controls, independently of the PDF zoom.
+Neither changes the document's printed font size or page layout. **◐** switches
+the code editor between light and dark. Display preferences are remembered in
+this browser, not saved as manuscript content.
 
 The editor includes LaTeX syntax colours, line numbers, bracket matching, command
 suggestions, and separate undo history for each open file. Click a heading in
 **File outline** to jump to its source. The toolbar provides bold/italic wrapping,
-commenting, undo/redo and find/replace. Project settings and the collection-based
-bibliography controls are in the collapsible section below the file tree.
+commenting, undo/redo and find/replace. **References** connects papers to the
+manuscript; project settings remain below the file tree.
 
 - Ctrl/Cmd+F: find and replace in the current file.
 - Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z: undo / redo.
@@ -64,32 +129,9 @@ Two windows editing the same project cannot silently overwrite each other:
 a revision conflict pauses saving. Export the draft before reloading and reconcile
 its text manually. Simultaneous collaborative editing is not implemented.
 
-## Project libraries
+## Importing and exporting projects
 
-In **Library**, create a collection and add papers using **Add to collection**.
-The same paper may belong to several collections without duplicating its PDF.
-Removing a paper from a collection does not remove it from the corpus or shelf.
-
-Choose that collection in an OriginWrite project and click **Update references.bib**.
-This explicitly replaces that file, with confirmation if it is nonempty. Metadata
-changes are not silently applied to manuscripts. Citation keys are stable hashes
-of corpus paper IDs. Check imported author names, publication types and other
-bibliographic fields before submission; catalogue metadata may be incomplete.
-
-## Journal templates
-
-The template gallery links to the official author resources for
-[G3](https://academic.oup.com/G3JOURNAL/pages/author-guidelines),
-[Bioinformatics](https://academic.oup.com/bioinformatics/pages/author-guidelines),
-[Bioinformatics Advances](https://academic.oup.com/bioinformaticsadvances/pages/author-guidelines),
-[Briefings in Bioinformatics](https://academic.oup.com/bib/pages/msprep_submission), and
-[Springer Nature](https://www.springernature.com/gp/authors/campaigns/latex-author-support).
-These links were checked on 16 September 2026. Download the publisher's ZIP and
-import the source files. No publisher template is redistributed or presented as
-an OriginWrite-authored template. Consult the original licence and journal's
-instructions. The bundled generic article starter is not a journal template.
-
-The prototype accepts UTF-8 `.tex`, `.bib`, `.sty`, `.cls`, `.bst`, `.bbl`, `.txt`,
+Projects accept UTF-8 `.tex`, `.bib`, `.sty`, `.cls`, `.bst`, `.bbl`, `.txt`,
 `.md` and `.csv` files, plus `.pdf`, `.png`, `.jpg` and `.jpeg` assets. ZIPs with
 other files, symlinks, unsafe paths or duplicate paths are rejected, not partially
 imported. Remove unsupported packaging files from a copy if needed. Limits:
@@ -102,6 +144,28 @@ preview renders the first 40 PDF pages; the PDF download contains all pages.
 Editing and ZIP export work without TeX. Compilation requires isolation and
 never falls back to unrestricted execution on the host. Compiler status describes
 configuration, not a guarantee that the engine and all required packages are ready.
+The following setup is for the person hosting the application, not each user.
+
+With Tectonic installed, download the packages needed by the bundled templates
+once, using their trusted starter documents:
+
+```bash
+python scripts/prepare_writing_templates.py --warm-cache
+```
+
+For a custom cache, set `TECTONIC_CACHE_DIR` to the same directory as
+`ORIGINWRITE_TECTONIC_CACHE` when running that command. Use `--tectonic` to select
+an executable outside `PATH`. Package preparation requires internet access;
+ordinary manuscript compilation does not. Imported projects may require
+additional packages, which the host must prepare separately with trusted source.
+Use a fast local cache when the project storage is on a network filesystem.
+
+After updating cache contents, update a small `.originwrite-cache-revision` file
+inside that dedicated cache, or restart the web service, to invalidate cached
+builds. For a changed container image under the same tag, update
+`ORIGINWRITE_TEX_REVISION` or restart the service. Immutable image digests avoid
+that ambiguity. Cached builds are private to the account and project, held in
+memory for at most 30 minutes, and discarded on restart.
 
 ### macOS
 
@@ -146,7 +210,7 @@ namespace and no capabilities. Builds use `--untrusted --only-cached`, OS limits
 on CPU, address space (768 MiB), file size and open files, plus the wall-time and
 output-size watchdog. No namespace or compiler failure triggers an unrestricted
 fallback. The configured cache must contain only compiler packages, not user data.
-This is a private-server option, not a hardened public compilation service.
+This setup is intended for private servers.
 
 Alternatively, use a container engine:
 
@@ -167,8 +231,8 @@ read-only project mount, a separate output mount, no extra capabilities, no shel
 escape, and process/CPU/memory limits. Images are never automatically pulled when
 a user clicks Compile. A missing image or stopped daemon produces an error.
 Docker daemon access is a host-administration privilege. Use a dedicated service
-account and private deployment; this prototype is not a public multi-tenant
-compilation service.
+account and private deployment. Public multi-tenant hosting requires additional
+security review.
 
 One compilation runs at a time per web-server process. Additional requests get a
 visible busy response, not a hidden queue. Each build is limited to 45 seconds,
@@ -181,7 +245,7 @@ that not every existing Overleaf project will compile unchanged.
 ## Local writing and remote retrieval
 
 You can run an installation locally and keep a separate RAG installation on your
-server. This prototype does **not** synchronise accounts, collections or manuscript
+server. Separate installations do **not** synchronise accounts, collections or manuscript
 edits between them. Transfer projects explicitly with ZIP export/import. No
 background synchronisation or access to arbitrary files on your computer is enabled.
 Local file access happens only through the browser's explicit file picker.

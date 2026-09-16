@@ -70,10 +70,20 @@ export function createLatexEditor(parent, onChange, onCursor) {
       if (current === name && view.state.doc.toString() === text) return;
       if (current) documents.set(current, {state: view.state, top: view.scrollDOM.scrollTop, left: view.scrollDOM.scrollLeft});
       current = name;
-      const old = documents.get(name), reuse = old && old.state.doc.toString() === text;
-      view.setState(reuse ? old.state : state(text, editable));
-      view.scrollDOM.scrollTop = reuse ? old.top : 0;
-      view.scrollDOM.scrollLeft = reuse ? old.left : 0;
+      const old = documents.get(name);
+      let next = old?.state;
+      if (next && next.readOnly === !editable) {
+        const before = next.doc.toString();
+        if (before !== text) {
+          let from = 0, endBefore = before.length, endAfter = text.length;
+          while (from < endBefore && from < endAfter && before[from] === text[from]) from++;
+          while (endBefore > from && endAfter > from && before[endBefore - 1] === text[endAfter - 1]) { endBefore--; endAfter--; }
+          next = next.update({changes: {from, to: endBefore, insert: text.slice(from, endAfter)}}).state;
+        }
+      } else next = state(text, editable);
+      view.setState(next);
+      view.scrollDOM.scrollTop = old?.top || 0;
+      view.scrollDOM.scrollLeft = old?.left || 0;
       cursor();
     },
     jump(line) {

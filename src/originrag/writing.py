@@ -12,6 +12,8 @@ import time
 import uuid
 import zipfile
 
+from .writing_templates import list_templates, template_files
+
 TEXT_TYPES = {'.tex', '.bib', '.sty', '.cls', '.bst', '.bbl', '.txt', '.md', '.csv'}
 BINARY_TYPES = {'.png', '.jpg', '.jpeg', '.pdf'}
 MAX_PROJECT_BYTES = 12_000_000
@@ -36,18 +38,13 @@ Describe the study design and analysis.
 Present the findings.
 \section{Discussion}
 Discuss their meaning and limitations.
-\bibliographystyle{plain}
-\bibliography{references}
+% Use References to link a personal library and connect the bibliography.
+% \bibliographystyle{plain}
+% \bibliography{references}
 \end{document}
 '''
 
-TEMPLATES = [
-    {'name': 'G3: Genes, Genomes, Genetics', 'url': 'https://academic.oup.com/G3JOURNAL/pages/author-guidelines'},
-    {'name': 'Bioinformatics', 'url': 'https://academic.oup.com/bioinformatics/pages/author-guidelines'},
-    {'name': 'Bioinformatics Advances', 'url': 'https://academic.oup.com/bioinformaticsadvances/pages/author-guidelines'},
-    {'name': 'Briefings in Bioinformatics', 'url': 'https://academic.oup.com/bib/pages/msprep_submission'},
-    {'name': 'Springer Nature / Nature Portfolio', 'url': 'https://www.springernature.com/gp/authors/campaigns/latex-author-support'},
-]
+TEMPLATES = list_templates()
 
 
 class WritingConflict(ValueError):
@@ -270,17 +267,71 @@ def tex_without_comments(source):
     return ''.join(chars)
 
 
+def document_tex_sources(project):
+    pending, seen, sources, uncertain = [project['main']], set(), [], False
+    while pending:
+        name = pending.pop(0)
+        if name in seen:
+            continue
+        seen.add(name)
+        source = project['files'][name]
+        active = tex_without_comments(source)
+        end = re.search(r'\\end\s*\{document\}', active)
+        if end:
+            active = active[:end.end()]
+        sources.append((name, source, active))
+        for command in re.finditer(r'\\(?:input|include)\b', active):
+            argument = re.match(r'\s*\{\s*([^{}]+?)\s*\}', active[command.end():])
+            if not argument:
+                uncertain = True
+                continue
+            target = argument.group(1)
+            target += '' if target.endswith('.tex') else '.tex'
+            try:
+                file_name(target)
+            except ValueError:
+                uncertain = True
+                continue
+            if target not in project['files']:
+                uncertain = True
+            elif target not in seen:
+                pending.append(target)
+    return sources, uncertain
+
+
 def bibliography_connection(project, filename, connect_document):
+    sources, uncertain = document_tex_sources(project)
     source = project['files'][project['main']]
-    active = tex_without_comments(source)
-    configured = any(re.search(r'\\(?:bibliography|addbibresource|printbibliography)\b|\\begin\s*\{thebibliography\}|\\usepackage(?:\[[^\]]*\])?\s*\{[^}]*\bbiblatex\b', tex_without_comments(content))
-                     for name, content in project['files'].items() if name.lower().endswith(('.tex', '.sty', '.cls')))
-    endings = list(re.finditer(r'\\end\s*\{document\}', active))
-    needed = not configured
+    active = sources[0][2]
+    all_active = '\n'.join(item[2] for item in sources)
+    bibliography = r'\\(?:bibliography|addbibresource|printbibliography)\b|\\begin\s*\{thebibliography\}'
+    biblatex = r'\\(?:usepackage|RequirePackage)(?:\s*\[[^\]]*\])?\s*\{[^}]*\bbiblatex\b'
+    configured = re.search(bibliography + '|' + biblatex, all_active) is not None
+    for command, loaded in re.findall(r'\\(documentclass|usepackage)(?:\s*\[[^\]]*\])?\s*\{([^{}]+)\}', all_active):
+        for package in loaded.split(','):
+            name = package.strip() + ('.cls' if command == 'documentclass' else '.sty')
+            content = project['files'].get(name)
+            if content:
+                unknown_class = command == 'documentclass' and name != 'oup-authoring-template.cls'
+                if unknown_class or re.search(biblatex, tex_without_comments(content)):
+                    uncertain = True
+    needed = not (configured or uncertain)
     change = None
-    if needed and endings and connect_document:
-        pos = endings[-1].start()
-        command = '\\bibliographystyle{plain}\n\\bibliography{' + filename[:-4] + '}\n'
+    ending = re.search(r'\\end\s*\{document\}', active)
+    if needed and ending and connect_document:
+        style = 'oup-abbrvnat' if project.get('template') in {'bioinformatics', 'g3'} else 'plain'
+        for _, document, _ in sources:
+            for candidate in re.findall(r'^\s*%\s*\\bibliographystyle\s*\{([^{}]+)\}', document, re.M):
+                try:
+                    file_name(candidate + '.bst')
+                except ValueError:
+                    continue
+                if candidate in {'plain', 'abbrv', 'unsrt', 'alpha', 'plainnat', 'abbrvnat', 'unsrtnat'} or candidate + '.bst' in project['files']:
+                    style = candidate
+                    break
+        command = '' if re.search(r'\\bibliographystyle\b', all_active) else '\\bibliographystyle{' + style + '}\n'
+        command += '\\bibliography{' + filename[:-4] + '}\n'
+        pos = ending.start()
         change = {'filename': project['main'], 'before': source, 'after': source[:pos] + command + source[pos:]}
     return needed, change
 
@@ -349,13 +400,14 @@ class WritingStore:
     def snapshot(self):
         db = self.connect()
         try:
-            rows = db.execute('SELECT id, kind, data, revision FROM documents ORDER BY updated DESC').fetchall()
+            rows = db.execute('SELECT id, kind, data, revision, updated FROM documents ORDER BY updated DESC').fetchall()
             result = {'projects': [], 'collections': [], 'templates': TEMPLATES}
-            for key, kind, raw, revision in rows:
+            for key, kind, raw, revision, updated in rows:
                 data = json.loads(raw)
                 result[kind].append({'id': key, 'name': data['name'], 'revision': revision,
                                      'count': len(data.get('papers', data.get('files', {}))),
-                                     'collection': data.get('collection', '')})
+                                     'collection': data.get('collection', ''), 'updated': updated,
+                                     'template': data.get('template', '')})
             return result
         finally:
             db.close()
@@ -393,8 +445,19 @@ class WritingStore:
                     revision = 0
                     data = {'name': name.strip()}
                     if kind == 'projects':
-                        files, main = unpack_project(payload['zip']) if payload.get('zip') else ({'main.tex': STARTER, 'references.bib': ''}, 'main.tex')
-                        data.update(files=files, main=main, collection='')
+                        if payload.get('zip') and payload.get('template'):
+                            raise ValueError('Choose a template or a ZIP, not both.')
+                        if payload.get('template'):
+                            files, main = template_files(payload['template'])
+                            data['template'] = payload['template']
+                        else:
+                            files, main = unpack_project(payload['zip']) if payload.get('zip') else ({'main.tex': STARTER, 'references.bib': ''}, 'main.tex')
+                        collection = payload.get('collection', '')
+                        if collection:
+                            identifier(collection)
+                            if not db.execute("SELECT 1 FROM documents WHERE id=? AND kind='collections'", (collection,)).fetchone():
+                                raise ValueError('Personal library not found in your account.')
+                        data.update(files=files, main=main, collection=collection)
                     else:
                         data['papers'] = []
                 else:

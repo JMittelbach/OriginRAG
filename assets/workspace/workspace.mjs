@@ -1,3 +1,6 @@
+import {renderTemplates, openTemplateGallery} from './writing-templates.mjs';
+import {openReferences} from './writing-references.mjs';
+
 const $ = id => document.getElementById(id);
 const content = $('content');
 const mode = location.pathname;
@@ -14,7 +17,7 @@ async function api(path = '/api/writing', payload) {
   if (payload) headers.set('Content-Type', 'application/json');
   const r = await fetch(path, {method: payload ? 'POST' : 'GET', headers, body: payload ? JSON.stringify(payload) : undefined});
   const data = await r.json();
-  if (!r.ok) throw new Error(data.error || `Request failed (${r.status}).`);
+  if (!r.ok) { const error = new Error(data.error || `Request failed (${r.status}).`); error.status = r.status; throw error; }
   return data;
 }
 function button(text, fn, cls) { const b = node('button', text, cls); b.type = 'button'; b.onclick = () => Promise.resolve().then(fn).catch(e => notice(e.message, true)); return b; }
@@ -65,10 +68,13 @@ async function library() {
   h.append(button('+ Collection', () => askName('New collection', async name => { await api('/api/writing', {action: 'create_collection', name}); await refresh(); content.replaceChildren(); await library(); })));
   h.append(link('Find or import papers', '/chat', 'button'));
   content.insertAdjacentHTML('beforeend', '<div class="library-layout"><aside><p class="eyebrow">MY COLLECTIONS</p><div id="collections" class="collection-list"></div></aside><section><form id="searchForm" class="search"><input id="query" type="search" placeholder="Search title, author, journal…" aria-label="Search library"><button>Search</button></form><p id="libraryCount" class="muted"></p><div id="papers"></div><div class="actions"><button id="previousPapers">Previous</button><button id="nextPapers">Next</button></div></section></div>');
-  let selected = '', offset = 0, sequence = 0;
+  const params = new URLSearchParams(location.search);
+  let selected = state.collections.some(c => c.id === params.get('collection')) ? params.get('collection') : '', offset = 0, sequence = 0;
+  $('query').value = params.get('query') || '';
+  const tools = node('div', undefined, 'library-tools'); $('libraryCount').after(tools);
   const collectionButtons = [];
   for (const c of [{id: '', name: 'All papers'}, ...state.collections]) {
-    const b = button(c.name, async () => { selected = c.id; offset = 0; collectionButtons.forEach(([id, el]) => el.setAttribute('aria-pressed', String(id === selected))); await load(); });
+    const b = button(c.name, async () => { selected = c.id; offset = 0; history.replaceState(null, '', '/library' + (selected ? '?collection=' + selected : '')); collectionButtons.forEach(([id, el]) => el.setAttribute('aria-pressed', String(id === selected))); await load(); });
     b.setAttribute('aria-pressed', String(c.id === selected)); collectionButtons.push([c.id, b]); $('collections').append(b);
   }
   async function load() {
@@ -80,6 +86,13 @@ async function library() {
       data = {items: items.slice(offset, offset + 40), total: items.length};
     } else data = await api('/api/library?limit=40&offset=' + offset + '&query=' + encodeURIComponent(q));
     if (current !== sequence) return;
+    tools.replaceChildren();
+    if (collection) {
+      tools.append(node('p', collection.name + ' · private to your account', 'muted'));
+      tools.append(button('Export BibTeX', async () => { const result = await api('/api/writing?collection_refs=' + selected); download(result.bibtex, 'references.bib'); }));
+      tools.append(button('Rename', () => askName('Rename personal library', async name => { await api('/api/writing', {action: 'rename_collection', id: selected, revision: collection.revision, name}); await refresh(); content.replaceChildren(); await library(); })));
+      tools.append(button('Write with this library', () => newManuscript({id: 'article'}, selected)));
+    }
     $('papers').replaceChildren(); $('libraryCount').textContent = `${data.total} papers`; $('previousPapers').disabled = offset === 0; $('nextPapers').disabled = offset + 40 >= data.total;
     for (const p of data.items) {
       const row = node('article', undefined, 'paper'); row.append(node('h3', p.title), node('p', [p.author, p.year, p.journal].filter(Boolean).join(' · ')));
@@ -103,22 +116,56 @@ async function library() {
   await load();
 }
 
+function newManuscript(template = {id: 'article'}, collection = '') {
+  askName(template.name ? `New manuscript · ${template.name}` : 'New manuscript', async name => {
+    if (project) await save();
+    const created = await api('/api/writing', {action: 'create_project', name, template: template.id, collection});
+    location.href = '/write?id=' + created.id;
+  });
+}
 async function projects() {
-  const h = heading('OriginWrite', 'A quiet space to turn your research into a manuscript.');
-  h.append(button('+ New manuscript', () => askName('New manuscript', async name => { const p = await api('/api/writing', {action: 'create_project', name}); location.href = '/write?id=' + p.id; }), 'primary'));
+  content.classList.add('write-home');
+  const h = node('div', undefined, 'write-heading'), title = node('div'), actions = node('div', undefined, 'desk-actions');
+  title.append(node('p', 'YOUR WRITING DESK', 'eyebrow'), node('h1', 'OriginWrite'), node('p', 'Your manuscripts, templates and personal libraries.', 'muted'));
+  actions.append(button('+ New manuscript', () => newManuscript(), 'primary')); h.append(title, actions); content.append(h);
   const upload = node('input'); upload.type = 'file'; upload.accept = '.zip'; upload.hidden = true; content.append(upload);
-  h.append(button('Import LaTeX ZIP', () => upload.click()));
+  actions.append(button('Import LaTeX ZIP', () => upload.click()));
   upload.onchange = async () => {
     const f = upload.files[0]; if (!f) return;
     if (f.size > 12000000) return notice('Choose a ZIP under 12 MB.', true);
     askName('Import manuscript', async name => { const bytes = await f.arrayBuffer(); const zip = bytes64(bytes); const p = await api('/api/writing', {action: 'create_project', name, zip}); location.href = '/write?id=' + p.id; });
   };
-  const cards = node('div', undefined, 'cards'); content.append(cards);
-  for (const p of state.projects) { const c = link('', '/write?id=' + p.id, 'card'); c.append(node('h2', p.name), node('p', `${p.count} files · revision ${p.revision}`)); cards.append(c); }
-  if (!state.projects.length) cards.append(node('p', 'Start a manuscript or import an existing LaTeX project.', 'muted'));
-  const templates = node('section', undefined, 'template-list'); templates.style.marginTop = '40px'; templates.append(node('h2', 'Journal templates'), node('p', 'Get the current template from the publisher, then import its LaTeX ZIP. These are official-source links, not bundled or modified journal templates.', 'muted'));
-  for (const t of state.templates) { const a = link(t.name + ' ↗', t.url); a.target = '_blank'; a.rel = 'noopener noreferrer'; templates.append(a); }
-  templates.append(node('p', 'Check the journal’s instructions. Package and engine requirements differ between journals.', 'hint')); content.append(templates);
+  const tabs = node('div', undefined, 'desk-tabs'), panel = node('section'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Writing desk'); panel.id = 'deskPanel'; panel.setAttribute('role', 'tabpanel'); content.append(tabs, panel);
+  function show(section) {
+    for (const tab of tabs.children) tab.setAttribute('aria-selected', String(tab.dataset.section === section));
+    panel.replaceChildren();
+    if (section === 'templates') { renderTemplates(panel, state.templates, item => newManuscript(item)); return; }
+    if (section === 'libraries') {
+      panel.append(node('p', 'Gather papers from the corpus into your own libraries, then link them to a manuscript.', 'muted'));
+      panel.append(button('+ Personal library', () => askName('New personal library', async name => { await api('/api/writing', {action: 'create_collection', name}); await refresh(); show('libraries'); })));
+      const cards = node('div', undefined, 'cards'); panel.append(cards);
+      for (const c of state.collections) {
+        const card = node('article', undefined, 'card personal-library-card'), links = node('div', undefined, 'actions');
+        card.append(node('h3', c.name), node('p', `${c.count} papers · private to your account`));
+        links.append(link('Open library', '/library?collection=' + c.id, 'button'), button('Start manuscript', () => newManuscript({id: 'article'}, c.id))); card.append(links); cards.append(card);
+      }
+      return;
+    }
+    const list = node('div', undefined, 'manuscript-list'); panel.append(list);
+    for (const p of state.projects) {
+      const row = link('', '/write?id=' + p.id, 'manuscript-row'), text = node('div');
+      const date = p.updated ? new Date(p.updated * 1000) : null;
+      text.append(node('h3', p.name), node('p', `${p.count} files${date && !Number.isNaN(date.valueOf()) ? ' · Updated ' + date.toLocaleDateString() : ''}`));
+      row.append(node('span', 'TₑX', 'manuscript-icon'), text, node('span', 'Open →')); list.append(row);
+    }
+    if (!state.projects.length) {
+      const empty = node('div', undefined, 'desk-empty'); empty.append(node('h2', 'Start with a blank page. Or a head start.'), node('p', 'Choose a ready-to-compile template, or import your existing LaTeX project.', 'muted'), button('Browse templates', () => show('templates'))); list.append(empty);
+    }
+  }
+  for (const [id, label] of [['manuscripts', 'Manuscripts'], ['templates', 'Templates'], ['libraries', 'My libraries']]) {
+    const tab = button(label, () => show(id)); tab.dataset.section = id; tab.setAttribute('role', 'tab'); tab.setAttribute('aria-controls', panel.id); tabs.append(tab);
+  }
+  show('manuscripts');
 }
 function bytes64(buffer) { const bytes = new Uint8Array(buffer); let raw = ''; for (let i = 0; i < bytes.length; i += 8192) raw += String.fromCharCode(...bytes.subarray(i, i + 8192)); return btoa(raw); }
 function outline() {
@@ -195,14 +242,14 @@ async function renderPDF(bytes) {
   if (pdfDocument.numPages > 40) $('pdfPages').append(node('p', 'Preview shows the first 40 pages. Download the PDF for all pages.'));
   $('pdfCount').textContent = `${pdfDocument.numPages} ${pdfDocument.numPages === 1 ? 'page' : 'pages'}`;
 }
-async function compile() {
+async function compile(force = false, retry = 0) {
   if (compiling) return;
   compiling = true; $('compile').disabled = true;
   $('compileCode').disabled = true;
   let startedVersion = editVersion;
   $('previewState').textContent = 'Compiling…';
   try {
-    await save(); const version = editVersion; startedVersion = version; const result = await api('/api/writing', {action: 'compile', id: project.id, revision: project.revision});
+    await save(); const version = editVersion; startedVersion = version; const result = await api('/api/writing', {action: 'compile', id: project.id, revision: project.revision, force});
     $('compileLog').textContent = result.log || 'Compilation completed.'; $('problems').replaceChildren();
     for (const p of result.diagnostics) $('problems').append(button(`${p.file ? p.file + ':' + p.line + ' · ' : ''}${p.message}`, () => {
       if (!(p.file in project.files) || !p.line) return; selectFile(p.file); writerLayout.showCode(); sourceEditor.jump(p.line);
@@ -211,8 +258,13 @@ async function compile() {
     const bytes = Uint8Array.from(atob(result.pdf), c => c.charCodeAt(0));
     if (pdfURL) URL.revokeObjectURL(pdfURL); pdfURL = URL.createObjectURL(new Blob([bytes], {type: 'application/pdf'})); $('downloadPDF').href = pdfURL; $('downloadPDF').hidden = false;
     await renderPDF(bytes);
-    $('previewState').textContent = version === editVersion ? `PDF · revision ${result.revision} · ${result.seconds}s` : 'Previous revision · new changes pending'; notice(result.diagnostics.length ? 'PDF compiled. Review the warnings below.' : 'PDF compiled.');
-  } catch (e) { $('previewState').textContent = 'Preview not updated'; throw e; }
+    $('previewState').textContent = version === editVersion ? `PDF · revision ${result.revision} · ${result.cached ? 'saved build · ' : ''}${result.seconds}s` : 'Previous revision · new changes pending'; notice(result.diagnostics.length ? 'PDF compiled. Review the warnings below.' : 'PDF ready.');
+  } catch (e) {
+    if (e.status === 409 && /another manuscript/i.test(e.message) && !force && $('autoCompile').checked && retry < 3) {
+      $('previewState').textContent = 'Compiler busy · retrying shortly';
+      clearTimeout(compileTimer); compileTimer = setTimeout(() => compile(false, retry + 1).catch(error => notice(error.message, true)), 2500 * (retry + 1));
+    } else { $('previewState').textContent = 'Preview not updated'; throw e; }
+  }
   finally { compiling = false; $('compile').disabled = $('compileCode').disabled = !state.compiler.configured; if (!saveBlocked && $('autoCompile').checked && editVersion !== startedVersion) { clearTimeout(compileTimer); compileTimer = setTimeout(() => compile().catch(e => notice(e.message, true)), 600); } }
 }
 
@@ -224,8 +276,11 @@ async function editor(id) {
       <a href="/write" class="button back-projects" title="Back to projects">← Projects</a>
       <div class="project-heading"><h1 id="projectTitle"></h1><span id="savedState" role="status">All changes saved</span></div>
       <div class="writer-actions">
+        <button id="referenceButton" title="Personal library, citations and bibliography">References</button>
+        <button id="templateButton" title="Start a new manuscript from a template">Templates</button>
         <button id="toggleFiles" aria-controls="filesPane" aria-expanded="true" title="Show or hide the file sidebar">☷ <span>Files</span></button>
         <select id="layoutMode" aria-label="Editor layout"><option value="split">Code & PDF</option><option value="code">Code only</option><option value="pdf">PDF only</option></select>
+        <select id="paneDirection" aria-label="Pane arrangement"><option value="side">Side by side</option><option value="stack">Stacked</option></select>
         <button id="swapPanes" title="Swap code and PDF positions" aria-label="Swap code and PDF positions">⇄</button>
         <button id="editorTheme" title="Toggle dark code editor" aria-label="Dark code editor" aria-pressed="false">◐</button>
         <details class="writer-menu"><summary aria-label="Project options" title="Project options">•••</summary><div>
@@ -242,7 +297,7 @@ async function editor(id) {
         <details class="project-settings"><summary>Project settings & references</summary>
           <label>Main document<select id="mainFile"></select></label>
           <label>Project library<select id="projectLibrary"><option value="">No collection</option></select></label>
-          <button id="updateBibliography">Update references.bib</button><p class="hint">Replaces references.bib with this collection’s metadata. Check imported citation details.</p>
+          <button id="updateBibliography">Manage references</button><p class="hint">Preview bibliography changes before applying them. Your existing entries are kept.</p>
         </details>
       </aside>
       <div id="filesResize" class="splitter files-resize" role="separator" tabindex="0" aria-label="Resize file sidebar" aria-controls="filesPane" aria-orientation="vertical" aria-valuemin="160" aria-valuemax="400" aria-valuenow="230" title="Drag to resize files · double-click to reset"></div>
@@ -252,6 +307,10 @@ async function editor(id) {
           <button data-edit-command="undo" title="Undo (Ctrl/Cmd+Z)" aria-label="Undo">↶</button><button data-edit-command="redo" title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo">↷</button><span class="tool-divider"></span>
           <button data-edit-command="bold" title="Bold selection" aria-label="Bold selection"><b>B</b></button><button data-edit-command="italic" title="Italic selection" aria-label="Italic selection"><i>I</i></button><button data-edit-command="comment" title="Toggle comment (Ctrl/Cmd+/)" aria-label="Toggle comment">%</button>
           <button data-edit-command="search" class="search-code" title="Find and replace (Ctrl/Cmd+F)" aria-label="Find and replace">⌕ <span>Find</span></button>
+          <button id="insertCitation" title="Insert a citation from your library" aria-label="Insert citation">Cite</button>
+          <button id="codeZoomOut" title="Smaller code" aria-label="Decrease code zoom">−</button>
+          <select id="codeZoom" aria-label="Code font size"><option value="11">11 px</option><option value="12">12 px</option><option value="13">13 px</option><option value="14" selected>14 px</option><option value="16">16 px</option><option value="18">18 px</option><option value="20">20 px</option><option value="24">24 px</option></select>
+          <button id="codeZoomIn" title="Larger code" aria-label="Increase code zoom">+</button>
           <button id="compileCode" title="Recompile (Ctrl/Cmd+Enter)" aria-label="Recompile manuscript">▶</button>
         </div>
         <div id="source" class="code-editor"></div><div class="code-status"><span>LaTeX</span><span id="cursorPosition">Ln 1, Col 1</span><span>UTF-8</span></div>
@@ -259,7 +318,9 @@ async function editor(id) {
       <div id="panesResize" class="splitter panes-resize" role="separator" tabindex="0" aria-label="Resize code and PDF panes" aria-controls="sourcePane previewPane" aria-orientation="vertical" aria-valuemin="20" aria-valuemax="80" aria-valuenow="50" title="Drag to resize code and PDF · double-click for equal widths"></div>
       <section class="preview-pane" id="previewPane" aria-label="PDF preview">
         <div class="pdf-toolbar"><button id="compile" class="primary">▶ Recompile</button><label class="auto-compile"><input id="autoCompile" type="checkbox">Auto</label><a id="downloadPDF" class="button" download="manuscript.pdf" title="Download PDF" aria-label="Download PDF" hidden>↓</a>
-          <select id="pdfZoom" aria-label="PDF zoom"><option value="fit">Fit width</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option></select>
+          <button id="pdfZoomOut" title="Zoom out PDF" aria-label="Decrease PDF zoom">−</button>
+          <select id="pdfZoom" aria-label="PDF zoom"><option value="fit">Fit width</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option></select>
+          <button id="pdfZoomIn" title="Zoom in PDF" aria-label="Increase PDF zoom">+</button>
         </div><div id="pdfPages"><div class="pdf-empty"><span aria-hidden="true">▤</span><h2>Your manuscript, on paper</h2><p>Recompile to bring your LaTeX to life.</p></div></div>
         <div class="pdf-status"><span id="previewState" role="status">Compile to see your PDF</span><span id="pdfCount"></span></div>
       </section>
@@ -269,6 +330,12 @@ async function editor(id) {
   writerLayout = setupWriterLayout(() => sourceEditor.measure());
   for (const b of document.querySelectorAll('[data-edit-command]')) b.onclick = () => sourceEditor.command(b.dataset.editCommand);
   $('pdfZoom').onchange = zoomPDF;
+  for (const [id, delta] of [['pdfZoomOut', -1], ['pdfZoomIn', 1]]) $(id).onclick = () => {
+    const choices = [.5, .75, 1, 1.25, 1.5, 2, 3], select = $('pdfZoom');
+    const first = $('pdfPages').querySelector('canvas');
+    const current = select.value === 'fit' ? (first ? first.clientWidth / Number(first.dataset.pageWidth) : 1) : Number(select.value);
+    select.value = String(delta > 0 ? choices.find(value => value > current + .001) || 3 : choices.findLast(value => value < current - .001) || .5); zoomPDF();
+  };
   $('projectTitle').textContent = project.name; activeFile = project.main; fileList();
   state.collections.forEach(c => $('projectLibrary').append(new Option(c.name, c.id))); $('projectLibrary').value = project.collection;
   $('projectLibrary').onchange = () => { project.collection = $('projectLibrary').value; changed(); };
@@ -276,17 +343,31 @@ async function editor(id) {
   $('addFile').onclick = () => askName('New text file (e.g. sections/methods.tex)', async name => { if (!textTypes.test(name) || !/^[A-Za-z0-9_][A-Za-z0-9_./ -]*$/.test(name) || name.split('/').some(p => !p || p.startsWith('.'))) throw new Error('Choose a safe relative text filename.'); if (name in project.files) throw new Error('That file already exists.'); project.files[name] = ''; activeFile = name; fileList(); changed(); });
   $('uploadFile').onclick = () => $('fileUpload').click();
   $('fileUpload').onchange = async () => { try { for (const f of $('fileUpload').files) { if (f.size > 8000000) throw new Error('Individual uploads are limited to 8 MB.'); if (!/\.(tex|bib|sty|cls|bst|bbl|txt|md|csv|png|jpg|jpeg|pdf)$/i.test(f.name)) throw new Error('Unsupported file type.'); if (f.name in project.files) throw new Error(`${f.name} already exists. Edit it or choose another name.`); project.files[f.name] = textTypes.test(f.name) ? await f.text() : bytes64(await f.arrayBuffer()); changed(); } fileList(); } catch (e) { notice(e.message, true); } };
-  $('updateBibliography').onclick = async () => { try { if (!project.collection) throw new Error('Choose a project library first.'); if (project.files['references.bib']?.trim() && !confirm('Replace references.bib with the selected collection? Export a ZIP first to preserve manual edits.')) return; const result = await api('/api/writing/bibliography?id=' + project.collection); project.files['references.bib'] = result.bibtex; activeFile = 'references.bib'; fileList(); changed(); } catch (e) { notice(e.message, true); } };
+  const references = () => openReferences({api, getProject: () => project, save, notice,
+    linkCollection: async id => {
+      project.collection = id; changed(); await save(); await refresh();
+      $('projectLibrary').replaceChildren(new Option('No collection', ''));
+      state.collections.forEach(c => $('projectLibrary').append(new Option(c.name, c.id))); $('projectLibrary').value = id;
+    },
+    acceptProject: updated => {
+      clearTimeout(saveTimer); Object.assign(project, updated); savedVersion = ++editVersion; fileList();
+      $('savedState').textContent = 'All changes saved'; $('previewState').textContent = 'Bibliography updated · recompile to see changes';
+      if ($('autoCompile').checked) { clearTimeout(compileTimer); compileTimer = setTimeout(() => compile().catch(e => notice(e.message, true)), 1600); }
+    },
+    insertCitation: key => { if (!/\.tex$/i.test(activeFile)) selectFile(project.main); writerLayout.showCode(); return sourceEditor.insertCitation(key); }
+  }).catch(e => notice(e.message, true));
+  $('referenceButton').onclick = $('insertCitation').onclick = $('updateBibliography').onclick = references;
+  $('templateButton').onclick = () => openTemplateGallery(state.templates, item => newManuscript(item, project.collection));
   $('draft').onclick = () => download(JSON.stringify({name: project.name, main: project.main, files: project.files}, null, 2), 'originwrite-draft.json', 'application/json');
   $('exportZip').href = '/api/writing/export?id=' + project.id;
   $('exportZip').onclick = async e => { e.preventDefault(); try { await save(); location.href = $('exportZip').href; } catch (err) { notice(err.message, true); } };
   $('compile').disabled = $('compileCode').disabled = !state.compiler.configured; $('autoCompile').disabled = !state.compiler.configured;
-  $('compile').onclick = () => { $('previewState').textContent = 'Compiling…'; compile().catch(e => notice(e.message, true)); };
+  $('compile').onclick = () => { $('previewState').textContent = 'Compiling…'; compile(true).catch(e => notice(e.message, true)); };
   $('compileCode').onclick = $('compile').onclick;
   $('autoCompile').onchange = () => { clearTimeout(compileTimer); if ($('autoCompile').checked) compile().catch(e => notice(e.message, true)); };
   if (!state.compiler.configured) notice(state.compiler.message);
   document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save().catch(e => notice(e.message, true)); } });
-  document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && state.compiler.configured) { e.preventDefault(); compile().catch(e => notice(e.message, true)); } });
+  document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && state.compiler.configured) { e.preventDefault(); compile(true).catch(e => notice(e.message, true)); } });
   window.addEventListener('beforeunload', e => { if (editVersion !== savedVersion) { e.preventDefault(); e.returnValue = ''; } });
 }
 

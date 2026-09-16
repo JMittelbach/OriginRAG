@@ -144,7 +144,7 @@ def workspace_server(tmp_path, monkeypatch):
     import test_web_chat as h
     web = h.web_chat
     root = Path(__file__).resolve().parents[1]
-    for folder in ['workspace', 'vendor/pdfjs']:
+    for folder in ['workspace', 'vendor/pdfjs', 'writing_templates']:
         shutil.copytree(root / 'assets' / folder, tmp_path / 'assets' / folder, ignore=shutil.ignore_patterns('editor-build'))
     monkeypatch.setattr(web, 'REPO_ROOT', tmp_path)
     monkeypatch.setattr(web, 'library_catalog', lambda: CATALOGUE)
@@ -187,7 +187,12 @@ def test_browser_project_library_edit_and_reopen(workspace_server):
         playwright.expect(page.locator('#savedState')).to_have_text('All changes saved')
         page.locator('.project-settings > summary').click()
         page.locator('#projectLibrary').select_option(label='My study')
-        page.get_by_role('button', name='Update references.bib').click()
+        page.get_by_role('button', name='Manage references').click()
+        page.locator('#referencesPreview').click()
+        page.locator('#referencesApply').click()
+        playwright.expect(page.locator('#notice')).to_contain_text('Bibliography synced')
+        page.locator('#referencesClose').click()
+        page.locator('[data-file="references.bib"]').click()
         playwright.expect(page.locator('#source .cm-content')).to_contain_text('A study')
         playwright.expect(page.locator('#savedState')).to_have_text('All changes saved')
         page.reload()
