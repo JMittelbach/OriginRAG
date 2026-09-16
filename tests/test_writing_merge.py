@@ -181,3 +181,13 @@ def test_legacy_database_without_hashes_is_migrated_on_first_save(tmp_path):
     store.change(source_request(project, **{'main.tex': project['files']['main.tex'].replace('first', 'FIRST')}), [])
     latest = store.change(source_request(project, **{'main.tex': project['files']['main.tex'].replace('final', 'FINAL')}), [])
     assert 'FIRST' in latest['files']['main.tex'] and 'FINAL' in latest['files']['main.tex']
+
+
+def test_revision_poll_uses_a_covering_index_without_loading_source(tmp_path):
+    store = WritingStore(tmp_path)
+    project = manuscript(store)
+    with sqlite3.connect(store.path) as db:
+        plan = db.execute("EXPLAIN QUERY PLAN SELECT revision FROM documents INDEXED BY documents_revision "
+                          "WHERE id=? AND kind='projects'", (project['id'],)).fetchall()
+    assert 'COVERING INDEX documents_revision' in str(plan)
+    assert store.revision(project['id']) == project['revision']

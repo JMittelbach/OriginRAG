@@ -397,6 +397,7 @@ class WritingStore:
         os.chmod(self.path, 0o600)
         db.execute('CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, kind TEXT, data TEXT, revision INTEGER, updated REAL)')
         db.execute('CREATE INDEX IF NOT EXISTS documents_updated ON documents(updated DESC)')
+        db.execute('CREATE INDEX IF NOT EXISTS documents_revision ON documents(id, kind, revision)')
         db.execute('CREATE TABLE IF NOT EXISTS writing_bases (document_id TEXT, revision INTEGER, digest TEXT NOT NULL, PRIMARY KEY(document_id, revision))')
         return db
 
@@ -409,7 +410,7 @@ class WritingStore:
     def revision(self, key):
         db = self.connect()
         try:
-            row = db.execute("SELECT revision FROM documents WHERE id=? AND kind='projects'", (identifier(key),)).fetchone()
+            row = db.execute("SELECT revision FROM documents INDEXED BY documents_revision WHERE id=? AND kind='projects'", (identifier(key),)).fetchone()
             if not row:
                 raise KeyError('Project not found.')
             return row[0]

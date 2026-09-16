@@ -41,7 +41,7 @@ function overlapping(a, b, spans) {
 
 export function rebaseDraft(base, draft, remote, diff) {
   const conflicts = [], files = {};
-  const budget = {work: 2000000};
+  const budget = {work: 2000000, files: 8};
   const scalar = (name, before, ours, theirs) => {
     if (ours === theirs || theirs === before) return ours;
     if (ours === before) return theirs;
@@ -54,13 +54,15 @@ export function rebaseDraft(base, draft, remote, diff) {
     else if (ours === before) value = theirs;
     else if ([before, ours, theirs].every(item => typeof item === 'string') && textFiles.test(name)) {
       budget.work -= before.length + ours.length + theirs.length;
-      if (budget.work < 0) throw new Error('These concurrent edits exceed the safe merge limit. Your draft has been kept.');
+      if (budget.work < 0 || --budget.files < 0) throw new Error('These concurrent edits exceed the safe merge limit. Your draft has been kept.');
       const left = diff(before, ours), right = diff(before, theirs);
       if (left === null || right === null) { conflicts.push(name); continue; }
       const spans = new Map([...left, ...right].map(change => [change, ambiguitySpan(before, change, budget)]));
       const combined = [...left];
       let conflict = false;
       for (const change of right) {
+        budget.work -= left.length;
+        if (budget.work < 0) throw new Error('These concurrent edits exceed the safe merge limit. Your draft has been kept.');
         const duplicate = left.find(other => other.from === change.from && other.to === change.to && other.insert === change.insert);
         if (duplicate) {
           const span = spans.get(duplicate);
@@ -114,13 +116,18 @@ export async function openSharing({api, project, changed, notice}) {
   let current, ticket = 0, timer, closed = false, busy = false;
   dialog.addEventListener('close', () => { closed = true; ticket++; clearTimeout(timer); dialog.remove(); });
   const person = user => user.display_name || user.username;
+  const identity = user => `${person(user)} (@${user.username})`;
+  function personAction(label, user, run) {
+    const control = action(label + ' ' + person(user), run);
+    control.setAttribute('aria-label', label + ' ' + identity(user)); control.title = label + ' @' + user.username; return control;
+  }
   function render(data) {
     current = data; changed(data.collaboration); members.replaceChildren();
-    const owner = element('p', person(data.collaboration.owner) + ' · Owner'); members.append(owner);
+    const owner = element('p', identity(data.collaboration.owner) + ' · Owner'); members.append(owner);
     for (const user of data.members) {
       const row = element('div', undefined, 'sharing-person');
-      row.append(element('span', person(user) + ' · Editor'));
-      if (data.collaboration.can_manage) row.append(action('Remove ' + person(user), () => mutate('remove', user.user_id)));
+      row.append(element('span', identity(user) + ' · Editor'));
+      if (data.collaboration.can_manage) row.append(personAction('Remove', user, () => mutate('remove', user.user_id)));
       members.append(row);
     }
     if (!data.members.length) members.append(element('p', 'This manuscript is private to you.', 'sharing-muted'));
@@ -152,7 +159,7 @@ export async function openSharing({api, project, changed, notice}) {
         if (closed || sequence !== ticket) return;
         const users = data.users.filter(user => user.user_id !== current.collaboration.owner.user_id && !current.members.some(member => member.user_id === user.user_id));
         for (const user of users) {
-          const row = element('div', undefined, 'sharing-person'); row.append(element('span', person(user)), action('Add ' + person(user), () => mutate('add', user.user_id))); results.append(row);
+          const row = element('div', undefined, 'sharing-person'); row.append(element('span', identity(user)), personAction('Add', user, () => mutate('add', user.user_id))); results.append(row);
         }
         if (!users.length) results.append(element('p', 'No additional matching accounts.', 'sharing-muted'));
       } catch (problem) { if (!closed && sequence === ticket) error.textContent = problem.message; }
@@ -171,6 +178,7 @@ export function openProjectCitations(project, insert) {
   const header = element('div', undefined, 'sharing-heading'); header.append(title, action('Close', () => dialog.close()));
   const search = element('input'); search.type = 'search'; search.placeholder = 'Filter citation keys'; search.setAttribute('aria-label', 'Filter citation keys');
   const list = element('div', undefined, 'sharing-results');
+  const error = element('p', '', 'sharing-error'); error.setAttribute('role', 'alert');
   const entries = [];
   for (const [file, source] of Object.entries(project.files)) if (/\.bib$/i.test(file)) {
     for (const match of source.matchAll(/^\s*@(?:article|book|booklet|inbook|incollection|inproceedings|conference|manual|mastersthesis|misc|phdthesis|proceedings|techreport|unpublished|online|report|dataset|software)\s*[({]\s*([^\s,{}()]+)\s*,/gim)) entries.push({key: match[1], file});
@@ -178,10 +186,13 @@ export function openProjectCitations(project, insert) {
   const render = () => {
     list.replaceChildren();
     for (const item of entries.filter(entry => entry.key.toLowerCase().includes(search.value.toLowerCase()))) {
-      const row = element('div', undefined, 'sharing-person'); row.append(element('code', item.key), action('Insert citation ' + item.key, () => { insert(item.key); dialog.close(); })); list.append(row);
+      const row = element('div', undefined, 'sharing-person'); row.append(element('code', item.key), action('Insert citation ' + item.key, () => {
+        if (insert(item.key) === false) { error.textContent = 'Open a LaTeX file and use a citation key containing letters, numbers, dots, colons, underscores or hyphens.'; return; }
+        dialog.close();
+      })); list.append(row);
     }
     if (!list.childElementCount) list.append(element('p', 'No matching entries in the saved project bibliography.', 'sharing-muted'));
   };
-  dialog.append(header, element('p', 'The project owner manages its linked personal library. You can use and edit the shared BibTeX files.', 'sharing-muted'), search, list);
+  dialog.append(header, element('p', 'The project owner manages its linked personal library. You can use and edit the shared BibTeX files.', 'sharing-muted'), error, search, list);
   document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove()); search.oninput = render; render(); dialog.showModal(); search.focus();
 }

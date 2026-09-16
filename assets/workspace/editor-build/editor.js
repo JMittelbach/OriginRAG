@@ -162,6 +162,7 @@ export function createLatexEditor(parent, onChange, onCursor) {
     },
     applyRemote,
     isComposing() { return view.compositionStarted; },
+    destroy() { view.destroy(); documents.clear(); current = ''; },
     jump(line) {
       const target = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines)));
       view.dispatch({selection: {anchor: target.from, head: target.to}, effects: EditorView.scrollIntoView(target.from, {y: 'center'})});

@@ -23,6 +23,7 @@ def test_pdf_preview_keeps_four_canvases_and_releases_distant_pages(workspace_se
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(base + '/workspace')
+        playwright.expect(page.locator('#modules .card')).to_have_count(4)
         page.evaluate('''async encoded => {
           const {createPDFPreview} = await import('/assets/workspace/pdf-preview.mjs');
           document.querySelector('#content').replaceChildren();

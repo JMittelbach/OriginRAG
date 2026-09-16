@@ -221,7 +221,8 @@ function adoptProject(updated, accepted = updated, dirty = false) {
   const treeChanged = name !== activeFile || project.main !== updated.main || Object.keys(project.files).sort().join('\0') !== Object.keys(updated.files).sort().join('\0');
   const editable = textTypes.test(name);
   if (!sourceEditor.open(name, editable ? updated.files[name] : 'Binary asset. Included in compilation and ZIP export.', editable)) {
-    throw new Error('These changes are too large to safely apply in the open editor. Your draft has been kept.');
+    const error = new Error('These changes are too large to safely apply in the open editor. Your draft has been kept.');
+    error.syncConflict = true; throw error;
   }
   project = updated; serverProject = snapshotProject(accepted); activeFile = name;
   editVersion++;
@@ -281,7 +282,8 @@ async function synchronizeProject() {
     syncFailures = 0; if (!saveBlocked) $('syncState').textContent = project.collaboration.shared ? 'Live sync' : '';
   } catch (error) {
     syncFailures++;
-    if ([401, 403, 404].includes(error.status)) pauseSaving(new Error('Project access is no longer available. Your local draft is still here.'));
+    if (error.syncConflict) pauseSaving(error);
+    else if ([401, 403, 404].includes(error.status)) pauseSaving(new Error('Project access is no longer available. Your local draft is still here.'));
     else if (!saveBlocked) $('syncState').textContent = 'Sync reconnecting…';
   } finally { syncBusy = false; scheduleSync(); }
 }
@@ -419,7 +421,11 @@ async function editor(id) {
   $('addFile').onclick = () => askName('New text file (e.g. sections/methods.tex)', async name => { if (!textTypes.test(name) || !/^[A-Za-z0-9_][A-Za-z0-9_./ -]*$/.test(name) || name.split('/').some(p => !p || p.startsWith('.'))) throw new Error('Choose a safe relative text filename.'); if (name in project.files) throw new Error('That file already exists.'); project.files[name] = ''; activeFile = name; fileList(); changed(); });
   $('uploadFile').onclick = () => $('fileUpload').click();
   $('fileUpload').onchange = async () => { try { for (const f of $('fileUpload').files) { if (f.size > 8000000) throw new Error('Individual uploads are limited to 8 MB.'); if (!/\.(tex|bib|sty|cls|bst|bbl|txt|md|csv|png|jpg|jpeg|pdf)$/i.test(f.name)) throw new Error('Unsupported file type.'); if (f.name in project.files) throw new Error(`${f.name} already exists. Edit it or choose another name.`); project.files[f.name] = textTypes.test(f.name) ? await f.text() : bytes64(await f.arrayBuffer()); changed(); } fileList(); } catch (e) { notice(e.message, true); } };
-  const insertCitation = key => { if (!/\.tex$/i.test(activeFile)) selectFile(project.main); writerLayout.showCode(); return sourceEditor.insertCitation(key); };
+  const insertCitation = key => {
+    if (!/\.tex$/i.test(activeFile)) selectFile(project.main);
+    if (!/\.tex$/i.test(activeFile)) return false;
+    writerLayout.showCode(); return sourceEditor.insertCitation(key);
+  };
   const references = () => {
     if (project.collaboration?.role === 'editor') { openProjectCitations(project, insertCitation); return; }
     return openReferences({api, getProject: () => project, save, notice,

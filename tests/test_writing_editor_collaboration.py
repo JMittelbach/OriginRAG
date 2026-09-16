@@ -170,6 +170,41 @@ def test_remote_update_preserves_scroll_and_defers_ime_composition(workspace_ser
         browser.close()
 
 
+def test_destroy_and_recreate_editor_discards_only_confirmed_old_draft_state(workspace_server):
+    playwright = pytest.importorskip('playwright.sync_api')
+    base, _ = workspace_server
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        open_test_editor(page, base)
+        page.evaluate("() => {editor.open('main.tex', 'Initial text'); editor.jump(1);}")
+        page.keyboard.press('ArrowRight')
+        page.keyboard.insert_text(' unsaved')
+        assert page.evaluate('changes.length') == 1
+        page.evaluate("() => {editor.open('other.tex', 'Cached draft'); editor.destroy();}")
+        assert page.locator('.cm-editor').count() == 0
+        page.evaluate('''async () => {
+          const {createLatexEditor} = await import('/assets/workspace/latex-editor.mjs');
+          window.newChanges = [];
+          window.editor = createLatexEditor(document.querySelector('#test-editor'),
+            (name, text) => newChanges.push({name, text}), () => {});
+          editor.open('main.tex', 'Explicitly reloaded saved version');
+          editor.command('undo');
+        }''')
+        assert page.locator('.cm-editor').count() == 1
+        assert page.locator('.cm-content').inner_text() == 'Explicitly reloaded saved version'
+        assert page.evaluate('newChanges.length') == 0
+        page.evaluate("editor.jump(1)")
+        page.keyboard.press('ArrowRight')
+        page.keyboard.insert_text(' new edit')
+        assert page.evaluate('newChanges.length') == 1
+        assert page.evaluate('changes.length') == 1
+        assert not errors
+        browser.close()
+
+
 def test_zip_export_reimport_preserves_utf8_nested_sources_and_binary_figures(tmp_path):
     store = WritingStore(tmp_path / 'owner')
     project = store.change({'action': 'create_project', 'name': 'Export original'}, [])
