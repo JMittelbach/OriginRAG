@@ -143,8 +143,8 @@ SCRIPT = r"""
         if (!paper.available) detail.append(textNode('p', 'This paper is no longer in the current library. Your bookmark is still here.'));
         const actions = textNode('div', '', 'shelf-detail-actions');
         if (paper.available && paper.pdf_url) {
-          const open = textNode('a', 'Open PDF');
-          open.href = '/api/library/pdf?paper_id=' + encodeURIComponent(paper.paper_id);
+          const open = textNode('a', 'Open reader');
+          open.href = '/reader?paper_id=' + encodeURIComponent(paper.paper_id);
           open.target = '_blank'; open.rel = 'noopener noreferrer';
           actions.append(open);
         } else if (paper.available) {

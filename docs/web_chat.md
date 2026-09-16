@@ -20,6 +20,44 @@ and personal settings. Skip it at any time or reopen it with **? → Quick tour*
 Completion is remembered for this account in this browser. Clearing browser
 storage shows the tour again.
 
+## Reading and marking papers
+
+Choose a saved paper in **My shelf → Open reader**. The reader displays the
+corpus PDF inside OriginRAG, with page navigation, zoom, a reading theme, and
+personal notes. Select text, choose a marker colour and press **Highlight
+selection**. Add a comment beside the highlight and press **Save note**.
+Click a note's page button to return to that passage. **Export notes** saves
+your saved highlights and comments as JSON, not as an annotated PDF.
+
+**Find** (Ctrl/Cmd+F) searches the PDF's selectable text and marks matching
+passages. Move between matches with the arrows or Enter/Shift+Enter in the search
+field. Esc closes search. Searching stays local in the browser. Scanned text is
+not searchable without OCR. Search reports partial results if it reaches 1,000
+matches or 2,000 pages, or cannot read a page. **Contents** opens the PDF's embedded
+table of contents when available.
+
+Selecting text reveals a small marker toolbar beside the passage. Choose a
+colour or **+ Note** to highlight and start writing immediately. **H** highlights
+the current selection; Ctrl/Cmd+S saves the focused note. Left/right arrow keys
+turn pages when not editing or selecting text. Zoom preserves the reading
+position on the current page.
+
+Notes are private to each account on an authenticated server. Local unauthenticated
+use has one local notes collection. They are stored in `.reader_notes.sqlite3`
+inside the user's chat directory, ignored by Git. Back up that directory to keep
+notes when moving an installation. Removing a shelf bookmark does not erase notes.
+Notes are tied to the exact PDF contents. If a paper's PDF is replaced, earlier
+notes remain stored separately rather than appearing on the wrong passage.
+The reader warns about unsaved comments and rejects stale edits from another tab.
+
+PDF.js is bundled locally, including its fonts and codecs. No external PDF service
+or model call is involved. Use localhost (including an SSH tunnel) or HTTPS.
+The reader accepts PDFs up to 64 MB and renders one page at a time. Scans need a
+searchable text layer for text highlighting. **Original PDF** remains available
+for unsupported documents and your browser's print/download controls.
+
+## Adding papers
+
 If the library is empty, or contains only bibliographic records, the quick tour
 explains what is missing. **Add papers** accepts PDFs locally without an account,
 or after signing in when the server uses authentication.

@@ -44,6 +44,8 @@ from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env 
 from originrag.web_local_access import local_browser_request  # noqa: E402
 from originrag.library_topics import assign_library_topics  # noqa: E402
 from originrag.personal_shelf import PersonalShelf  # noqa: E402
+from originrag.reader_notes import ReaderNotes, NoteConflict, document_key  # noqa: E402
+from originrag.web_reader import HTML as READER_HTML  # noqa: E402
 from originrag.provenance.library import (  # noqa: E402
     LibraryStatusResolver,
     normalize_doi,
@@ -1607,6 +1609,32 @@ def build_handler(
             if parsed.path == "/":
                 self.respond_text(INDEX_HTML, content_type="text/html; charset=utf-8")
                 return
+            if parsed.path in {"/reader", "/api/reader/paper", "/api/reader/notes"}:
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({"error": "Use the local browser or sign in to read papers."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                if parsed.path == "/reader":
+                    self.respond_text(READER_HTML, content_type="text/html; charset=utf-8")
+                    return
+                try:
+                    params = parse_qs(parsed.query)
+                    expected = {"paper_id", "fingerprint"} if parsed.path.endswith("/notes") else {"paper_id"}
+                    if set(params) != expected or any(len(value) != 1 for value in params.values()):
+                        raise ValueError("Invalid reader request.")
+                    paper_id = params["paper_id"][0]
+                    paper = next((p for p in library_catalog() if p["paper_id"] == paper_id), None)
+                    if not paper:
+                        self.respond_json({"error": "Paper not found in the library."}, status=HTTPStatus.NOT_FOUND)
+                        return
+                    if parsed.path.endswith("/paper"):
+                        self.respond_json({"paper_id": paper_id, "title": paper.get("title", "")})
+                    else:
+                        self.respond_json(ReaderNotes(REPO_ROOT / current_app.out_dir).snapshot(paper_id, params["fingerprint"][0]))
+                except ValueError as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except (OSError, sqlite3.Error):
+                    self.respond_json({"error": "Your notes are temporarily unavailable. Please retry."}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+                return
             if parsed.path.startswith("/assets/"):
                 self.handle_asset_request(parsed.path)
                 return
@@ -1829,6 +1857,24 @@ def build_handler(
                     self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 except (OSError, sqlite3.Error):
                     self.respond_json({"error": "Your shelf could not be saved. Please try again."}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+                return
+            if parsed.path == "/api/reader/notes":
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({"error": "Use the local browser or sign in to save notes."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                try:
+                    payload = self.read_json_body()
+                    paper_id, _ = document_key(payload.get("paper_id"), payload.get("fingerprint"))
+                    if not any(p["paper_id"] == paper_id for p in library_catalog()):
+                        self.respond_json({"error": "Paper not found in the library."}, status=HTTPStatus.NOT_FOUND)
+                        return
+                    self.respond_json(ReaderNotes(REPO_ROOT / current_app.out_dir).change(payload))
+                except NoteConflict as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.CONFLICT)
+                except ValueError as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except (OSError, sqlite3.Error):
+                    self.respond_json({"error": "Your notes could not be saved. Please retry."}, status=HTTPStatus.SERVICE_UNAVAILABLE)
                 return
             if parsed.path == "/api/logout" and auth_store and user:
                 auth_store.logout(session_token)
@@ -2255,6 +2301,12 @@ def build_handler(
             content_type = "application/octet-stream"
             if asset_path.suffix.lower() == ".png":
                 content_type = "image/png"
+            elif asset_path.suffix.lower() in {".js", ".mjs"}:
+                content_type = "text/javascript; charset=utf-8"
+            elif asset_path.suffix.lower() == ".css":
+                content_type = "text/css; charset=utf-8"
+            elif asset_path.suffix.lower() == ".wasm":
+                content_type = "application/wasm"
             body = asset_path.read_bytes()
             self.send_response(HTTPStatus.OK)
             self.send_security_headers()
@@ -2338,7 +2390,11 @@ def build_handler(
 
         def send_security_headers(self) -> None:
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+            if urlparse(self.path).path == "/reader" or urlparse(self.path).path.startswith("/assets/vendor/pdfjs/"):
+                policy = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; font-src 'self' blob: data:; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+            else:
+                policy = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+            self.send_header("Content-Security-Policy", policy)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Frame-Options", "DENY")

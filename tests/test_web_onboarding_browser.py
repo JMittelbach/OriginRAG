@@ -488,7 +488,7 @@ def test_shelf_empty_browse_and_save_from_chat(browser_page):
     page.locator(".shelf-book").click()
     assert page.locator("#shelfDetail h3").inner_text() == paper["title"]
     assert page.locator("#shelfDialog img").count() == 0
-    assert page.get_by_role('link', name='Open PDF', exact=True).count() == 0
+    assert page.get_by_role('link', name='Open reader', exact=True).count() == 0
     assert 'No PDF is stored' in page.locator('#shelfDetail').inner_text()
     assert page.locator("#shelfDetail").get_by_role("button", name="Summarize", exact=True).is_disabled()
     page.emulate_media(reduced_motion="reduce")
@@ -556,8 +556,7 @@ def test_stop_before_server_acknowledges_submission(browser_page):
     assert state['jobs'][0]['state'] == 'cancelled'
 
 
-@pytest.mark.parametrize('browser_page', ['pdf'], indirect=True)
-def test_shelf_opens_local_pdf_not_publisher_page(browser_page):
+def test_shelf_opens_reader_not_publisher_page(browser_page):
     page, state, requests, tmp = browser_page
     page.locator('#guideSkip').click()
     state['shelves'] = {'alice': {'P1': {
@@ -567,14 +566,14 @@ def test_shelf_opens_local_pdf_not_publisher_page(browser_page):
     }}}
     page.locator('#shelfButton').click()
     page.locator('.shelf-book').click()
-    pdf = page.get_by_role('link', name='Open PDF', exact=True)
-    assert pdf.get_attribute('href') == '/api/library/pdf?paper_id=P1'
-    assert page.locator('#shelfDetail a').first.inner_text() == 'Open PDF'
+    pdf = page.get_by_role('link', name='Open reader', exact=True)
+    assert pdf.get_attribute('href') == '/reader?paper_id=P1'
+    assert page.locator('#shelfDetail a').first.inner_text() == 'Open reader'
     assert page.get_by_role('link', name='Publisher page', exact=True).get_attribute('href') == 'https://doi.org/10.1234/example'
     with page.expect_popup() as opened:
         pdf.click()
     reader = opened.value
-    reader.wait_for_url('**/api/library/pdf?paper_id=P1', wait_until='domcontentloaded', timeout=10000)
-    assert '/api/library/pdf?paper_id=P1' in requests
+    reader.wait_for_url('**/reader?paper_id=P1', wait_until='domcontentloaded', timeout=10000)
+    assert '/reader?paper_id=P1' in requests
     assert page.locator('#shelfDialog').evaluate('el => el.open')
     reader.close()
