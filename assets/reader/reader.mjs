@@ -7,9 +7,11 @@ const paperId = new URLSearchParams(location.search).get('paper_id');
 const original = '/api/library/pdf?paper_id=' + encodeURIComponent(paperId || '');
 const base = '/assets/vendor/pdfjs/';
 let pdf, fingerprint, currentPage = 1, zoom = 1, marks = [], selection = null;
-let generation = 0, canvasTask, textTask, saving = false, ready = false, notesReady = false;
+let generation = 0, saving = false, ready = false, notesReady = false;
+let views=[], navigating=false, scrollFrame=0;
 const drafts = new Map();
-const colors = new Set(['yellow', 'mint', 'rose']);
+const colors = new Set(['yellow', 'mint', 'rose', 'red']);
+let focusedNote='', pendingNoteClick, pointerStart;
 const status = (message, error = false) => { $('status').textContent = message; $('status').classList.toggle('error', error); };
 const node = (tag, text, className) => { const el = document.createElement(tag); el.textContent = text; if (className) el.className = className; return el; };
 const dirty = () => [...drafts].some(([id, value]) => value !== marks.find(m => m.id === id)?.note);
@@ -41,15 +43,60 @@ function applyNotes(data) {
   drawMarks(); renderNotes(); controls();
 }
 function drawMarks() {
-  $('highlights').replaceChildren();
-  for (const mark of marks.filter(m => m.page === currentPage)) {
+  for(const view of views) {
+    view.highlights.replaceChildren();
+    if(!view.rendered)continue;
+    for (const mark of marks.filter(m => m.page === view.number)) {
     for (const [x,y,w,h] of mark.rects) {
       const el = node('div','', 'mark ' + (colors.has(mark.color) ? mark.color : 'yellow'));
+      el.dataset.noteId=mark.id;
+      el.classList.toggle('selected',mark.id===focusedNote);
       Object.assign(el.style,{left:x*100+'%',top:y*100+'%',width:w*100+'%',height:h*100+'%'});
-      $('highlights').append(el);
+      view.highlights.append(el);
+    }
     }
   }
 }
+function focusNote(id) {
+  if(saving || !marks.some(mark=>mark.id===id))return;
+  focusedNote=id;
+  $('notesPanel').hidden=false;
+  $('notesToggle').setAttribute('aria-expanded','true');
+  for(const item of $('notes').querySelectorAll('.note')) item.classList.toggle('selected',item.dataset.noteId===id);
+  drawMarks();
+  const input=document.querySelector(`[data-note-id="${id}"].note textarea`);
+  input?.focus();
+  input?.scrollIntoView({block:'nearest'});
+}
+function markAt(x,y) {
+  const wrapper=document.elementFromPoint(x,y)?.closest('.reader-page');
+  if(!wrapper)return;
+  const box=wrapper.getBoundingClientRect();
+  if(!box.width || !box.height)return;
+  const px=(x-box.left)/box.width,py=(y-box.top)/box.height;
+  return [...marks].reverse().find(mark=>mark.page===Number(wrapper.dataset.page) && mark.rects.some(([left,top,width,height])=>px>=left && px<=left+width && py>=top && py<=top+height));
+}
+function cancelNoteClick() {clearTimeout(pendingNoteClick);pendingNoteClick=null;}
+$('workspace').addEventListener('pointerdown',event=>{
+  cancelNoteClick();const wrapper=event.target.closest('.reader-page');pointerStart=event.button===0 && wrapper?{x:event.clientX,y:event.clientY,moved:false,page:Number(wrapper.dataset.page)}:null;
+});
+$('workspace').addEventListener('pointermove',event=>{
+  if(pointerStart && Math.hypot(event.clientX-pointerStart.x,event.clientY-pointerStart.y)>5)pointerStart.moved=true;
+  const layer=event.target.closest('.textLayer');
+  if(layer)layer.title=markAt(event.clientX,event.clientY)?'Click to comment. Drag or double-click to select and copy text.':'';
+});
+$('workspace').addEventListener('pointercancel',()=>{pointerStart=null;cancelNoteClick();});
+$('workspace').addEventListener('dblclick',cancelNoteClick);
+window.addEventListener('blur',cancelNoteClick);
+$('workspace').addEventListener('click',event=>{
+  const gesture=pointerStart;pointerStart=null;cancelNoteClick();
+  if(event.button!==0 || event.detail!==1 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || !gesture || gesture.moved || !ready || saving || !getSelection()?.isCollapsed)return;
+  const mark=markAt(event.clientX,event.clientY);
+  if(!mark)return;
+  pendingNoteClick=setTimeout(()=>{
+    if(!saving && gesture.page===mark.page && getSelection()?.isCollapsed) focusNote(mark.id);
+  },350);
+});
 async function change(payload, savedId, focusNew=false) {
   if (saving) return;
   const previousIds=new Set(marks.map(m=>m.id));
@@ -63,7 +110,7 @@ async function change(payload, savedId, focusNew=false) {
     if (focusNew) newId=marks.find(m=>!previousIds.has(m.id))?.id;
   } catch(error) { status(error.message, true); }
   finally { saving = false; controls(); renderNotes();
-    if(newId) {$('notesPanel').hidden=false;$('notesToggle').setAttribute('aria-expanded','true');document.querySelector(`[data-note-id="${newId}"] textarea`)?.focus();}
+    if(newId) focusNote(newId);
   }
 }
 function renderNotes() {
@@ -71,6 +118,7 @@ function renderNotes() {
   if (!marks.length) { container.append(node('p','No highlights yet. Start with a passage that catches your eye.','hint')); return; }
   for (const mark of [...marks].sort((a,b)=>a.page-b.page || a.rects[0][1]-b.rects[0][1])) {
     const item = node('section','','note'); item.dataset.noteId = mark.id; item.dataset.color=colors.has(mark.color)?mark.color:'yellow';
+    item.classList.toggle('selected',mark.id===focusedNote);
     const heading = node('div','','note-heading');
     const jump = node('button','Page ' + mark.page); jump.onclick = () => renderPage(mark.page, zoom, mark.rects[0][1]);
     heading.append(jump); item.append(heading,node('blockquote',mark.quote || 'Highlighted area'));
@@ -85,57 +133,125 @@ function renderNotes() {
     actions.append(save,remove); item.append(input,actions); container.append(item);
   }
 }
-async function renderPage(number, scale, jumpY = null) {
-  if (!pdf) return;
-  const previousHeight=$('page').clientHeight;
-  const scrollFraction=jumpY ?? (number===currentPage && previousHeight ? ($('workspace').scrollTop+50)/previousHeight : 0);
-  const request = ++generation;
-  ready = false; selection = null; window.getSelection()?.removeAllRanges(); controls();
-  canvasTask?.cancel(); textTask?.cancel();
-  await canvasTask?.promise.catch(()=>{});
-  try {
-    const page = await pdf.getPage(Math.max(1,Math.min(pdf.numPages,number)));
-    if (request !== generation) return;
-    currentPage = page.pageNumber; zoom = Math.max(.35,Math.min(3,scale));
-    $('pageNumber').value=currentPage;
-    const viewport = page.getViewport({scale:zoom});
-    const ratio = Math.min(devicePixelRatio || 1, 2, Math.sqrt(16000000 / (viewport.width * viewport.height)));
-    const canvas = $('canvas'), wrapper = $('page');
-    canvas.width = Math.floor(viewport.width * ratio); canvas.height = Math.floor(viewport.height * ratio);
-    canvas.style.width = viewport.width+'px'; canvas.style.height = viewport.height+'px';
-    wrapper.style.width = viewport.width+'px'; wrapper.style.height = viewport.height+'px';
-    wrapper.style.setProperty('--scale-factor',String(viewport.scale));
-    wrapper.style.setProperty('--user-unit',String(viewport.userUnit || 1));
-    wrapper.style.display = 'block'; $('empty').hidden = true; $('textLayer').replaceChildren(); $('highlights').replaceChildren(); $('searchHighlights').replaceChildren();
-    canvasTask = page.render({canvasContext:canvas.getContext('2d'),viewport,transform:[ratio,0,0,ratio,0,0],isEditing:false});
-    await canvasTask.promise;
-    if (request !== generation) return;
-    textTask = new TextLayer({textContentSource:page.streamTextContent(),container:$('textLayer'),viewport});
-    await textTask.render();
-    if (request !== generation) return;
-    drawMarks(); navigate.draw(); ready = true; controls();
-    $('workspace').scrollTop = Math.max(0,viewport.height*scrollFraction-50);
-    if (!saving) status(!notesReady ? 'Your notes could not be loaded. You can keep reading. Press ↻ to retry before adding highlights.' : $('textLayer').textContent.trim() ? 'Select text to highlight a passage. Notes are private to your account.' : 'This page has no selectable text. Scanned PDFs need OCR before text highlighting is available.', !notesReady);
-    page.cleanup();
-  } catch(error) {
-    if (request !== generation || error.name === 'RenderingCancelledException' || error.name === 'AbortException') return;
-    status('This page could not be displayed. Try another page or open the original PDF.',true);
-    ready = true; controls();
+function pageTop(view) {return view.wrapper.getBoundingClientRect().top-$('workspace').getBoundingClientRect().top+$('workspace').scrollTop;}
+function sizeView(view) {
+  view.wrapper.style.width=view.width*zoom+'px';view.wrapper.style.height=view.height*zoom+'px';
+}
+function activate(view) {
+  if(!view)return;
+  for(const id of ['page','canvas','textLayer','highlights','searchHighlights']) $(id)?.removeAttribute('id');
+  view.wrapper.id='page';view.canvas.id='canvas';view.textLayer.id='textLayer';view.highlights.id='highlights';view.searchHighlights.id='searchHighlights';
+  currentPage=view.number;ready=view.rendered;controls();
+}
+async function initialisePages() {
+  if(views.length)return;
+  const first=await pdf.getPage(1), viewport=first.getViewport({scale:1});
+  const fragment=document.createDocumentFragment();
+  for(let number=1;number<=pdf.numPages;number++) {
+    const wrapper=node('div','','reader-page');wrapper.dataset.page=number;wrapper.setAttribute('aria-label','PDF page '+number);
+    const canvas=document.createElement('canvas');canvas.className='page-canvas';
+    const textLayer=node('div','','textLayer'),highlights=node('div','','page-highlights'),searchHighlights=node('div','','page-search-highlights');
+    highlights.setAttribute('aria-hidden','true');searchHighlights.setAttribute('aria-hidden','true');
+    const placeholder=node('span','Page '+number,'page-placeholder');
+    wrapper.append(canvas,highlights,searchHighlights,textLayer,placeholder);
+    const view={number,wrapper,canvas,textLayer,highlights,searchHighlights,placeholder,width:viewport.width,height:viewport.height,rendered:false,pending:null};
+    views.push(view);sizeView(view);fragment.append(wrapper);
   }
+  $('workspace').replaceChildren(fragment);activate(views[0]);
+}
+function release(view) {
+  if(!view.rendered && !view.canvas.width)return;
+  view.canvas.width=0;view.canvas.height=0;view.textLayer.replaceChildren();view.highlights.replaceChildren();view.searchHighlights.replaceChildren();view.rendered=false;view.placeholder.hidden=false;
+  view.pdfPage?.cleanup();
+}
+async function ensureView(view) {
+  if(view.rendered)return;
+  if(view.pending)return view.pending;
+  const token=generation;
+  view.pending=(async()=>{
+    try {
+      const page=await pdf.getPage(view.number);view.pdfPage=page;
+      if(token!==generation)return;
+      if(!navigating && Math.abs(view.number-currentPage)>2)return;
+      const viewport=page.getViewport({scale:zoom}),unscaled=page.getViewport({scale:1});
+      const active=views[currentPage-1],anchor=pageTop(active)-$('workspace').scrollTop;
+      view.width=unscaled.width;view.height=unscaled.height;sizeView(view);
+      if(!navigating)$('workspace').scrollTop=pageTop(active)-anchor;
+      const ratio=Math.min(devicePixelRatio || 1,2,Math.sqrt(4000000/(viewport.width*viewport.height)));
+      view.canvas.width=Math.floor(viewport.width*ratio);view.canvas.height=Math.floor(viewport.height*ratio);
+      view.canvas.style.width=viewport.width+'px';view.canvas.style.height=viewport.height+'px';
+      view.wrapper.style.setProperty('--scale-factor',String(viewport.scale));view.wrapper.style.setProperty('--user-unit',String(viewport.userUnit || 1));
+      view.canvasTask=page.render({canvasContext:view.canvas.getContext('2d'),viewport,transform:[ratio,0,0,ratio,0,0],isEditing:false});
+      await view.canvasTask.promise;if(token!==generation)return;
+      view.textLayer.replaceChildren();
+      view.textTask=new TextLayer({textContentSource:page.streamTextContent(),container:view.textLayer,viewport});
+      await view.textTask.render();if(token!==generation)return;
+      view.rendered=true;view.placeholder.hidden=true;drawMarks();navigate.draw();
+      if(currentPage===view.number){ready=true;controls();}
+    } catch(error) {
+      if(token!==generation || error.name==='RenderingCancelledException' || error.name==='AbortException')return;
+      view.placeholder.textContent='Page '+view.number+' could not be displayed. Use Original PDF or try another page.';
+      if(currentPage===view.number){ready=true;controls();status(view.placeholder.textContent,true);}
+    } finally {view.pending=null;}
+  })();
+  return view.pending;
+}
+async function renderNearby() {
+  const token=generation,centre=currentPage;
+  const selected=window.getSelection();
+  const selectedPage=selected?.anchorNode?.parentElement?.closest('.reader-page');
+  for(const view of views)if(Math.abs(view.number-centre)>2 && view.wrapper!==selectedPage) {
+    if(view.pending){view.canvasTask?.cancel();view.textTask?.cancel();}
+    else release(view);
+  }
+  for(const offset of [0,1,-1,2,-2]) {
+    if(token!==generation || centre!==currentPage || navigating)return;
+    const view=views[centre-1+offset];if(view)await ensureView(view);
+  }
+  if(token===generation && centre===currentPage)for(const view of views)if(Math.abs(view.number-centre)>2 && !view.pending && view.wrapper!==selectedPage)release(view);
+}
+function scrolled() {
+  scrollFrame=0;if(navigating || !views.length)return;
+  const workspace=$('workspace'),target=workspace.getBoundingClientRect().top+Math.min(150,workspace.clientHeight*.3);
+  const view=views.find(v=>v.wrapper.getBoundingClientRect().bottom>target) || views.at(-1);
+  if(view.number!==currentPage){cancelNoteClick();activate(view);}
+  renderNearby();
+}
+async function renderPage(number, scale, jumpY=null) {
+  if(!pdf)return;
+  await initialisePages();
+  cancelNoteClick();pointerStart=null;
+  number=Math.max(1,Math.min(pdf.numPages,number));
+  const previous=views[currentPage-1],fraction=jumpY ?? (number===currentPage ? Math.max(0,($('workspace').scrollTop-pageTop(previous)+50)/(previous.height*zoom)):0);
+  navigating=true;const token=++generation;
+  selection=null;window.getSelection()?.removeAllRanges();ready=false;controls();
+  for(const view of views){view.canvasTask?.cancel();view.textTask?.cancel();}
+  await Promise.all(views.map(view=>view.pending).filter(Boolean));
+  if(token!==generation)return;
+  const nextZoom=Math.max(.35,Math.min(3,scale));
+  if(nextZoom!==zoom){zoom=nextZoom;for(const view of views){release(view);sizeView(view);}}
+  const view=views[number-1];activate(view);$('pageNumber').value=number;
+  $('workspace').scrollTop=Math.max(0,pageTop(view)+view.height*zoom*fraction-50);
+  await ensureView(view);if(token!==generation)return;
+  $('workspace').scrollTop=Math.max(0,pageTop(view)+view.height*zoom*fraction-50);
+  navigating=false;ready=true;controls();navigate.draw();renderNearby();
+  if(!saving)status(!notesReady?'Your notes could not be loaded. Press ↻ to retry.':'Scroll to read on. Select to copy; choose a colour to highlight. Click a highlight to comment.',!notesReady);
 }
 function captureSelection() {
   const selected = window.getSelection();
   if (!ready || !selected?.rangeCount || selected.isCollapsed) { selection=null; controls(); return; }
-  const layer = $('textLayer');
+  const wrapper=selected.anchorNode?.parentElement?.closest('.reader-page');
+  const layer=wrapper?.querySelector('.textLayer');
+  if(!layer){selection=null;controls();return;}
   if (!layer.contains(selected.anchorNode) || !layer.contains(selected.focusNode)) { selection=null; controls(); return; }
-  const box = $('page').getBoundingClientRect();
+  const box = wrapper.getBoundingClientRect();
   const rects = [...selected.getRangeAt(0).getClientRects()].filter(r => r.width > 1 && r.height > 1).map(r => {
     const left=Math.max(box.left,r.left), top=Math.max(box.top,r.top), right=Math.min(box.right,r.right), bottom=Math.min(box.bottom,r.bottom);
     return [(left-box.left)/box.width,(top-box.top)/box.height,(right-left)/box.width,(bottom-top)/box.height];
   }).filter(r => r[2]>0 && r[3]>0);
   const unique = [...new Map(rects.map(r=>[r.map(n=>n.toFixed(5)).join(','),r])).values()];
   const quote = selected.toString().trim();
-  selection = unique.length && unique.length <= 200 && quote.length <= 10000 ? {page:currentPage,rects:unique,quote} : null;
+  selection = unique.length && unique.length <= 200 && quote.length <= 10000 ? {page:Number(wrapper.dataset.page),rects:unique,quote} : null;
   if (!selection && quote) status('Select a shorter passage to highlight.',true);
   controls();
   if(selection) {
@@ -146,12 +262,18 @@ function captureSelection() {
   }
 }
 document.addEventListener('selectionchange',captureSelection);
-$('workspace').addEventListener('scroll',()=>{if(selection)captureSelection();},{passive:true});
+$('workspace').addEventListener('scroll',()=>{cancelNoteClick();if(selection)captureSelection();if(!scrollFrame)scrollFrame=requestAnimationFrame(scrolled);},{passive:true});
 window.addEventListener('resize',()=>{if(selection)captureSelection();});
-for(const button of $('selectionTools').querySelectorAll('button')) {
+for(const button of $('selectionTools').querySelectorAll('[data-highlight], #selectionNote')) {
   button.onpointerdown=event=>event.preventDefault();
-  button.onclick=()=>{if(selection){const color=button.dataset.highlight || $('color').value;change({action:'add',mark:{...selection,color,note:''}},undefined,button.id==='selectionNote');}};
+  button.onclick=()=>{if(selection){const color=button.dataset.highlight || $('color').value;$('color').value=color;change({action:'add',mark:{...selection,color,note:''}},undefined,button.id==='selectionNote');}};
 }
+$('selectionCopy').onpointerdown=event=>event.preventDefault();
+$('selectionCopy').onclick=async()=>{
+  if(!selection)return;
+  try {await navigator.clipboard.writeText(selection.quote);status('Copied. No highlight was saved.');}
+  catch {status('Use Ctrl/Cmd+C to copy the selected text. No highlight was saved.');}
+};
 $('highlight').onpointerdown = event => event.preventDefault();
 $('highlight').onclick = () => { if(selection) change({action:'add',mark:{...selection,color:$('color').value,note:''}}); };
 $('previous').onclick = () => renderPage(currentPage-1,zoom);
@@ -204,6 +326,6 @@ async function start() {
     $('pageCount').textContent='/ '+pdf.numPages; $('pageNumber').max=pdf.numPages;
     try {applyNotes(await api('GET'));} catch {notesReady=false;}
     await fit();
-  } catch(error) {status(error.message || 'Could not open this PDF. Please use Original PDF.',true); $('empty').textContent='Your original PDF is still available using the link above.';}
+  } catch(error) {status(error.message || 'Could not open this PDF. Please use Original PDF.',true); if($('empty'))$('empty').textContent='Your original PDF is still available using the link above.';}
 }
 await start();

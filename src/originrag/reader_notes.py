@@ -26,7 +26,7 @@ def validate_mark(mark):
         raise ValueError('Invalid annotation fields.')
     if type(mark['page']) is not int or not 1 <= mark['page'] <= 20000:
         raise ValueError('Invalid page number.')
-    if mark['color'] not in ('yellow', 'mint', 'rose'):
+    if mark['color'] not in ('yellow', 'mint', 'rose', 'red'):
         raise ValueError('Invalid highlight color.')
     for field, limit in (('quote', 10000), ('note', 10000)):
         if not isinstance(mark[field], str) or len(mark[field]) > limit:

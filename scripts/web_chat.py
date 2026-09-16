@@ -46,6 +46,7 @@ from originrag.library_topics import assign_library_topics  # noqa: E402
 from originrag.personal_shelf import PersonalShelf  # noqa: E402
 from originrag.reader_notes import ReaderNotes, NoteConflict, document_key  # noqa: E402
 from originrag.web_reader import HTML as READER_HTML  # noqa: E402
+from originrag.web_workspace import HTML as WORKSPACE_HTML, PAGES as WORKSPACE_PAGES, handle_writing  # noqa: E402
 from originrag.provenance.library import (  # noqa: E402
     LibraryStatusResolver,
     normalize_doi,
@@ -1606,8 +1607,17 @@ def build_handler(
             current_app, user, _ = context
             owner_key = user.user_id if user else "anonymous"
             turn_jobs.recover_persisted(owner_key, current_app)
-            if parsed.path == "/":
+            if parsed.path in {"/", "/chat"}:
                 self.respond_text(INDEX_HTML, content_type="text/html; charset=utf-8")
+                return
+            if parsed.path in WORKSPACE_PAGES or parsed.path in {"/api/writing", "/api/writing/export", "/api/writing/bibliography"}:
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({"error": "Use the local browser or sign in to open your workspace."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                if parsed.path in WORKSPACE_PAGES:
+                    self.respond_text(WORKSPACE_HTML, content_type="text/html; charset=utf-8")
+                else:
+                    handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog())
                 return
             if parsed.path in {"/reader", "/api/reader/paper", "/api/reader/notes"}:
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
@@ -1830,6 +1840,12 @@ def build_handler(
             turn_jobs.recover_persisted(owner_key, current_app)
             if auth_store and not self.valid_csrf(session_token):
                 self.respond_json({"error": "invalid CSRF token"}, status=HTTPStatus.FORBIDDEN)
+                return
+            if parsed.path == "/api/writing":
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({"error": "Use the local browser or sign in to write."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog(), post=True)
                 return
             if parsed.path == "/api/job/cancel":
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
@@ -2254,7 +2270,8 @@ def build_handler(
 
         def read_json_body(self) -> dict:
             length = int(self.headers.get("Content-Length") or "0")
-            if length > 1_000_000:
+            limit = 18_000_000 if urlparse(self.path).path == "/api/writing" else 1_000_000
+            if length < 0 or length > limit:
                 raise ValueError("Request body is too large.")
             raw = self.rfile.read(length).decode("utf-8")
             if not raw.strip():
@@ -2390,7 +2407,7 @@ def build_handler(
 
         def send_security_headers(self) -> None:
             self.send_header("Cache-Control", "no-store")
-            if urlparse(self.path).path == "/reader" or urlparse(self.path).path.startswith("/assets/vendor/pdfjs/"):
+            if urlparse(self.path).path in WORKSPACE_PAGES | {"/reader"} or urlparse(self.path).path.startswith("/assets/vendor/pdfjs/"):
                 policy = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; font-src 'self' blob: data:; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
             else:
                 policy = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
@@ -6351,6 +6368,7 @@ INDEX_HTML = r"""<!doctype html>
     <main>
       <header>
         <div class="header-left">
+          <a class="header-button" href="/workspace" style="text-decoration:none;display:inline-flex;align-items:center">Workspace</a>
           <button class="mobile-sidebar-toggle" id="sidebarToggle" type="button" title="Show sidebar" aria-label="Show sidebar" aria-controls="sidebar" aria-expanded="false">☰</button>
         </div>
         <div class="header-actions">

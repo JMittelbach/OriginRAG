@@ -35,13 +35,17 @@ export function navigation({getPdf, getPage, getZoom, renderPage}) {
     $('searchStatus').textContent=searching?'Searching…':!query?'':hits.length?`${active+1} / ${hits.length}${incomplete?' (partial results)':''}`:incomplete?'Search incomplete; no matches on checked pages.':'No matches in selectable text.';
   }
   function draw() {
-    const overlay=$('searchHighlights'); overlay.replaceChildren();
-    if (!query || $('searchBar').hidden) return;
-    const spans=[...$('textLayer').querySelectorAll('span:not(.markedContent)')].filter(el=>el.firstChild?.nodeType===Node.TEXT_NODE);
+    const wrappers=[...document.querySelectorAll('.reader-page')];
+    for(const wrapper of wrappers.length?wrappers:[$('page')]) {
+    const overlay=wrapper.querySelector('.page-search-highlights') || $('searchHighlights'); overlay.replaceChildren();
+    if (!query || $('searchBar').hidden) continue;
+    const number=Number(wrapper.dataset.page) || getPage();
+    const layer=wrapper.querySelector('.textLayer');
+    const spans=[...layer.querySelectorAll('span:not(.markedContent)')].filter(el=>el.firstChild?.nodeType===Node.TEXT_NODE);
     const {text, locations}=searchable(spans.map(el=>el.textContent));
     const pageHits=matches(text,query);
-    const ordinal=active<0?-1:hits.slice(0,active).filter(h=>h.page===getPage()).length;
-    const box=$('page').getBoundingClientRect();
+    const ordinal=active<0?-1:hits.slice(0,active).filter(h=>h.page===number).length;
+    const box=wrapper.getBoundingClientRect();
     pageHits.forEach((at,index)=>{
       const first=locations[at],last=locations[at+query.length-1];
       if(!first || !last)return;
@@ -50,10 +54,11 @@ export function navigation({getPdf, getPage, getZoom, renderPage}) {
       range.setEnd(spans[last.index].firstChild,last.offset+last.length);
       for(const rect of range.getClientRects()) {
         if(rect.width<=0 || rect.height<=0)continue;
-        const mark=document.createElement('div');mark.className='search-hit'+(hits[active]?.page===getPage() && ordinal===index?' active':'');
+        const mark=document.createElement('div');mark.className='search-hit'+(hits[active]?.page===number && ordinal===index?' active':'');
         Object.assign(mark.style,{left:(rect.left-box.left)+'px',top:(rect.top-box.top)+'px',width:rect.width+'px',height:rect.height+'px'});overlay.append(mark);
       }
     });
+    }
   }
   async function jump(index) {
     if(!hits.length || searching)return;
@@ -63,7 +68,7 @@ export function navigation({getPdf, getPage, getZoom, renderPage}) {
     if(token!==sequence || chosen!==active)return;
     draw();
     const mark=document.querySelector('#searchHighlights .active');
-    if(mark) $('workspace').scrollTop=Math.max(0,mark.offsetTop-80);
+    if(mark) $('workspace').scrollTop+=mark.getBoundingClientRect().top-$('workspace').getBoundingClientRect().top-80;
   }
   async function search() {
     const token=++sequence;

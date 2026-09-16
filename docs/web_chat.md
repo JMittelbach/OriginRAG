@@ -36,8 +36,12 @@ not searchable without OCR. Search reports partial results if it reaches 1,000
 matches or 2,000 pages, or cannot read a page. **Contents** opens the PDF's embedded
 table of contents when available.
 
-Selecting text reveals a small marker toolbar beside the passage. Choose a
-colour or **+ Note** to highlight and start writing immediately. **H** highlights
+Selecting text alone never saves a highlight. The selection toolbar offers
+**Copy** plus **Yellow**, **Green**, **Red**, and **Rose** highlights. Choose a
+colour to save a highlight, or **+ Note** to save it and start writing immediately.
+Left-click a saved highlight to open its comment in the notes panel. Dragging
+or double-clicking highlighted text still selects it for copying, without saving
+another highlight or moving focus into a comment. **H** highlights
 the current selection; Ctrl/Cmd+S saves the focused note. Left/right arrow keys
 turn pages when not editing or selecting text. Zoom preserves the reading
 position on the current page.
@@ -52,7 +56,9 @@ The reader warns about unsaved comments and rejects stale edits from another tab
 
 PDF.js is bundled locally, including its fonts and codecs. No external PDF service
 or model call is involved. Use localhost (including an SSH tunnel) or HTTPS.
-The reader accepts PDFs up to 64 MB and renders one page at a time. Scans need a
+The reader accepts PDFs up to 64 MB. Pages form a continuous scrollable document;
+the page indicator follows the reading position. Nearby pages are rendered on demand,
+and distant canvases are released to limit memory use. Scans need a
 searchable text layer for text highlighting. **Original PDF** remains available
 for unsupported documents and your browser's print/download controls.
 

@@ -117,8 +117,12 @@ to each paper and its summary. On shared servers, shelves belong to individual
 accounts. Removing a bookmark does not remove the paper from the corpus.
 **Open reader** opens your corpus PDF in a quiet reading space with zoom,
 text search, a table of contents where available, text highlights and personal notes.
+Scroll continuously through the pages with your mouse wheel, trackpad or touch.
+The page indicator follows your position; page controls and search still let you jump directly.
 Select a passage to reveal the quick marker toolbar. Highlights stay separate from the original
 PDF and are saved to your account. Export your notes as JSON when needed.
+Selecting text to copy does not save a highlight. Choose a colour explicitly,
+then click the saved highlight whenever you want to add or edit a comment.
 **Original PDF** and **Publisher page** remain available separately.
 Scanned pages need OCR for text highlighting; the reader supports PDFs up to 64 MB.
 
@@ -133,6 +137,16 @@ continuously monitored. In terminal chat, `/help import` explains both paths.
 See the [first-answer walkthrough](docs/web_chat.md#first-answer-walkthrough)
 and [corpus guide](docs/getting_started.md#4-import-and-index-pdfs) for filing,
 paper discovery and open-access downloads.
+
+## Read, collect and write
+
+Choose **Workspace** in the web header to move between OriginRAG, your Bookshelf,
+the Library and **OriginWrite**. Create personal paper collections for individual
+projects. OriginWrite is an initial LaTeX editor with autosave, an optional
+auto-compile PDF preview, error logs, project ZIP import/export and bibliography
+import from your collections. PDF compilation requires an isolated TeX setup.
+See [the workspace and writing guide](docs/writing.md), including local/server
+setup, journal-template sources and the prototype's current limits.
 
 ## Understand the evidence
 

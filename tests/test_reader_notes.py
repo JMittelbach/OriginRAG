@@ -41,7 +41,7 @@ def test_note_updates_are_atomic_and_reject_stale_windows(tmp_path):
 
 
 @pytest.mark.parametrize('field,value', [
-    ('page', True), ('page', 0), ('page', 20001), ('color', 'red'),
+    ('page', True), ('page', 0), ('page', 20001), ('color', 'unknown'),
     ('quote', 'x' * 10001), ('note', None), ('rects', []),
     ('rects', [[0, 0, float('nan'), .1]]), ('rects', [[-.1, .1, .2, .2]]),
     ('rects', [[.9, .1, .5, .1]]), ('rects', [[0, 0, 0, .1]]),
@@ -60,6 +60,11 @@ def test_parallel_additions_do_not_overwrite_each_other(tmp_path):
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(lambda _: add(store), range(12)))
     assert len(store.snapshot('P1', FINGERPRINT)['items']) == 12
+
+
+@pytest.mark.parametrize('color', ['yellow', 'mint', 'rose', 'red'])
+def test_highlight_colors_are_saved(tmp_path, color):
+    assert add(ReaderNotes(tmp_path), mark={**MARK, 'color': color})['items'][0]['color'] == color
 
 
 def test_cannot_mutate_other_document_or_supply_owner(tmp_path):
