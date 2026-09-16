@@ -189,6 +189,42 @@ def test_reader_search_contents_selection_toolbar_and_shortcuts(reader_server):
         page.wait_for_selector('#fit:not([disabled])')
         new_fraction = page.locator('#workspace').evaluate('el=>(el.scrollTop+50)/document.querySelector("#page").clientHeight')
         assert abs(new_fraction-old_fraction) < .005
+        page.locator('#workspace').evaluate('el=>el.scrollTop=0')
         page.screenshot(path=str(tmp/'reader-improved.png'), full_page=True)
         assert not errors
+        browser.close()
+
+
+def test_reader_search_normalization_limits_and_cancellation(reader_server):
+    playwright = pytest.importorskip('playwright.sync_api')
+    port, _, _, _ = reader_server
+    with playwright.sync_playwright() as p:
+        browser=p.chromium.launch()
+        page=browser.new_page()
+        page.goto(f'http://127.0.0.1:{port}/reader?paper_id=P1')
+        page.wait_for_selector('#fit:not([disabled])')
+        result=page.evaluate('''async()=>{
+          const {searchable,matches,navigation}=await import('/assets/reader/navigation.mjs');
+          const normalized=searchable(['Mixed  CASE ', 'with\\nspaces', 'soft\\u00adhyphen']);
+          window.readerTest={jumps:[],mode:'many'};
+          navigation({getPage:()=>1,getZoom:()=>1,renderPage:async p=>readerTest.jumps.push(p),getPdf:()=>({numPages:1,getPage:async()=>({getTextContent:()=>readerTest.mode==='many'?Promise.resolve({items:[{str:'needle '.repeat(1001)}]}):new Promise(resolve=>readerTest.release=resolve)})})});
+          return {text:normalized.text,mapping:normalized.locations.length,literal:matches('a.b aXb','a.b')};
+        }''')
+        expected = 'mixed case with spaces softhyphen'
+        assert result == {'text': expected, 'mapping': len(expected), 'literal': [0]}
+        page.locator('#find').click()
+        page.locator('#searchQuery').fill('needle')
+        page.locator('#searchQuery').press('Enter')
+        playwright.expect(page.locator('#searchStatus')).to_have_text('1 / 1000 (partial results)')
+        page.evaluate("()=>{readerTest.mode='slow';readerTest.jumps=[];}")
+        page.locator('#searchQuery').fill('new phrase')
+        # Rebind to use an empty text cache for the pending search.
+        page.evaluate('''async()=>{const {navigation}=await import('/assets/reader/navigation.mjs');navigation({getPage:()=>1,getZoom:()=>1,renderPage:async p=>readerTest.jumps.push(p),getPdf:()=>({numPages:1,getPage:async()=>({getTextContent:()=>new Promise(resolve=>readerTest.release=resolve)})})});}''')
+        page.locator('#searchQuery').press('Enter')
+        playwright.expect(page.locator('#searchStatus')).to_have_text('Searching page 1 / 1…')
+        page.locator('#searchClose').click()
+        page.evaluate("async()=>{readerTest.release({items:[{str:'new phrase'}]});await new Promise(resolve=>setTimeout(resolve,20));}")
+        assert page.evaluate('()=>readerTest.jumps') == []
+        assert page.locator('#searchStatus').inner_text() == ''
+        playwright.expect(page.locator('#searchBar')).to_be_hidden()
         browser.close()
