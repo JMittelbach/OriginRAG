@@ -9,16 +9,19 @@ from .writing_compile import CompilerBusy, compiler_status
 from .writing_builds import compile_saved_project
 from .writing_collaboration import LOCAL_COLLABORATION, ProjectAccess
 from . import writing_language
+from .web_appearance import with_appearance
+from .web_navigation import with_navigation
 
 PAGES = {'/workspace', '/bookshelf', '/library', '/write'}
 
 HTML = '''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Workspace · OriginRAG</title><link rel="stylesheet" href="/assets/workspace/workspace.css"><link rel="stylesheet" href="/assets/workspace/writer.css"><link rel="stylesheet" href="/assets/workspace/writer-layout.css"><link rel="stylesheet" href="/assets/workspace/writing-library.css"></head>
-<body><header><a class="brand" href="/workspace">Origin<span> / workspace</span></a><nav aria-label="Your workspace"><a href="/chat" data-feature="rag">OriginRAG</a><a href="/bookshelf">Bookshelf</a><a href="/library">Library</a><a href="/write" data-feature="write">OriginWrite</a></nav><div class="workspace-account"><span id="workspaceUser"></span><button id="workspaceLogout" hidden>Sign out</button></div></header>
+<title>Origin</title><link rel="stylesheet" href="/assets/workspace/workspace.css"><link rel="stylesheet" href="/assets/workspace/writer.css"><link rel="stylesheet" href="/assets/workspace/writer-layout.css"><link rel="stylesheet" href="/assets/workspace/writing-library.css"><style></style><link rel="stylesheet" href="/assets/workspace/workspace-enhancements.css"></head>
+<body>
 <div id="notice" role="status" aria-live="polite"></div><main id="content"></main>
 <dialog id="createDialog"><form id="createForm"><h2 id="createTitle">New project</h2><label>Name<input id="newName" maxlength="120" required autocomplete="off"></label><p id="createError" role="alert"></p><div class="actions"><button type="button" id="cancelCreate">Cancel</button><button class="primary">Create</button></div></form></dialog>
 <script type="module" src="/assets/workspace/workspace.mjs"></script></body></html>'''
+HTML = with_navigation(with_appearance(HTML))
 
 
 def binary_response(handler, data, content_type, name):
@@ -133,10 +136,10 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                     pass
                 result['pdf'] = base64.b64encode(result['pdf']).decode('ascii')
                 handler.respond_json(result)
-            elif payload.get('action') in {'save_project', 'sync_bibliography'}:
+            elif payload.get('action') in {'save_project', 'sync_bibliography', 'delete_project'}:
                 key = payload.get('id')
                 with project_access(store, collaboration, user, key,
-                                    owner_only=payload['action'] == 'sync_bibliography') as access:
+                                    owner_only=payload['action'] in {'sync_bibliography', 'delete_project'}) as access:
                     if access.info['role'] == 'editor':
                         if payload.get('collection'):
                             raise PermissionError('Only the owner can link a personal library to this project.')

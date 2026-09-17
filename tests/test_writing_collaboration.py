@@ -61,6 +61,23 @@ def share(call, p, target, action='add', who='alice', status=200):
     return call('POST', '/api/writing/collaboration', who, {'action': action, 'id': p['id'], 'user_id': target.user_id}, status)
 
 
+def test_delete_requires_owner_and_confirmation_and_preserves_collection(workspace):
+    call, _, _, _, users, _ = workspace
+    collection = call('POST', payload={'action': 'create_collection', 'name': 'Keep papers'})
+    p = project(call, collection=collection['id'])
+    share(call, p, users['bob'])
+    payload = {'action': 'delete_project', 'id': p['id'], 'revision': p['revision'],
+               'confirm_name': p['name'], 'confirm_delete': True}
+    call('POST', who='bob', payload=payload, status=403)
+    call('POST', who='carol', payload=payload, status=404)
+    call('POST', payload={**payload, 'confirm_delete': False}, status=400)
+    call('POST', payload={**payload, 'confirm_name': 'Wrong name'}, status=400)
+    assert call('POST', payload=payload)['deleted'] is True
+    call('GET', '/api/writing?id=' + p['id'], status=404)
+    call('GET', '/api/writing?id=' + p['id'], who='bob', status=404)
+    assert call('GET')['collections'][0]['id'] == collection['id']
+
+
 def test_shared_project_requires_explicit_grant_for_every_operation(workspace, monkeypatch):
     call, port, headers, _, users, root = workspace
     p = project(call)

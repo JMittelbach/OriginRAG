@@ -4,9 +4,11 @@ import {createPDFPreview} from './pdf-preview.mjs';
 import {openLibraryImport} from './library-import.mjs';
 import {collaborationStyle, snapshotProject, rebaseDraft, openSharing, openProjectCitations} from './writing-collaboration.mjs';
 import {openLanguageCheck} from './writing-language.mjs';
+import {uploadCollectionPDFs} from './collection-drop.mjs';
 
 const $ = id => document.getElementById(id);
 const content = $('content');
+document.body.classList.add('workspace-page');
 const mode = location.pathname;
 let sourceEditor, writerLayout, outlineTimer, diffTextChanges, serverProject, syncTimer, syncBusy = false, syncFailures = 0;
 const textTypes = /\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i;
@@ -46,26 +48,41 @@ $('cancelCreate').onclick = () => $('createDialog').close();
 for (const a of document.querySelectorAll('nav a')) a.classList.toggle('active', a.pathname === mode);
 
 function home() {
-  content.innerHTML = '<div class="intro"><p class="eyebrow">YOUR RESEARCH, TOGETHER</p><h1>From a first question<br>to the final manuscript.</h1><p class="muted">A place to explore, collect, read and write.</p></div><div class="cards" id="modules"></div>';
-  [['01', 'OriginRAG', 'Ask questions of your corpus and follow the evidence.', '/chat'],
-   ['02', 'Bookshelf', 'Your current reads, highlights and thoughts.', '/bookshelf'],
-   ['03', 'Library', 'Explore the corpus. Gather papers into personal project collections.', '/library'],
-   ['04', 'OriginWrite', 'Your LaTeX manuscript, source and PDF side by side.', '/write']].filter(item => (item[3] !== '/chat' || appProfile.features.rag) && (item[3] !== '/write' || appProfile.features.write)).forEach(([num, name, desc, href]) => {
-    const card = link('', href, 'card'); card.append(node('span', num, 'number'), node('h2', name), node('p', desc)); $('modules').append(card);
-  });
+  let preferred;
+  try { preferred = JSON.parse(localStorage.getItem('origin.workspace.settings.v1'))?.startPage; } catch {}
+  const allowed = ['/library', '/bookshelf', ...(appProfile.features.rag ? ['/chat'] : []), ...(appProfile.features.write ? ['/write'] : [])];
+  location.replace(allowed.includes(preferred) ? preferred : appProfile.home);
 }
 
 async function shelf() {
   heading('Your bookshelf', 'A little space for the papers you are working with.');
   const books = node('div', undefined, 'shelf'); content.append(books);
   const data = await api('/api/shelf');
-  if (!data.items.length) books.append(node('p', 'Your shelf is waiting. Save a paper from the Library to begin.'));
-  for (const paper of data.items) {
-    const b = node('article', undefined, 'book'); b.append(node('h3', paper.title), node('small', [paper.author, paper.year].filter(Boolean).join(' · ')));
-    if (paper.available) b.append(link('Open reader ↗', '/reader?paper_id=' + encodeURIComponent(paper.paper_id)));
-    b.append(button('Remove from shelf', async () => { await api('/api/shelf', {action: 'remove', paper_id: paper.paper_id}); content.replaceChildren(); await shelf(); }));
-    books.append(b);
+  const paging = node('div', undefined, 'shelf-paging'), label = node('span'); content.append(paging);
+  let page = 0;
+  const compact = matchMedia('(max-width:700px)');
+  const previous = button('Previous', () => { page--; draw(); }), next = button('Next', () => { page++; draw(); });
+  paging.append(previous, label, next);
+  function draw() {
+    const perRow = compact.matches ? 3 : 6, size = perRow * 2;
+    page = Math.max(0, Math.min(page, Math.ceil(data.items.length / size) - 1));
+    books.replaceChildren();
+    for (let level = 0; level < 2; level++) {
+      const plank = node('div', undefined, 'shelf-level');
+      for (const paper of data.items.slice(page * size + level * perRow, page * size + (level + 1) * perRow)) {
+        const b = node('article', undefined, 'book'), title = node('h3', paper.title); title.title = paper.title;
+        b.append(title, node('small', [paper.author, paper.year].filter(Boolean).join(' · ')));
+        if (paper.available) b.append(link('Read PDF', '/reader?paper_id=' + encodeURIComponent(paper.paper_id)));
+        const remove = button('Remove', async () => { await api('/api/shelf', {action: 'remove', paper_id: paper.paper_id}); data.items = data.items.filter(item => item.paper_id !== paper.paper_id); draw(); });
+        remove.setAttribute('aria-label', 'Remove from shelf: ' + paper.title); b.append(remove); plank.append(b);
+      }
+      if (!data.items.length && level === 0) plank.append(link('Choose your first paper from the Library →', '/library', 'shelf-empty'));
+      books.append(plank);
+    }
+    previous.disabled = page === 0; next.disabled = (page + 1) * size >= data.items.length;
+    label.textContent = `${data.items.length} papers · Shelf ${page + 1} of ${Math.max(1, Math.ceil(data.items.length / size))}`;
   }
+  compact.addEventListener('change', draw); draw();
 }
 
 async function library() {
@@ -74,26 +91,64 @@ async function library() {
   h.append(button('Find or import papers', () => openLibraryImport({notice, changed: () => load()})));
   content.insertAdjacentHTML('beforeend', '<div class="library-layout"><aside><p class="eyebrow">MY COLLECTIONS</p><div id="collections" class="collection-list"></div></aside><section><form id="searchForm" class="search"><input id="query" type="search" placeholder="Search title, author, journal…" aria-label="Search library"><button>Search</button></form><p id="libraryCount" class="muted"></p><div id="papers"></div><div class="actions"><button id="previousPapers">Previous</button><button id="nextPapers">Next</button></div></section></div>');
   const params = new URLSearchParams(location.search);
-  let selected = state.collections.some(c => c.id === params.get('collection')) ? params.get('collection') : '', offset = 0, sequence = 0;
+  let selected = state.collections.some(c => c.id === params.get('collection')) ? params.get('collection') : '', offset = 0, sequence = 0, browse = false, autoBrowse = true;
   $('query').value = params.get('query') || '';
   const tools = node('div', undefined, 'library-tools'); $('libraryCount').after(tools);
   const collectionButtons = [];
-  for (const c of [{id: '', name: 'All papers'}, ...state.collections]) {
-    const b = button(c.name, async () => { selected = c.id; offset = 0; history.replaceState(null, '', '/library' + (selected ? '?collection=' + selected : '')); collectionButtons.forEach(([id, el]) => el.setAttribute('aria-pressed', String(id === selected))); await load(); });
-    b.setAttribute('aria-pressed', String(c.id === selected)); collectionButtons.push([c.id, b]); $('collections').append(b);
+  let adding = Promise.resolve();
+  function addPaper(id, paperId) {
+    adding = adding.catch(() => {}).then(async () => {
+      const target = await api('/api/writing?id=' + id + '&kind=collections');
+      await api('/api/writing', {action: 'collection_paper', id, revision: target.revision, paper_id: paperId});
+      notice('Paper linked to your collection. No extra PDF copy was created.');
+      await load();
+    });
+    return adding;
   }
+  function acceptDrop(target, getCollection) {
+    target.addEventListener('dragover', event => {
+      if (![...event.dataTransfer.types].some(type => ['Files', 'application/x-originrag-paper-id'].includes(type))) return;
+      event.preventDefault(); target.classList.add('drop-active');
+    });
+    target.addEventListener('dragleave', () => target.classList.remove('drop-active'));
+    target.addEventListener('drop', event => {
+      event.preventDefault(); event.stopPropagation(); target.classList.remove('drop-active');
+      const id = getCollection();
+      if (event.dataTransfer.files.length) {
+        uploadCollectionPDFs([...event.dataTransfer.files], id, {notice, changed: load}).catch(error => notice(error.message, true));
+      } else {
+        const paperId = event.dataTransfer.getData('application/x-originrag-paper-id');
+        if (id && paperId) addPaper(id, paperId).catch(error => notice(error.message, true));
+      }
+    });
+  }
+  for (const c of [{id: '', name: 'All papers'}, ...state.collections]) {
+    const b = button(c.name, async () => { selected = c.id; browse = false; autoBrowse = true; offset = 0; history.replaceState(null, '', '/library' + (selected ? '?collection=' + selected : '')); collectionButtons.forEach(([id, el]) => el.setAttribute('aria-pressed', String(id === selected))); await load(); });
+    b.setAttribute('aria-pressed', String(c.id === selected)); collectionButtons.push([c.id, b]); $('collections').append(b);
+    if (c.id) { acceptDrop(b, () => c.id); b.title = 'Drop corpus papers or PDFs into ' + c.name; }
+  }
+  const dropHint = node('p', 'Drop PDFs here, or drag a corpus paper onto a collection.', 'collection-drop-hint'); tools.before(dropHint);
+  acceptDrop(document.querySelector('.library-layout'), () => selected);
   async function load() {
     const current = ++sequence; const q = $('query').value.trim();
     let data, collection;
     if (selected) {
       collection = await api('/api/writing?id=' + selected + '&kind=collections');
-      const items = collection.items.filter(p => [p.title, p.author, p.year, p.journal, p.doi].join(' ').toLowerCase().includes(q.toLowerCase()));
-      data = {items: items.slice(offset, offset + 40), total: items.length};
+      if (autoBrowse) { browse = !collection.items.length; autoBrowse = false; }
+      if (browse) data = await api('/api/library?limit=40&offset=' + offset + '&query=' + encodeURIComponent(q));
+      else {
+        const items = collection.items.filter(p => [p.title, p.author, p.year, p.journal, p.doi].join(' ').toLowerCase().includes(q.toLowerCase()));
+        data = {items: items.slice(offset, offset + 40), total: items.length};
+      }
     } else data = await api('/api/library?limit=40&offset=' + offset + '&query=' + encodeURIComponent(q));
     if (current !== sequence) return;
     tools.replaceChildren();
     if (collection) {
       tools.append(node('p', collection.name + ' · private to your account', 'muted'));
+      for (const [value, label] of [[false, 'In this collection'], [true, 'Browse corpus']]) {
+        const toggle = button(label, async () => { browse = value; offset = 0; await load(); });
+        toggle.setAttribute('aria-pressed', String(browse === value)); tools.append(toggle);
+      }
       tools.append(button('Export BibTeX', async () => { const result = await api('/api/writing?collection_refs=' + selected); download(result.bibtex, 'references.bib'); }));
       tools.append(button('Rename', () => askName('Rename personal library', async name => { await api('/api/writing', {action: 'rename_collection', id: selected, revision: collection.revision, name}); await refresh(); content.replaceChildren(); await library(); })));
       if (appProfile.features.write) tools.append(button('Write with this library', () => newManuscript({id: 'article'}, selected)));
@@ -101,7 +156,13 @@ async function library() {
     $('papers').replaceChildren(); $('libraryCount').textContent = `${data.total} papers`; $('previousPapers').disabled = offset === 0; $('nextPapers').disabled = offset + 40 >= data.total;
     for (const p of data.items) {
       const row = node('article', undefined, 'paper'); row.append(node('h3', p.title), node('p', [p.author, p.year, p.journal].filter(Boolean).join(' · ')));
+      row.draggable = true; row.dataset.paperId = p.paper_id;
+      row.addEventListener('dragstart', event => { event.dataTransfer.setData('application/x-originrag-paper-id', p.paper_id); event.dataTransfer.effectAllowed = 'copy'; });
       const actions = node('div', undefined, 'actions');
+      if (collection && browse) {
+        const present = collection.papers.includes(p.paper_id);
+        const add = button(present ? 'In collection' : 'Add to ' + collection.name, () => addPaper(collection.id, p.paper_id)); add.disabled = present; actions.append(add);
+      }
       if (p.local_pdf || p.pdf_url) actions.append(link('Read PDF', '/reader?paper_id=' + encodeURIComponent(p.paper_id), 'button'));
       actions.append(button('Save to shelf', async () => { await api('/api/shelf', {action: 'add', paper_id: p.paper_id}); notice('Saved to your bookshelf.'); }));
       const pick = node('select'); pick.setAttribute('aria-label', 'Destination collection'); pick.append(new Option('Add to collection…', ''));
@@ -111,7 +172,7 @@ async function library() {
         await api('/api/writing', {action: 'collection_paper', id: target.id, revision: target.revision, paper_id: p.paper_id}); notice('Added to your collection.'); if (selected) await load();
       } catch (e) { notice(e.message, true); } finally { pick.value = ''; pick.disabled = false; } };
       actions.append(pick);
-      if (selected) actions.append(button('Remove from collection', async () => { await api('/api/writing', {action: 'collection_paper', id: selected, revision: collection.revision, paper_id: p.paper_id, remove: true}); await load(); }));
+      if (selected && collection.papers.includes(p.paper_id)) actions.append(button('Remove from collection', async () => { await api('/api/writing', {action: 'collection_paper', id: selected, revision: collection.revision, paper_id: p.paper_id, remove: true}); await load(); }));
       row.append(actions); $('papers').append(row);
     }
   }
@@ -153,17 +214,43 @@ async function projects() {
       for (const c of state.collections) {
         const card = node('article', undefined, 'card personal-library-card'), links = node('div', undefined, 'actions');
         card.append(node('h3', c.name), node('p', `${c.count} papers · private to your account`));
+        card.append(node('p', 'Drop PDFs or corpus papers here.', 'hint'));
+        card.ondragover = event => { if ([...event.dataTransfer.types].some(type => ['Files', 'application/x-originrag-paper-id'].includes(type))) { event.preventDefault(); card.classList.add('drop-active'); } };
+        card.ondragleave = () => card.classList.remove('drop-active');
+        card.ondrop = async event => {
+          event.preventDefault(); card.classList.remove('drop-active');
+          try {
+            const changed = async () => { await refresh(); show('libraries'); };
+            if (event.dataTransfer.files.length) await uploadCollectionPDFs([...event.dataTransfer.files], c.id, {notice, changed});
+            else {
+              const paperId = event.dataTransfer.getData('application/x-originrag-paper-id');
+              if (!paperId) return;
+              const current = await api('/api/writing?id=' + c.id + '&kind=collections');
+              await api('/api/writing', {action: 'collection_paper', id: c.id, revision: current.revision, paper_id: paperId});
+              await changed(); notice('Paper linked to your collection.');
+            }
+          } catch (error) { notice(error.message, true); }
+        };
         links.append(link('Open library', '/library?collection=' + c.id, 'button'), button('Start manuscript', () => newManuscript({id: 'article'}, c.id))); card.append(links); cards.append(card);
       }
       return;
     }
     const list = node('div', undefined, 'manuscript-list'); panel.append(list);
-    for (const p of state.projects) {
-      const row = link('', '/write?id=' + p.id, 'manuscript-row'), text = node('div');
+    for (const p of [...state.projects].sort((a, b) => b.updated - a.updated)) {
+      const row = node('article', undefined, 'manuscript-row'), text = link('', '/write?id=' + p.id, 'manuscript-title');
       const date = p.updated ? new Date(p.updated * 1000) : null;
-      text.append(node('h3', p.name), node('p', `${p.count} files${date && !Number.isNaN(date.valueOf()) ? ' · Updated ' + date.toLocaleDateString() : ''}`));
+      text.append(node('h3', p.name), node('p', date && !Number.isNaN(date.valueOf()) ? 'Edited ' + date.toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'}) : 'Not edited yet'));
       if (p.collaboration?.shared) text.querySelector('h3').append(node('span', 'Shared', 'sharing-badge'));
-      row.append(node('span', 'TₑX', 'manuscript-icon'), text, node('span', 'Open →')); list.append(row);
+      const actions = node('div', undefined, 'manuscript-actions');
+      actions.append(link('Open', '/write?id=' + p.id, 'button'), link('Download ZIP', '/api/writing/export?id=' + p.id, 'button'));
+      if (p.collaboration?.enabled) actions.append(button('Share', () => openSharing({api, project: p, notice, changed: access => { p.collaboration = access; }})));
+      if (p.collaboration?.role !== 'editor') actions.append(button('Delete', async () => {
+        if (!confirm(`Delete “${p.name}”? Its source files will be removed for everyone with access. Download a ZIP first if you need a backup.`)) return;
+        if (!confirm(`Final confirmation: permanently delete “${p.name}”? This cannot be undone.`)) return;
+        await api('/api/writing', {action: 'delete_project', id: p.id, revision: p.revision, confirm_name: p.name, confirm_delete: true});
+        await refresh(); show('manuscripts'); notice('Manuscript deleted. Your collections and corpus papers were kept.');
+      }, 'danger'));
+      row.append(text, actions); list.append(row);
     }
     if (!state.projects.length) {
       const empty = node('div', undefined, 'desk-empty'); empty.append(node('h2', 'Start with a blank page. Or a head start.'), node('p', 'Choose a ready-to-compile template, or import your existing LaTeX project.', 'muted'), button('Browse templates', () => show('templates'))); list.append(empty);
@@ -469,23 +556,20 @@ async function editor(id) {
   $('exportZip').href = '/api/writing/export?id=' + project.id;
   $('exportZip').onclick = async e => { e.preventDefault(); try { await save(); location.href = $('exportZip').href; } catch (err) { notice(err.message, true); } };
   $('compile').disabled = $('compileCode').disabled = !state.compiler.configured; $('autoCompile').disabled = !state.compiler.configured;
-  $('compile').onclick = () => { $('previewState').textContent = 'Compiling…'; compile(true).catch(e => notice(e.message, true)); };
+  $('compile').title = 'Compile changes or reuse the saved PDF. Shift-click forces a fresh build.';
+  $('compile').onclick = event => { $('previewState').textContent = 'Compiling…'; compile(Boolean(event.shiftKey)).catch(e => notice(e.message, true)); };
   $('compileCode').onclick = $('compile').onclick;
   $('autoCompile').onchange = () => { clearTimeout(compileTimer); if ($('autoCompile').checked) compile().catch(e => notice(e.message, true)); };
   if (!state.compiler.configured) notice(state.compiler.message);
   document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save().catch(e => notice(e.message, true)); } });
-  document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && state.compiler.configured) { e.preventDefault(); compile(true).catch(e => notice(e.message, true)); } });
+  document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && state.compiler.configured) { e.preventDefault(); compile(e.shiftKey).catch(e => notice(e.message, true)); } });
   window.addEventListener('beforeunload', e => { if (editVersion !== savedVersion) { e.preventDefault(); e.returnValue = ''; } });
 }
 
 try {
+  window.originragSaveDraft = async () => { if (project) await save(); };
   appProfile = await api('/api/app-profile');
   for (const item of document.querySelectorAll('[data-feature]')) item.hidden = !appProfile.features[item.dataset.feature];
-  if (appProfile.user) {
-    $('workspaceUser').textContent = appProfile.user.display_name || appProfile.user.username || '';
-    $('workspaceLogout').hidden = false;
-    $('workspaceLogout').onclick = async () => { try { if (project) await save(); await api('/api/logout', {}); location.href = '/login'; } catch (error) { notice(error.message, true); } };
-  }
   await refresh();
   if (mode === '/bookshelf') await shelf();
   else if (mode === '/library') await library();

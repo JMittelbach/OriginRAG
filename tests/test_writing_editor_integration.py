@@ -153,7 +153,7 @@ def test_real_compile_stacked_height_and_independent_code_pdf_zoom(workspace_ser
         page.locator('#compile').click()
         playwright.expect(page.locator('#pdfPages canvas')).to_have_count(1, timeout=30000)
         playwright.expect(page.locator('#previewState')).to_contain_text('PDF · revision')
-        assert compile_payloads[-1]['force'] is True
+        assert compile_payloads[-1]['force'] is False
         original = get_project(page, project_id)['files']
         page.locator('#codeZoom').select_option('20')
         assert page.locator('#source .cm-editor').evaluate('element => getComputedStyle(element).fontSize') == '20px'

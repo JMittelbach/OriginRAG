@@ -1,3 +1,7 @@
+import base64
+import hashlib
+
+
 APPEARANCE_SCRIPT = r"""
 <script>
 (() => {
@@ -82,6 +86,10 @@ APPEARANCE_SCRIPT = r"""
 })();
 </script>
 """
+
+APPEARANCE_SCRIPT_HASH = base64.b64encode(hashlib.sha256(
+    APPEARANCE_SCRIPT.split('<script>', 1)[1].split('</script>', 1)[0].encode()
+).digest()).decode()
 
 APPEARANCE_DIALOG = r"""
 <dialog id="appearanceDialog" class="appearance-panel" aria-labelledby="appearanceTitle" aria-describedby="appearanceDescription">

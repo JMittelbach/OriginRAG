@@ -56,7 +56,9 @@ from originrag.provenance.library import (  # noqa: E402
 from originrag.provenance.requests import queue_missing_sources  # noqa: E402
 from originrag.provenance.source_type import classify_source_document  # noqa: E402
 from originrag.utils.io import write_json  # noqa: E402
-from originrag.web_appearance import with_appearance  # noqa: E402
+from originrag.web_appearance import with_appearance, APPEARANCE_SCRIPT_HASH  # noqa: E402
+from originrag.web_navigation import with_navigation  # noqa: E402
+from originrag.collection_uploads import CollectionUploads  # noqa: E402
 from originrag.web_onboarding import with_onboarding  # noqa: E402
 from originrag.web_shelf import with_shelf  # noqa: E402
 from originrag.library_pdf import open_registered_pdf, byte_range  # noqa: E402
@@ -1175,6 +1177,7 @@ class LibrarySyncManager:
     ) -> None:
         self.inbox = Path(inbox)
         self.inbox.mkdir(parents=True, exist_ok=True)
+        self.collection_uploads = CollectionUploads(self.inbox / '.collection-uploads.sqlite')
         self.metadata_only = metadata_only
         self.importer = importer or self._import
         self.corpus_lock = corpus_lock or threading.RLock()
@@ -1237,6 +1240,8 @@ class LibrarySyncManager:
         doi: str = "",
         uploaded_by: str = "",
         schedule_import: bool = True,
+        collection_directory: Path | None = None,
+        collection: str = '',
     ) -> dict[str, object]:
         if content_length < 5:
             raise ValueError("Uploaded PDF is empty.")
@@ -1249,6 +1254,10 @@ class LibrarySyncManager:
         if doi and not clean_doi:
             raise ValueError("The supplied DOI is invalid.")
         upload_id = secrets.token_hex(10)
+        if collection:
+            if collection_directory is None:
+                raise ValueError('Collection owner is required.')
+            self.collection_uploads.add(upload_id, collection_directory, collection)
         safe_stem = import_paper_inbox.safe_filename(Path(original).stem)
         target = self.inbox / f"{upload_id}__{safe_stem}.pdf"
         temporary = target.with_suffix(".pdf.uploading")
@@ -1287,6 +1296,7 @@ class LibrarySyncManager:
                 encoding="utf-8",
             )
         except Exception:
+            self.collection_uploads.discard(upload_id)
             temporary.unlink(missing_ok=True)
             target.unlink(missing_ok=True)
             target.with_suffix(target.suffix + ".doi.txt").unlink(missing_ok=True)
@@ -1336,6 +1346,8 @@ class LibrarySyncManager:
                 if int(summary.get("imported") or 0) > 0:
                     self.read_cache_refresh()
                 self.refresh_callback()
+                if self.collection_uploads.path.exists():
+                    self.collection_uploads.finish(summary.get('results', []), library_catalog())
             except Exception as exc:
                 self._update(
                     state="error",
@@ -2152,6 +2164,8 @@ def build_handler(
                         filename=unquote(str(self.headers.get("X-Paper-Filename") or "paper.pdf")),
                         doi=str(self.headers.get("X-Paper-DOI") or ""),
                         uploaded_by=owner_key,
+                        collection_directory=REPO_ROOT / current_app.out_dir,
+                        collection=str(self.headers.get('X-OriginRAG-Collection') or ''),
                         schedule_import=(
                             str(self.headers.get("X-Paper-Defer-Sync") or "") != "1"
                         ),
@@ -2583,7 +2597,7 @@ def build_handler(
         def send_security_headers(self) -> None:
             self.send_header("Cache-Control", "no-store")
             if urlparse(self.path).path in WORKSPACE_PAGES | {"/reader"} or urlparse(self.path).path.startswith("/assets/vendor/pdfjs/"):
-                policy = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; font-src 'self' blob: data:; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+                policy = f"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval' 'sha256-{APPEARANCE_SCRIPT_HASH}'; worker-src 'self'; font-src 'self' blob: data:; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
             else:
                 policy = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
             self.send_header("Content-Security-Policy", policy)
@@ -9219,7 +9233,7 @@ INDEX_HTML = r"""<!doctype html>
 """
 
 
-INDEX_HTML = with_onboarding(with_appearance(with_shelf(INDEX_HTML)))
+INDEX_HTML = with_navigation(with_onboarding(with_appearance(with_shelf(INDEX_HTML))))
 
 
 if __name__ == "__main__":

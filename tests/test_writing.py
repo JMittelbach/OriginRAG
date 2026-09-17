@@ -170,9 +170,9 @@ def test_browser_project_library_edit_and_reopen(workspace_server):
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.goto(base + '/workspace')
-        page.locator('#modules .card').first.wait_for()
-        assert page.locator('#modules .card').count() == 4
-        page.locator('#modules a[href="/library"]').click()
+        page.wait_for_url('**/chat')
+        page.locator('#guideSkip').click()
+        page.locator('#globalNavigation a[href="/library"]').click()
         page.get_by_role('button', name='+ Collection').click()
         page.locator('#newName').fill('My study')
         page.get_by_role('button', name='Create', exact=True).click()

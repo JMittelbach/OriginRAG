@@ -446,7 +446,7 @@ class WritingStore:
         action = payload.get('action')
         if action == 'sync_bibliography':
             return self.sync_bibliography(payload, catalogue)
-        allowed = {'create_project', 'save_project', 'create_collection', 'collection_paper', 'rename_collection'}
+        allowed = {'create_project', 'save_project', 'delete_project', 'create_collection', 'collection_paper', 'rename_collection'}
         if not isinstance(action, str) or action not in allowed:
             raise ValueError('Unknown writing action.')
         kind = 'collections' if action in {'create_collection', 'collection_paper', 'rename_collection'} else 'projects'
@@ -488,6 +488,12 @@ class WritingStore:
                     concurrent_save = action == 'save_project' and 'base' in payload
                     if type(payload.get('revision')) is not int or (payload['revision'] != revision and not concurrent_save):
                         raise WritingConflict('Changed in another window. Export your draft before reloading.')
+                    if action == 'delete_project':
+                        if payload.get('confirm_name') != data['name'] or payload.get('confirm_delete') is not True:
+                            raise ValueError('Confirm the manuscript name and deletion.')
+                        db.execute('DELETE FROM writing_bases WHERE document_id=?', (key,))
+                        db.execute("DELETE FROM documents WHERE id=? AND kind='projects'", (key,))
+                        return {'id': key, 'deleted': True}
                     if action == 'save_project':
                         files, main = payload.get('files'), payload.get('main')
                         validate_files(files, main)

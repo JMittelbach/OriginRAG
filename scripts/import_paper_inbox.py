@@ -43,6 +43,7 @@ CROSSREF_URL = "https://api.crossref.org/works"
 USER_AGENT = "OriginRAG/0.1 (local literature import)"
 REPORT_FIELDS = (
     "source_file",
+    "upload_id",
     "status",
     "reason",
     "paper_id",
@@ -329,6 +330,7 @@ def import_inbox(
                 key: row.get(key, "")
                 for key in (
                     "source_file",
+                    "upload_id",
                     "status",
                     "reason",
                     "paper_id",
@@ -1349,6 +1351,9 @@ def write_tsv_atomic(path: Path, rows: list[dict[str, str]], fields: list[str]) 
 def report_row(source: Path, *, status: str, reason: str = "", **values: str) -> dict[str, str]:
     row = {field: "" for field in REPORT_FIELDS}
     row.update(source_file=display_source_name(source), status=status, reason=reason, **values)
+    token = source.name.split('__', 1)[0]
+    if re.fullmatch(r'[0-9a-f]{20}', token):
+        row['upload_id'] = token
     return row
 
 

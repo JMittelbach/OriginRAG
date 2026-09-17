@@ -1,8 +1,8 @@
 # Your research workspace
 
-Start the web application with `./web`, then choose **Workspace** in the header,
-or open `http://127.0.0.1:8765/workspace` (use the port printed by your launcher).
-The existing chat remains available at `/` and `/chat`.
+Start the web application with `./web`. The same top navigation connects all four
+areas, with **Appearance**, **Settings** and your account available throughout.
+`/workspace` opens your preferred start page, chosen in **Settings**.
 
 - **OriginRAG**: search, ask questions and inspect study overlap.
 - **Bookshelf**: your saved papers, linked to the existing reader and private notes.
@@ -26,8 +26,8 @@ The existing chat remains available at `/` and `/chat`.
    successfully compiled PDF. **Download draft** preserves the current buffers
    as JSON, including unsaved changes, for recovery after a save conflict.
 
-Unchanged successful builds can reuse a cached PDF from your own project.
-**Recompile** requests a fresh build. A bibliography error or unresolved citation
+Unchanged successful builds reuse a cached PDF from your own project.
+**Shift-click Recompile** requests a fresh build. A bibliography error or unresolved citation
 is reported even if the LaTeX engine produced a PDF; it is not presented as a
 successful new preview.
 
@@ -71,6 +71,18 @@ Personal libraries are collections of papers from the shared corpus, private to
 your account. A paper can belong to several libraries without duplicating its
 PDF. Removing it from a personal library does not remove the corpus paper or its
 bookshelf bookmark.
+
+In **Library**, open a collection and select **Browse corpus** to add existing
+papers directly. You can also drag a paper onto a collection in the sidebar.
+Drop PDFs onto a collection or its card under **OriginWrite → My libraries**:
+accepted PDFs are imported into the shared corpus and linked to your private
+collection automatically. Imports still require the host to enable PDF uploads.
+Papers needing review are not silently added. For PDFs already in the corpus,
+use **Browse corpus** to link the existing record.
+
+The manuscript list shows the last edit time, **Download ZIP** and, on a shared
+server, **Share → Add a collaborator**. Only the owner can delete a manuscript,
+and deletion asks for confirmation twice. Collections and corpus papers remain.
 
 Inside a manuscript, place the cursor where the citation should go before opening
 **References**:
@@ -259,7 +271,7 @@ that ambiguity. Cached builds are private to the account and project, held in
 memory for at most 30 minutes, and discarded on restart. The shared build cache
 defaults to 32 MiB; set `ORIGINWRITE_BUILD_CACHE_MIB` between `0` (disabled) and
 `128` to change that budget. This is a cache budget, not a limit on total server
-or compiler memory. A fresh build is still available with **Recompile**.
+or compiler memory. A fresh build is still available with **Shift-click Recompile**.
 
 ### macOS
 
@@ -328,8 +340,7 @@ Docker daemon access is a host-administration privilege. Use a dedicated service
 account and private deployment. Public multi-tenant hosting requires additional
 security review.
 
-One compilation runs at a time per web-server process. Additional requests get a
-visible busy response, not a hidden queue. Each build is limited to 45 seconds,
+Compilations use the bounded worker pool and queue described above. Each build is limited to 45 seconds,
 768 MiB memory (container quota, per-process address-space limit with Bubblewrap,
 watchdog on macOS), and bounded
 output size. Temporary files are discarded after the response. Build logs are
