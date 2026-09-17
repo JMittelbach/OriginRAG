@@ -66,7 +66,7 @@ def test_library_import_works_without_visiting_chat(workspace_server):
             path = url.split('/api/', 1)[1].split('?', 1)[0]
             seen.append((path, route.request.method, route.request.headers, route.request.post_data_buffer))
             payloads = {
-                'status': {'library_access': {'enabled': True, 'csrf_token': 'local-test-token'}},
+                'library-access': {'library_access': {'enabled': True, 'csrf_token': 'local-test-token'}},
                 'library-upload': {'upload_id': 'upload-1'},
                 'library-sync': {'state': 'complete'},
                 'library-status': {'state': 'complete', 'batch_id': 'batch-1'},
@@ -77,7 +77,7 @@ def test_library_import_works_without_visiting_chat(workspace_server):
             }
             route.fulfill(json=payloads[path])
 
-        for endpoint in ['status', 'library-upload', 'library-sync', 'library-status', 'paper-imports', 'paper-import', 'discover-journals', 'discover-papers']:
+        for endpoint in ['library-access', 'library-upload', 'library-sync', 'library-status', 'paper-imports', 'paper-import', 'discover-journals', 'discover-papers']:
             page.route(base + '/api/' + endpoint + '*', mocked)
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -104,4 +104,33 @@ def test_library_import_works_without_visiting_chat(workspace_server):
         playwright.expect(dialog).not_to_be_attached()
         assert page.url.endswith('/library')
         assert not errors
+        browser.close()
+
+
+def test_pdf_can_be_dropped_directly_onto_collection(workspace_server):
+    playwright = pytest.importorskip('playwright.sync_api')
+    base, _ = workspace_server
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        uploaded = []
+        page.route('**/api/library-access', lambda route: route.fulfill(json={'library_access': {'enabled': True, 'csrf_token': 'test'}}))
+        def upload(route):
+            uploaded.append(route.request.headers)
+            route.fulfill(json={'upload_id': 'test-upload'})
+        page.route('**/api/library-upload', upload)
+        page.route('**/api/library-sync', lambda route: route.fulfill(json={'state': 'queued'}))
+        page.route('**/api/library-status', lambda route: route.fulfill(json={'state': 'complete', 'results': [
+            {'upload_id': 'test-upload', 'status': 'accepted', 'collection_link_state': 'added'}]}))
+        page.goto(base + '/library')
+        page.get_by_role('button', name='+ Collection').click()
+        page.locator('#newName').fill('Drop here')
+        page.get_by_role('button', name='Create', exact=True).click()
+        target = page.get_by_role('button', name='Drop here', exact=True)
+        target.wait_for()
+        target.evaluate('element => { const transfer = new DataTransfer(); transfer.items.add(new File(["%PDF-1.4"], "paper.pdf", {type:"application/pdf"})); element.dispatchEvent(new DragEvent("drop", {bubbles:true, dataTransfer:transfer})); }')
+        playwright.expect(page.locator('#notice')).to_contain_text('PDFs imported and linked', timeout=10000)
+        assert len(uploaded) == 1 and len(uploaded[0]['x-originrag-collection']) == 32
+        assert uploaded[0]['x-originrag-local-token'] == 'test'
+        assert page.url.endswith('/library')
         browser.close()

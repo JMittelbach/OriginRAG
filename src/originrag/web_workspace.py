@@ -14,6 +14,17 @@ from .web_navigation import with_navigation
 
 PAGES = {'/workspace', '/bookshelf', '/library', '/write'}
 
+
+class DeferredCatalogue:
+    def __init__(self, load):
+        self.load = load
+        self.value = None
+
+    def __iter__(self):
+        if self.value is None:
+            self.value = self.load()
+        return iter(self.value)
+
 HTML = '''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Origin</title><link rel="stylesheet" href="/assets/workspace/workspace.css"><link rel="stylesheet" href="/assets/workspace/writer.css"><link rel="stylesheet" href="/assets/workspace/writer-layout.css"><link rel="stylesheet" href="/assets/workspace/writing-library.css"><style></style><link rel="stylesheet" href="/assets/workspace/workspace-enhancements.css"></head>
@@ -44,6 +55,8 @@ def project_access(store, collaboration, user, key, *, owner_only=False):
 
 
 def handle_writing(handler, path, query, owner_directory, catalogue, *, post=False, collaboration=None, user=None, language_lock=None):
+    if callable(catalogue):
+        catalogue = DeferredCatalogue(catalogue)
     store = WritingStore(owner_directory)
     try:
         if path in {'/api/writing/collaboration', '/api/writing/collaborators'}:

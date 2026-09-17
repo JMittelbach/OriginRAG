@@ -7,6 +7,7 @@ import sqlite3
 import uuid
 
 from .writing import WritingStore, identifier
+from .workspace_storage import workspace_database
 
 
 LOCAL_COLLABORATION = {'enabled': False, 'role': 'local', 'owner': None,
@@ -42,7 +43,7 @@ class ProjectAccess:
 class WritingCollaboration:
     def __init__(self, directory, auth_store):
         self.directory = Path(directory).resolve()
-        self.path = self.directory / '.writing-collaboration.sqlite3'
+        self.path = workspace_database(self.directory, '.writing-collaboration.sqlite3')
         self.auth_store = auth_store
 
     @contextmanager
@@ -136,9 +137,15 @@ class WritingCollaboration:
     def snapshot(self, user, own_store):
         snapshot = own_store.snapshot()
         with self.connect() as db:
+            owner = self.user(user.user_id)
+            shared_ids = {row[0] for row in db.execute('SELECT DISTINCT project FROM editors')}
             for item in snapshot['projects']:
-                access = self._access(db, user, item['id'])
-                item['collaboration'] = access.info
+                db.execute('INSERT OR IGNORE INTO projects(id,owner) VALUES (?,?)', (item['id'], user.user_id))
+                recorded = db.execute('SELECT owner FROM projects WHERE id=?', (item['id'],)).fetchone()
+                if recorded[0] != user.user_id:
+                    raise KeyError('Project ownership mismatch.')
+                item['collaboration'] = {'enabled': True, 'role': 'owner', 'owner': owner,
+                    'can_manage': True, 'can_sync_bibliography': True, 'shared': item['id'] in shared_ids}
             shared = db.execute('SELECT p.id,p.owner FROM projects p JOIN editors e ON e.project=p.id '
                                 'WHERE e.user=? AND p.owner != ?', (user.user_id, user.user_id)).fetchall()
             for key, _ in shared:

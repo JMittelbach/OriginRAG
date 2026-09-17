@@ -57,6 +57,21 @@ def project(call, **fields):
     return call('POST', payload={'action': 'create_project', 'name': 'Private manuscript', **fields})
 
 
+def test_project_management_never_loads_corpus(workspace, monkeypatch):
+    call, _, _, _, _, _ = workspace
+    def forbidden():
+        raise AssertionError('Manuscript management must not load the corpus')
+    monkeypatch.setattr(http.web_chat, 'library_catalog', forbidden)
+    def forbidden_chat(*args, **kwargs):
+        raise AssertionError('Quill must not create a RAG chat session')
+    monkeypatch.setattr(http.web_chat, 'WebChatApp', forbidden_chat)
+    assert 'library_access' in call('GET', '/api/library-access')
+    p = project(call)
+    assert call('GET')['projects'][0]['id'] == p['id']
+    call('POST', payload={'action': 'delete_project', 'id': p['id'], 'revision': p['revision'],
+                         'confirm_name': p['name'], 'confirm_delete': True})
+
+
 def share(call, p, target, action='add', who='alice', status=200):
     return call('POST', '/api/writing/collaboration', who, {'action': action, 'id': p['id'], 'user_id': target.user_id}, status)
 

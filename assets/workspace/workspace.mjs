@@ -39,9 +39,9 @@ function heading(title, description) {
 function askName(title, action) {
   const dialog = $('createDialog'); $('createTitle').textContent = title; $('newName').value = ''; $('createError').textContent = '';
   $('createForm').onsubmit = async e => {
-    e.preventDefault(); const submit = e.submitter; submit.disabled = true;
+    e.preventDefault(); const submit = e.submitter; submit.disabled = true; const label = submit.textContent; submit.textContent = 'Saving…'; $('createError').textContent = 'Preparing your workspace…';
     try { await action($('newName').value); dialog.close(); } catch (error) { $('createError').textContent = error.message; }
-    finally { submit.disabled = false; }
+    finally { submit.disabled = false; submit.textContent = label; }
   };
   dialog.showModal(); $('newName').focus();
 }
@@ -99,6 +99,7 @@ async function library() {
   let adding = Promise.resolve();
   function addPaper(id, paperId) {
     adding = adding.catch(() => {}).then(async () => {
+      notice('Linking paper to your collection…');
       const target = await api('/api/writing?id=' + id + '&kind=collections');
       await api('/api/writing', {action: 'collection_paper', id, revision: target.revision, paper_id: paperId});
       notice('Paper linked to your collection. No extra PDF copy was created.');
@@ -129,7 +130,8 @@ async function library() {
     if (c.id) { acceptDrop(b, () => c.id); b.title = 'Drop corpus papers or PDFs into ' + c.name; }
   }
   const dropHint = node('p', 'Drop PDFs here, or drag a corpus paper onto a collection.', 'collection-drop-hint'); tools.before(dropHint);
-  acceptDrop(document.querySelector('.library-layout'), () => selected);
+  acceptDrop(content, () => selected);
+  const suggestions = node('datalist'); suggestions.id = 'librarySuggestions'; content.append(suggestions); $('query').setAttribute('list', suggestions.id);
   async function load() {
     const current = ++sequence; const q = $('query').value.trim();
     let data, collection;
@@ -143,6 +145,7 @@ async function library() {
       }
     } else data = await api('/api/library?limit=40&offset=' + offset + '&query=' + encodeURIComponent(q));
     if (current !== sequence) return;
+    suggestions.replaceChildren(...data.items.slice(0, 8).map(p => new Option(p.author ? p.title + ' · ' + p.author : p.title, p.title)));
     tools.replaceChildren();
     if (collection) {
       tools.append(node('p', collection.name + ' · private to your account', 'muted'));
@@ -177,7 +180,9 @@ async function library() {
       row.append(actions); $('papers').append(row);
     }
   }
-  $('searchForm').onsubmit = e => { e.preventDefault(); offset = 0; load().catch(e => notice(e.message, true)); };
+  let searchTimer;
+  $('query').oninput = () => { clearTimeout(searchTimer); sequence++; offset = 0; searchTimer = setTimeout(() => load().catch(e => notice(e.message, true)), 220); };
+  $('searchForm').onsubmit = e => { e.preventDefault(); clearTimeout(searchTimer); offset = 0; load().catch(e => notice(e.message, true)); };
   $('previousPapers').onclick = () => { offset = Math.max(0, offset - 40); load().catch(e => notice(e.message, true)); };
   $('nextPapers').onclick = () => { offset += 40; load().catch(e => notice(e.message, true)); };
   await load();
@@ -248,8 +253,11 @@ async function projects() {
       if (p.collaboration?.role !== 'editor') actions.append(button('Delete', async () => {
         if (!confirm(`Delete “${p.name}”? Its source files will be removed for everyone with access. Download a ZIP first if you need a backup.`)) return;
         if (!confirm(`Final confirmation: permanently delete “${p.name}”? This cannot be undone.`)) return;
-        await api('/api/writing', {action: 'delete_project', id: p.id, revision: p.revision, confirm_name: p.name, confirm_delete: true});
-        await refresh(); show('manuscripts'); notice('Manuscript deleted. Your collections and corpus papers were kept.');
+        const buttons = [...actions.querySelectorAll('button')]; buttons.forEach(b => b.disabled = true); notice('Deleting manuscript…');
+        try {
+          await api('/api/writing', {action: 'delete_project', id: p.id, revision: p.revision, confirm_name: p.name, confirm_delete: true});
+          state.projects = state.projects.filter(item => item.id !== p.id); show('manuscripts'); notice('Manuscript deleted. Your collections and corpus papers were kept.');
+        } finally { buttons.forEach(b => b.disabled = false); }
       }, 'danger'));
       row.append(text, actions); list.append(row);
     }

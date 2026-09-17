@@ -299,6 +299,24 @@ monitored. The macOS memory watchdog is not a hard container memory quota.
 
 ### Linux / shared server
 
+Keep Quill's small SQLite databases on durable local storage rather than a slow
+network filesystem. PDFs and the shared corpus can remain on network storage.
+For an existing installation, stop the web service and back up its workspace
+directory first, then run:
+
+```bash
+python scripts/migrate_workspace_storage.py --service-stopped \
+  --source-root /absolute/path/to/workspace-data \
+  --destination /absolute/path/to/local/quill-state
+```
+
+This verifies each copied database and leaves the originals untouched. Set
+`ORIGINRAG_WORKSPACE_STATE_DIR=/absolute/path/to/local/quill-state` in the service
+environment before restarting. Include this new directory in regular backups.
+Do not point it at temporary storage, and do not remove the setting to roll back:
+after new edits, the original databases are stale. Migration is a maintenance
+operation, never something to run while users are editing.
+
 If the host permits unprivileged user namespaces, Tectonic can run in a rootless
 Bubblewrap sandbox without Docker daemon access. Install administrator-approved
 copies of Bubblewrap and Tectonic (system-wide or in your account), prepare a

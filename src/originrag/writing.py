@@ -388,8 +388,9 @@ def bibliography_plan(project, collection, catalogue, filename, connect_document
 
 class WritingStore:
     def __init__(self, directory):
+        from .workspace_storage import workspace_database
         self.directory = Path(directory)
-        self.path = self.directory / '.writing.sqlite3'
+        self.path = workspace_database(self.directory, '.writing.sqlite3')
 
     def connect(self):
         self.directory.mkdir(parents=True, exist_ok=True)

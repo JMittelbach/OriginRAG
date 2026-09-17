@@ -44,7 +44,8 @@ export async function openLibraryImport({notice, changed}) {
       }
       if (library.state === 'error') jobs.append(el('p', library.error || 'Library update failed. Check the uploaded PDF.', 'error'));
       else if (active) jobs.append(el('p', library.stage || 'Updating the library…'));
-      if (library.state === 'complete' && library.batch_id && !completed.has(library.batch_id)) { completed.add(library.batch_id); await changed(); jobs.append(el('p', 'Library updated.')); }
+      if (['complete', 'idle'].includes(library.state) && library.batch_id && !completed.has(library.batch_id)) { completed.add(library.batch_id); message.textContent = 'Library updated.'; await changed(); jobs.append(el('p', 'Library updated.')); }
+      if (!active && tracked.size && [...tracked].every(id => completed.has(id))) message.textContent = 'Your papers have been added.';
       if (active && !closing) timer = setTimeout(poll, 2000);
     } catch (error) { failure(error); }
   }
@@ -104,6 +105,6 @@ export async function openLibraryImport({notice, changed}) {
     closing = true; clearTimeout(timer); clearTimeout(journalTimer); requests.forEach(controller => controller.abort()); dialog.remove();
     changed().catch(error => notice(error.message, true));
   });
-  try { access = (await request('/api/status')).library_access; files.disabled = !access?.enabled; if (!access?.enabled) message.textContent = 'Importing requires local access or a signed-in server account.'; }
+  try { access = (await request('/api/library-access')).library_access; files.disabled = !access?.enabled; if (!access?.enabled) message.textContent = 'Importing requires local access or a signed-in server account.'; }
   catch (error) { files.disabled = true; failure(error); }
 }

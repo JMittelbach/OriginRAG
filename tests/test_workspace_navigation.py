@@ -12,6 +12,12 @@ def test_corpus_drag_navigation_and_double_delete(workspace_server):
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(base + '/library')
+        page.locator('#query').fill('no such synthetic paper')
+        pw.expect(page.locator('#libraryCount')).to_have_text('0 papers')
+        page.locator('#query').fill('study')
+        pw.expect(page.locator('#librarySuggestions option')).to_have_count(1)
+        page.locator('#query').fill('')
+        pw.expect(page.locator('#libraryCount')).to_have_text('1 papers')
         page.get_by_role('button', name='+ Collection').click()
         page.locator('#newName').fill('Working papers')
         page.get_by_role('button', name='Create', exact=True).click()

@@ -34,7 +34,7 @@ if str(SRC_DIR) not in sys.path:
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from originrag.app_profiles import app_profile, PROFILES, COLLECTION_ACTIONS, LazyModule, lazy_function  # noqa: E402
+from originrag.app_profiles import app_profile, PROFILES, COLLECTION_ACTIONS, CHAT_ROUTES, LazyModule, lazy_function  # noqa: E402
 from originrag.cancellation import Cancellation, TurnCancelled, cancellation_scope, cancellable_lock, checkpoint, commit_answer  # noqa: E402
 from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
 from originrag.analysis.faithfulness import citation_claim_blocks, direct_evidence_text  # noqa: E402
@@ -1344,7 +1344,9 @@ class LibrarySyncManager:
                     progress=self._import_progress,
                 )
                 if int(summary.get("imported") or 0) > 0:
+                    self._update(stage="Preparing the fast search cache", progress=94)
                     self.read_cache_refresh()
+                self._update(stage="Refreshing the library and linking collections", progress=98)
                 self.refresh_callback()
                 if self.collection_uploads.path.exists():
                     self.collection_uploads.finish(summary.get('results', []), library_catalog())
@@ -1721,11 +1723,14 @@ def build_handler(
                 return
             current_app, user, _ = context
             owner_key = user.user_id if user else "anonymous"
-            if turn_jobs is not None:
+            if turn_jobs is not None and not isinstance(current_app, WorkspaceApp):
                 turn_jobs.recover_persisted(owner_key, current_app)
             if parsed.path == '/api/app-profile':
                 self.respond_json({**runtime_profile.public(), 'authenticated': bool(user),
                                    'user': public_user(user) if user else None})
+                return
+            if parsed.path == '/api/library-access':
+                self.respond_json({'library_access': self.library_access(user)})
                 return
             if parsed.path == '/' and not runtime_profile.rag:
                 self.respond_redirect(runtime_profile.home)
@@ -1743,7 +1748,7 @@ def build_handler(
                     if not runtime_profile.write:
                         self.handle_collection_request(parsed, current_app)
                         return
-                    handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog(),
+                    handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog,
                                    collaboration=writing_collaboration, user=user)
                 return
             if parsed.path in {"/reader", "/api/reader/paper", "/api/reader/notes"}:
@@ -1974,7 +1979,7 @@ def build_handler(
                 return
             current_app, user, session_token = context
             owner_key = user.user_id if user else "anonymous"
-            if turn_jobs is not None:
+            if turn_jobs is not None and not isinstance(current_app, WorkspaceApp):
                 turn_jobs.recover_persisted(owner_key, current_app)
             if auth_store and not self.valid_csrf(session_token):
                 self.respond_json({"error": "invalid CSRF token"}, status=HTTPStatus.FORBIDDEN)
@@ -1986,7 +1991,7 @@ def build_handler(
                 if not runtime_profile.write:
                     self.handle_collection_request(parsed, current_app, post=True)
                     return
-                handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog(), post=True,
+                handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog, post=True,
                                collaboration=writing_collaboration, user=user, language_lock=corpus_lock)
                 return
             if parsed.path == "/api/job/cancel":
@@ -2321,7 +2326,7 @@ def build_handler(
                 return None
             token, user, _ = context
             assert app_registry is not None
-            if not runtime_profile.rag:
+            if not runtime_profile.rag or urlparse(self.path).path not in CHAT_ROUTES | {'/', '/api/status'}:
                 return WorkspaceApp(app_registry.settings, app_registry.out_dir / 'users' / user.user_id), user, token
             return app_registry.for_session(user, token), user, token
 

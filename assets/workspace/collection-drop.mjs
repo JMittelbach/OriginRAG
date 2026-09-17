@@ -1,7 +1,7 @@
 export async function uploadCollectionPDFs(files, collection, {notice, changed}) {
   if (!files.length || files.length > 20) throw new Error('Drop between 1 and 20 PDFs at a time.');
   if (files.some(file => !file.name.toLowerCase().endsWith('.pdf') || file.size > 100 * 1024 * 1024)) throw new Error('Choose PDFs up to 100 MB each.');
-  const status = await fetch('/api/status').then(response => response.json());
+  const status = await fetch('/api/library-access').then(response => response.json());
   const access = status.library_access;
   if (!access?.enabled) throw new Error('PDF import is not enabled for this account. You can still link papers already in the corpus.');
   const token = document.cookie.split('; ').find(value => value.startsWith('pfempire_csrf='))?.split('=')[1];
@@ -30,6 +30,7 @@ export async function uploadCollectionPDFs(files, collection, {notice, changed})
     const response = await fetch('/api/library-status');
     if (!response.ok) throw new Error('Import continues on the server. Reload the collection to check its progress.');
     const progress = await response.json();
+    if (['queued', 'running'].includes(progress.state)) notice((progress.stage || 'Preparing PDFs…') + (progress.progress ? ` · ${progress.progress}%` : ''));
     for (const result of progress.results || []) {
       if (!uploads.has(result.upload_id)) continue;
       uploads.delete(result.upload_id);
