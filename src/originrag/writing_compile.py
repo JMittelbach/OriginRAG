@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -172,6 +173,18 @@ def _resident_kib(pid):
     return int(memory.stdout.strip()) if memory.stdout.strip().isdigit() else 0
 
 
+def _output_bytes(work):
+    total = 0
+    for path in work.rglob('*'):
+        try:
+            entry = path.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISREG(entry.st_mode):
+            total += entry.st_size
+    return total
+
+
 def compile_project(project):
     validate_files(project['files'], project['main'])
     waiting_since = time.monotonic()
@@ -247,7 +260,7 @@ def compile_project(project):
                 while process.poll() is None:
                     if time.monotonic() - started > TIME_LIMIT:
                         reason = 'Compilation exceeded the 45-second limit.'
-                    elif sum(p.stat().st_size for p in work.rglob('*') if p.is_file() and not p.is_symlink()) > OUTPUT_LIMIT + 12_000_000:
+                    elif _output_bytes(work) > OUTPUT_LIMIT + 12_000_000:
                         reason = 'Compilation exceeded the output-size limit.'
                     if not is_container:
                         try:

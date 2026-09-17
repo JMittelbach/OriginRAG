@@ -24,7 +24,15 @@ def main():
     parser.add_argument('--warm-cache', action='store_true', help='Compile only trusted bundled starters, allowing TeX package downloads.')
     parser.add_argument('--previews', action='store_true', help='Render bundled first-page thumbnails with the isolated offline compiler.')
     parser.add_argument('--tectonic', default='tectonic')
+    parser.add_argument('--template', action='append', help='Prepare only these template IDs (repeatable).')
     args = parser.parse_args()
+    from originrag.writing_templates import list_templates
+    selected = list_templates()
+    if args.template:
+        unknown = set(args.template) - {item['id'] for item in selected}
+        if unknown:
+            parser.error('Unknown templates: ' + ', '.join(sorted(unknown)))
+        selected = [item for item in selected if item['id'] in args.template]
     if args.source_dir:
         target = ROOT / 'assets/writing_templates/vendor'
         target.mkdir(parents=True, exist_ok=True)
@@ -36,7 +44,7 @@ def main():
     if args.warm_cache:
         from originrag.writing import decode_file
         from originrag.writing_templates import list_templates, template_files
-        for item in list_templates():
+        for item in selected:
             files, main_file = template_files(item['id'])
             with tempfile.TemporaryDirectory(prefix='originwrite-trusted-template-') as directory:
                 root = Path(directory)
@@ -55,13 +63,14 @@ def main():
         import fitz
         from originrag.writing_compile import compile_project
         from originrag.writing_templates import ASSETS, list_templates, template_files
-        for item in list_templates():
+        for item in selected:
             files, main_file = template_files(item['id'])
             result = compile_project({'files': files, 'main': main_file, 'revision': 1})
             if not result['ok']:
                 raise ValueError(result['log'])
             with fitz.open(stream=result['pdf'], filetype='pdf') as document:
                 page = document[0]
+                (ASSETS / item['id']).mkdir(parents=True, exist_ok=True)
                 page.get_pixmap(matrix=fitz.Matrix(420 / page.rect.width, 420 / page.rect.width), alpha=False).save(ASSETS / item['id'] / 'preview.png')
             print(item['id'] + ': preview generated from compiled PDF', flush=True)
 

@@ -70,6 +70,15 @@ def test_queue_timeout_removes_ticket():
     slots.release()
 
 
+def test_configuration_can_load_after_module_import(monkeypatch):
+    monkeypatch.setenv('ORIGINWRITE_MAX_PARALLEL_BUILDS', '2')
+    slots = scheduler.CompileSlots()
+    monkeypatch.setenv('ORIGINWRITE_MAX_PARALLEL_BUILDS', '4')
+    assert slots.status()['parallel_builds'] == 4
+    assert slots.acquire(blocking=False)
+    slots.release()
+
+
 @pytest.fixture
 def project(monkeypatch):
     monkeypatch.setattr(builds, '_CACHE', builds.OrderedDict())
@@ -168,6 +177,26 @@ def test_linux_memory_monitor_does_not_spawn_process(monkeypatch):
     monkeypatch.setattr(Path, 'read_text', lambda self: 'Name:\ttectonic\nVmRSS:\t12345 kB\n')
     monkeypatch.setattr(compiler.subprocess, 'run', lambda *a, **k: pytest.fail('Unnecessary ps process'))
     assert compiler._resident_kib(123) == 12345
+
+
+def test_output_monitor_tolerates_disappearing_auxiliary_files(tmp_path, monkeypatch):
+    stable = tmp_path / 'main.pdf'
+    stable.write_bytes(b'%PDF-test')
+    transient = tmp_path / 'transient.aux'
+    transient.write_text('temporary')
+    original = Path.lstat
+    def disappearing(path):
+        if path == transient:
+            raise FileNotFoundError()
+        return original(path)
+    monkeypatch.setattr(Path, 'lstat', disappearing)
+    assert compiler._output_bytes(tmp_path) == len(b'%PDF-test')
+
+
+def test_output_monitor_does_not_follow_symlinks(tmp_path):
+    (tmp_path / 'result').write_bytes(b'1234')
+    (tmp_path / 'alias').symlink_to(tmp_path / 'result')
+    assert compiler._output_bytes(tmp_path) == 4
 
 
 def test_linux_memory_monitor_handles_exited_process_but_not_permission_failure(monkeypatch):

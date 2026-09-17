@@ -52,6 +52,19 @@ build waiters are also bounded so repeated clicks cannot create unlimited
 waiting requests. This coordination is process-local: multiple service
 processes each have their own worker limit.
 
+## Choose a template
+
+The template gallery includes Research article, Bioinformatics, G3, PLOS ONE,
+PLOS Computational Biology and PLOS Genetics. Search by journal or filter by
+publisher. PLOS entries are lightweight OriginWrite starters with the official
+PLOS BibTeX style, not publisher-endorsed submission checks. Every template opens
+as a new manuscript, leaving the current project unchanged.
+
+Hosts preparing an offline compiler can warm just the new templates once with
+`python scripts/prepare_writing_templates.py --warm-cache --template plos-one --template plos-compbiol --template plos-genetics`.
+This allows package downloads only for the trusted bundled starters. Normal
+manuscript compilation remains offline.
+
 ## Connect your papers
 
 Personal libraries are collections of papers from the shared corpus, private to

@@ -12,21 +12,25 @@ from originrag.writing_templates import ASSETS, ARCHIVE_HASH, list_templates, te
 
 def test_gallery_is_local_and_returned_metadata_is_not_mutable():
     gallery = list_templates()
-    assert len(gallery) == 3
-    assert len({entry['id'] for entry in gallery}) == 3
+    assert len(gallery) == 6
+    assert len({entry['id'] for entry in gallery}) == 6
     assert all(entry['main'] == 'main.tex' and entry['licence'] and entry['source'].startswith('https://') for entry in gallery)
     gallery[1]['journals'].append('changed')
     assert 'changed' not in list_templates()[1]['journals']
 
 
-@pytest.mark.parametrize('template_id', ['article', 'bioinformatics', 'g3'])
+@pytest.mark.parametrize('template_id', [item['id'] for item in list_templates()])
 def test_complete_template_projects(template_id):
     files, main = template_files(template_id)
     validate_files(files, main)
     assert 'OriginWrite-LICENSE.txt' in files and 'references.bib' in files
     assert files['references.bib'] == ''
     assert '\\begin{document}' in files[main]
-    if template_id != 'article':
+    if template_id.startswith('plos-'):
+        assert 'plos2025.bst' in files and 'LPPL-1.3c.txt' in files
+        assert '@@' not in files[main]
+        assert ('Author summary' in files[main]) == (template_id != 'plos-one')
+    elif template_id != 'article':
         assert 'oup-authoring-template.cls' in files and 'oup-abbrvnat.bst' in files
         assert 'LPPL-1.3c.txt' in files and 'OUP-README.txt' in files
         assert base64.b64decode(files['doc/oup-authoring-template-doc.pdf']).startswith(b'%PDF')
@@ -53,7 +57,7 @@ def test_publisher_distribution_is_unmodified_and_complete():
 
 
 @pytest.mark.skipif(os.environ.get('ORIGINWRITE_TEST_COMPILER') != '1', reason='Requires prepared isolated TeX compiler')
-@pytest.mark.parametrize('template_id', ['article', 'bioinformatics', 'g3'])
+@pytest.mark.parametrize('template_id', [item['id'] for item in list_templates()])
 def test_bundled_template_compiles_offline(template_id):
     from originrag.writing_compile import compile_project
     files, main = template_files(template_id)
@@ -65,13 +69,13 @@ def test_bundled_template_compiles_offline(template_id):
     with fitz.open(stream=result['pdf'], filetype='pdf') as document:
         assert len(document) >= 1
         assert 'Introduction' in ''.join(page.get_text() for page in document)
-        if template_id != 'article':
+        if template_id in ('bioinformatics', 'g3'):
             assert document[0].rect.width == pytest.approx(595, abs=4)
             assert document[0].rect.height == pytest.approx(782, abs=4)
 
 
 @pytest.mark.skipif(os.environ.get('ORIGINWRITE_TEST_COMPILER') != '1', reason='Requires prepared isolated TeX compiler')
-@pytest.mark.parametrize('template_id', ['article', 'bioinformatics', 'g3'])
+@pytest.mark.parametrize('template_id', [item['id'] for item in list_templates()])
 def test_template_can_cite_synced_bibliography(template_id):
     from originrag.writing_compile import compile_project
     files, main = template_files(template_id)

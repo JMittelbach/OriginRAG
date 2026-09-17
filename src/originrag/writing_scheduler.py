@@ -18,11 +18,15 @@ def configured_capacity():
 
 class CompileSlots:
     def __init__(self, capacity=None, max_queued=MAX_QUEUED_BUILDS):
-        self.capacity = configured_capacity() if capacity is None else capacity
+        self._capacity = capacity
         self.max_queued = max_queued
         self.active = 0
         self.waiting = deque()
         self.condition = threading.Condition()
+
+    @property
+    def capacity(self):
+        return configured_capacity() if self._capacity is None else self._capacity
 
     def acquire(self, blocking=True, timeout=None):
         with self.condition:
