@@ -1,11 +1,12 @@
 const $ = id => document.getElementById(id);
+const navigation = $('globalNavigation') || $('applicationHeader');
 const key = 'origin.workspace.settings.v1';
 let settings = {};
 try { settings = JSON.parse(localStorage.getItem(key)) || {}; } catch {}
 document.documentElement.dataset.reduceMotion = String(Boolean(settings.reduceMotion));
 const profile = await fetch('/api/app-profile').then(response => { if (!response.ok) throw new Error('Account unavailable'); return response.json(); }).catch(() => null);
 if (profile) {
-  for (const item of $('globalNavigation').querySelectorAll('[data-feature]')) item.hidden = !profile.features[item.dataset.feature];
+  for (const item of navigation.querySelectorAll('[data-feature]')) item.hidden = !profile.features[item.dataset.feature];
   for (const item of $('globalStartPage').querySelectorAll('[data-feature]')) item.disabled = !profile.features[item.dataset.feature];
   document.querySelector('.origin-brand').href = profile.home;
   const routes = [...$('globalStartPage').options].filter(option => !option.disabled).map(option => option.value);
@@ -14,7 +15,7 @@ if (profile) {
   $('globalAccountDetails').textContent = profile.user ? `${profile.user.display_name || profile.user.username} (@${profile.user.username})` : 'Local workspace · no sign-in required';
   $('globalSignOut').hidden = !profile.authenticated;
 }
-for (const item of $('globalNavigation').querySelectorAll('nav a')) {
+for (const item of navigation.querySelectorAll('nav a')) {
   if (item.pathname === location.pathname || (location.pathname === '/' && item.pathname === '/chat')) item.setAttribute('aria-current', 'page');
 }
 $('globalSettings').onclick = () => $('globalSettingsDialog').showModal();

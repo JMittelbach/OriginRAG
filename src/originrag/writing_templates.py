@@ -12,11 +12,11 @@ ARCHIVE_HASH = '025434f53ed3a46b9fd84d50a78c734c309476bc47b1cb7a90c383734df38e97
 LICENCE_HASH = '3d262cdf34dafa6955f703c634a8c238ec44109bc8dd6ef34fb7aa54809f7e66'
 PLOS_STYLE_HASH = '8470ef5e547189a61d8eef2cfd7a65fbb84b77b881ccb42ed6815da86a04c490'
 TEMPLATES = (
-    {'id': 'article', 'name': 'Research article', 'journals': [], 'description': 'A clean, lightweight manuscript with the standard article class.', 'licence': 'MIT', 'source': 'https://github.com/JMittelbach/OriginRAG', 'main': 'main.tex', 'publisher': 'OriginWrite', 'layout': 'Single column'},
-    {'id': 'bioinformatics', 'name': 'Bioinformatics', 'journals': ['Bioinformatics'], 'description': 'Official OUP class with a concise OriginWrite starter and structured abstract.', 'licence': 'LPPL-1.3-or-later + MIT starter', 'source': 'https://academic.oup.com/bioinformatics/pages/author-guidelines', 'main': 'main.tex', 'publisher': 'Oxford University Press', 'layout': 'Two columns'},
-    {'id': 'g3', 'name': 'G3 · OUP authoring', 'journals': ['G3: Genes, Genomes, Genetics'], 'description': 'The generic OUP class offered by G3, with an OriginWrite starter. Not the separate GSA template.', 'licence': 'LPPL-1.3-or-later + MIT starter', 'source': 'https://academic.oup.com/g3journal/pages/author-guidelines', 'main': 'main.tex', 'publisher': 'Oxford University Press', 'layout': 'Two columns'},
+    {'id': 'article', 'name': 'Research article', 'journals': [], 'description': 'A clean, lightweight manuscript with the standard article class.', 'licence': 'MIT', 'source': 'https://github.com/JMittelbach/OriginRAG', 'main': 'main.tex', 'publisher': 'Quill', 'layout': 'Single column'},
+    {'id': 'bioinformatics', 'name': 'Bioinformatics', 'journals': ['Bioinformatics'], 'description': 'Official OUP class with a concise Quill starter and structured abstract.', 'licence': 'LPPL-1.3-or-later + MIT starter', 'source': 'https://academic.oup.com/bioinformatics/pages/author-guidelines', 'main': 'main.tex', 'publisher': 'Oxford University Press', 'layout': 'Two columns'},
+    {'id': 'g3', 'name': 'G3 · OUP authoring', 'journals': ['G3: Genes, Genomes, Genetics'], 'description': 'The generic OUP class offered by G3, with a Quill starter. Not the separate GSA template.', 'licence': 'LPPL-1.3-or-later + MIT starter', 'source': 'https://academic.oup.com/g3journal/pages/author-guidelines', 'main': 'main.tex', 'publisher': 'Oxford University Press', 'layout': 'Two columns'},
     *({'id': identifier, 'name': name, 'journals': [name],
-       'description': 'OriginWrite manuscript starter with the official PLOS reference style' + (' and an author summary.' if identifier != 'plos-one' else '.'),
+       'description': 'Quill manuscript starter with the official PLOS reference style' + (' and an author summary.' if identifier != 'plos-one' else '.'),
        'licence': 'MIT starter + LPPL-1.3-or-later bibliography style',
        'source': f'https://journals.plos.org/{journal}/s/submission-guidelines',
        'main': 'main.tex', 'publisher': 'PLOS', 'layout': 'Single column · line numbers'}
@@ -47,7 +47,7 @@ def template_files(template_id):
     files = {
         'main.tex': (ASSETS / ('plos' if is_plos else template_id) / 'main.tex').read_text(encoding='utf-8'),
         'references.bib': '',
-        'OriginWrite-LICENSE.txt': (ASSETS.parents[1] / 'LICENSE').read_text(encoding='utf-8'),
+        'Quill-LICENSE.txt': (ASSETS.parents[1] / 'LICENSE').read_text(encoding='utf-8'),
     }
     if is_plos:
         summary = '' if template_id == 'plos-one' else '\\section*{Author summary}\nExplain the study and its significance for readers outside the field.\n'

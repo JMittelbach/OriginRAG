@@ -181,12 +181,12 @@ def test_browser_project_library_edit_and_reopen(workspace_server):
         playwright.expect(page.locator('#notice')).to_contain_text('Added')
         page.get_by_role('button', name='My study', exact=True).click()
         playwright.expect(page.locator('#libraryCount')).to_have_text('1 papers')
-        page.get_by_role('link', name='OriginWrite', exact=True).click()
+        page.get_by_role('link', name='Quill', exact=True).click()
         page.get_by_role('button', name='+ New manuscript').click()
         page.locator('#newName').fill('Demo manuscript')
         page.get_by_role('button', name='Create', exact=True).click()
         page.locator('#source').wait_for()
-        page.locator('#source .cm-content').fill('\\documentclass{article}\n\\begin{document}\nHello OriginWrite.\n\\end{document}')
+        page.locator('#source .cm-content').fill('\\documentclass{article}\n\\begin{document}\nHello Quill.\n\\end{document}')
         playwright.expect(page.locator('#savedState')).to_have_text('All changes saved')
         page.locator('.project-settings > summary').click()
         page.locator('#projectLibrary').select_option(label='My study')
@@ -199,7 +199,7 @@ def test_browser_project_library_edit_and_reopen(workspace_server):
         playwright.expect(page.locator('#source .cm-content')).to_contain_text('A study')
         playwright.expect(page.locator('#savedState')).to_have_text('All changes saved')
         page.reload()
-        playwright.expect(page.locator('#source .cm-content')).to_contain_text('Hello OriginWrite')
+        playwright.expect(page.locator('#source .cm-content')).to_contain_text('Hello Quill')
         assert page.locator('#projectLibrary option:checked').text_content() == 'My study'
         page.screenshot(path=str(tmp / 'originwrite-editor.png'), full_page=True)
         assert not errors
@@ -311,21 +311,21 @@ def test_writer_resizing_syntax_history_outline_and_mobile(workspace_server):
 @pytest.mark.skipif(os.environ.get('ORIGINWRITE_TEST_COMPILER') != '1', reason='Explicit opt-in for an installed isolated compiler')
 def test_real_compile_errors_and_private_file_isolation(tmp_path):
     import fitz
-    source = r'\documentclass{article}\begin{document}Hello OriginWrite.\end{document}'
+    source = r'\documentclass{article}\begin{document}Hello Quill.\end{document}'
     project = {'files': {'main.tex': source}, 'main': 'main.tex', 'revision': 1}
     result = compile_project(project)
     assert result['ok'], result['log']
     with fitz.open(stream=result['pdf'], filetype='pdf') as pdf:
-        assert 'Hello OriginWrite.' in pdf[0].get_text()
-    bad = compile_project({**project, 'files': {'main.tex': source.replace('Hello OriginWrite.', r'\undefinedOriginWriteCommand')}})
+        assert 'Hello Quill.' in pdf[0].get_text()
+    bad = compile_project({**project, 'files': {'main.tex': source.replace('Hello Quill.', r'\undefinedQuillCommand')}})
     assert not bad['ok'] and bad['diagnostics'] and not bad['pdf']
     secret = tmp_path / 'private.tex'
     secret.write_text('PRIVATE-CONTENT-MUST-NOT-LEAK')
-    attempt = source.replace('Hello OriginWrite.', r'\input{' + str(secret) + '}')
+    attempt = source.replace('Hello Quill.', r'\input{' + str(secret) + '}')
     blocked = compile_project({**project, 'files': {'main.tex': attempt}})
     assert not blocked['ok'] and not blocked['pdf']
     outside = tmp_path / 'must-not-exist.txt'
-    attempt = source.replace('Hello OriginWrite.', r'\immediate\write18{touch ' + str(outside) + '}No shell escape.')
+    attempt = source.replace('Hello Quill.', r'\immediate\write18{touch ' + str(outside) + '}No shell escape.')
     compile_project({**project, 'files': {'main.tex': attempt}})
     assert not outside.exists()
 
@@ -343,13 +343,13 @@ def test_browser_auto_compile_and_errors(workspace_server):
         page.get_by_role('button', name='+ New manuscript').click()
         page.locator('#newName').fill('A manuscript in progress')
         page.get_by_role('button', name='Create', exact=True).click()
-        source = '\\documentclass{article}\n\\begin{document}\n\\section{A first result}\nHello OriginWrite.\n\\end{document}'
+        source = '\\documentclass{article}\n\\begin{document}\n\\section{A first result}\nHello Quill.\n\\end{document}'
         page.locator('#source .cm-content').fill(source)
         page.locator('#autoCompile').check()
         playwright.expect(page.locator('#pdfPages canvas')).to_have_count(1, timeout=30000)
         playwright.expect(page.locator('#previewState')).to_contain_text('PDF · revision')
         page.screenshot(path=str(tmp / 'originwrite-compiled.png'), full_page=True)
-        page.locator('#source .cm-content').fill(source.replace('Hello OriginWrite.', '\\undefinedOriginWriteCommand'))
+        page.locator('#source .cm-content').fill(source.replace('Hello Quill.', '\\undefinedQuillCommand'))
         playwright.expect(page.locator('#previewState')).to_contain_text('Compilation failed', timeout=30000)
         playwright.expect(page.locator('#compileLog')).to_contain_text('Undefined control sequence')
         assert page.locator('#pdfPages canvas').count() == 1
@@ -359,7 +359,7 @@ def test_browser_auto_compile_and_errors(workspace_server):
             diagnostic.click()
             playwright.expect(page.locator('#sourcePane')).to_be_visible()
         page.locator('#layoutMode').select_option('split')
-        page.locator('#source .cm-content').fill(source.replace('Hello OriginWrite.', 'A corrected result.'))
+        page.locator('#source .cm-content').fill(source.replace('Hello Quill.', 'A corrected result.'))
         try:
             playwright.expect(page.locator('#previewState')).to_contain_text('PDF · revision', timeout=10000)
         except AssertionError:

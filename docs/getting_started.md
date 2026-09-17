@@ -17,8 +17,8 @@ cd OriginRAG
 conda activate originrag
 ```
 
-Choose `full` for OriginRAG and OriginWrite, `rag` for OriginRAG, or `write`
-for OriginWrite. Library, Bookshelf, PDF Reader and accounts are shared in
+Choose `full` for OriginRAG and Quill, `rag` for OriginRAG, or `write`
+for Quill. Library, Bookshelf, PDF Reader and accounts are shared in
 every profile. A new `write` installation contains only the shared Python
 dependencies (python-dotenv and PyMuPDF), not the retrieval/terminal dependencies
 or a language model. A fresh full/rag installation adds those dependencies.
@@ -50,7 +50,7 @@ python scripts/configure_app_profile.py --profile full
 ./web
 ```
 
-For OriginWrite alone, replace `full` with `write` in both installation and
+For Quill alone, replace `full` with `write` in both installation and
 configuration commands. Use `rag` for OriginRAG alone. To install another
 module later, install the corresponding extra and update the saved profile.
 `./web --profile write` selects a profile for just that process; it does not
@@ -59,9 +59,9 @@ install dependencies or change the saved configuration.
 The launcher uses an active virtual environment, a local `.venv`, or the
 `originrag` Conda environment, in that order.
 
-OriginWrite editing and ZIP export are available immediately. PDF compilation
+Quill editing and ZIP export are available immediately. PDF compilation
 requires a separately prepared, isolated TeX compiler and cached packages;
-see [OriginWrite setup](writing.md). There is no model requirement for writing,
+see [Quill setup](writing.md). There is no model requirement for writing,
 reference management or reading PDFs. Skip the model and RAG-indexing sections
 below when using the `write` profile.
 
@@ -373,7 +373,7 @@ The saved `ORIGINRAG_APP_PROFILE` chooses the available modules. All enabled
 modules use the same login and personal library; separate service processes
 or accounts are not required. Add `--profile write`, `--profile rag` or
 `--profile full` to override the choice for this run. RAG answers additionally
-need a model and indexed papers. OriginWrite additionally needs an isolated
+need a model and indexed papers. Quill additionally needs an isolated
 TeX compiler only for PDF compilation.
 
 From an authorised workstation, create an SSH tunnel:

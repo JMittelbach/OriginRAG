@@ -1,17 +1,19 @@
 # Your research workspace
 
-Start the web application with `./web`. The same top navigation connects all four
-areas, with **Appearance**, **Settings** and your account available throughout.
+Start the web application with `./web`. In the full installation, the same top
+navigation connects all four areas. Standalone Quill or OriginRAG installations
+omit the suite switcher and retain their own Library, Bookshelf, **Appearance**,
+**Settings** and account controls.
 `/workspace` opens your preferred start page, chosen in **Settings**.
 
 - **OriginRAG**: search, ask questions and inspect study overlap.
 - **Bookshelf**: your saved papers, linked to the existing reader and private notes.
 - **Library**: search the shared corpus and create personal project collections.
-- **OriginWrite**: edit a LaTeX project with its PDF preview alongside the source.
+- **Quill**: edit a LaTeX project with its PDF preview alongside the source.
 
 ## Write a manuscript
 
-1. Open **OriginWrite → New manuscript**, or import a LaTeX project ZIP.
+1. Open **Quill → New manuscript**, or import a LaTeX project ZIP.
 2. Edit the source. Changes save automatically; wait for **All changes saved**
    before closing the page. Ctrl/Cmd+S saves immediately.
 3. Add text files or upload figures and supporting LaTeX files. Choose the main
@@ -56,7 +58,7 @@ processes each have their own worker limit.
 
 The template gallery includes Research article, Bioinformatics, G3, PLOS ONE,
 PLOS Computational Biology and PLOS Genetics. Search by journal or filter by
-publisher. PLOS entries are lightweight OriginWrite starters with the official
+publisher. PLOS entries are lightweight Quill starters with the official
 PLOS BibTeX style, not publisher-endorsed submission checks. Every template opens
 as a new manuscript, leaving the current project unchanged.
 
@@ -74,7 +76,7 @@ bookshelf bookmark.
 
 In **Library**, open a collection and select **Browse corpus** to add existing
 papers directly. You can also drag a paper onto a collection in the sidebar.
-Drop PDFs onto a collection or its card under **OriginWrite → My libraries**:
+Drop PDFs onto a collection or its card under **Quill → My libraries**:
 accepted PDFs are imported into the shared corpus and linked to your private
 collection automatically. Imports still require the host to enable PDF uploads.
 Papers needing review are not silently added. For PDFs already in the corpus,
@@ -118,7 +120,7 @@ also be managed from **Library** and reused across manuscripts.
 
 ## Start from a template
 
-Browse the scrollable **Templates** gallery from OriginWrite or an open project.
+Browse the scrollable **Templates** gallery from Quill or an open project.
 Choose a template to create a **new manuscript** with its source, class files,
 bibliography styles and licences already included. The current project is saved
 and kept separately; selecting a template does not replace its files.
@@ -126,11 +128,11 @@ and kept separately; selecting a template does not replace its files.
 The bundled gallery includes:
 
 - **Research article**: a lightweight, general-purpose LaTeX starter.
-- **Bioinformatics**: an OriginWrite starter using the official OUP authoring class.
+- **Bioinformatics**: a Quill starter using the official OUP authoring class.
 - **G3 · OUP authoring**: a starter using the generic OUP class offered by G3,
   not the separate GSA template.
 
-Templates load directly inside OriginWrite, without downloading a ZIP yourself.
+Templates load directly inside Quill, without downloading a ZIP yourself.
 The included OUP distribution retains its publisher licence and original files.
 Check the journal's author instructions before submission; a working template
 does not establish compliance with every journal requirement. Other lawfully

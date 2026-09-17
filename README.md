@@ -15,7 +15,7 @@ support they provide, including when their relationships are uncertain.
 - **Chat with your papers** using a local model through Ollama.
 - **Inspect the evidence:** follow citations, read source passages and review
   possible study overlap.
-- **Write manuscripts** in OriginWrite, with LaTeX/PDF side-by-side, journal
+- **Write manuscripts** in Quill, with LaTeX/PDF side-by-side, journal
   starters and references from your personal paper collections.
 
 Library topic groups are generated from your paper titles, with up to ten groups
@@ -44,9 +44,12 @@ Choose the modules you need:
 
 | Profile | Included |
 | --- | --- |
-| `full` | OriginRAG + OriginWrite |
+| `full` | OriginRAG + Quill |
 | `rag` | OriginRAG |
-| `write` | OriginWrite, without a language model |
+| `write` | Quill, without a language model |
+
+The full installation has a shared application switcher. Standalone installations
+show only their own application tools, without the suite navigation.
 
 All profiles include Library, Bookshelf and PDF Reader. On a shared server,
 one account covers every enabled module. Use `./setup.sh --profile write`
@@ -88,7 +91,7 @@ To preview the terminal interface without a model:
 ## Ask about your own papers
 
 This section applies to `rag` and `full`. For writing without a model, open
-`./web` and choose **OriginWrite**.
+`./web` and choose **Quill**.
 
 Set `ORIGINRAG_BIB_DIR` in `.env` to an absolute path for your PDF library.
 Then configure the model, preview the import, apply it and build the index:
@@ -164,9 +167,9 @@ paper discovery and open-access downloads.
 ## Read, collect and write
 
 Choose **Workspace** in the web header to move between OriginRAG, your Bookshelf,
-the Library and **OriginWrite**, depending on your enabled modules. Create personal
+the Library and **Quill**, depending on your enabled modules. Create personal
 paper collections, connect one to a manuscript, preview bibliography changes,
-and insert citations using stable keys. OriginWrite includes editable templates,
+and insert citations using stable keys. Quill includes editable templates,
 autosave, adjustable code/PDF panes, optional auto-compile and ZIP import/export.
 On an authenticated server, **Share** adds collaborators to a manuscript.
 They can edit together with automatic synchronisation and conflict protection,
@@ -194,7 +197,7 @@ ORIGINRAG_WEB_OPEN=0 ./web --auth --strict-port
 ```
 
 The same command serves `full`, `rag` or `write`, using the saved profile.
-Only RAG answers require a model and an indexed corpus. OriginWrite can be
+Only RAG answers require a model and an indexed corpus. Quill can be
 hosted independently, with the same private accounts and libraries.
 
 From your own computer, connect through an SSH tunnel:

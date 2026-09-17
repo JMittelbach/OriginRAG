@@ -77,7 +77,7 @@ activate_python_environment() {
   if ! "$ORIGINRAG_PYTHON" -c 'import pandas, pydantic, yaml, rich, prompt_toolkit, typer, rapidfuzz' >/dev/null 2>&1; then
     echo "This terminal command needs the OriginRAG module." >&2
     echo "Install it with ./setup.sh --profile rag, or python -m pip install -e '.[rag]'." >&2
-    echo "Your OriginWrite workspace remains available through ./web." >&2
+    echo "Your Quill workspace remains available through ./web." >&2
     exit 1
   fi
   "$ORIGINRAG_PYTHON" scripts/init_local_data.py
@@ -324,7 +324,7 @@ case "$cmd" in
   doctor)
     select_python_environment
     if [ "$("$ORIGINRAG_PYTHON" scripts/configure_app_profile.py --read)" = write ]; then
-      exec "$ORIGINRAG_PYTHON" -c 'from originrag.writing_compile import compiler_status; print("OriginWrite shared workspace is installed."); print(compiler_status()["message"])'
+      exec "$ORIGINRAG_PYTHON" -c 'from originrag.writing_compile import compiler_status; print("Quill shared workspace is installed."); print(compiler_status()["message"])'
     fi
     "$ORIGINRAG_PYTHON" scripts/init_local_data.py
     "$ORIGINRAG_PYTHON" scripts/check_environment.py

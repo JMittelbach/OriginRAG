@@ -57,7 +57,7 @@ from originrag.provenance.requests import queue_missing_sources  # noqa: E402
 from originrag.provenance.source_type import classify_source_document  # noqa: E402
 from originrag.utils.io import write_json  # noqa: E402
 from originrag.web_appearance import with_appearance, APPEARANCE_SCRIPT_HASH  # noqa: E402
-from originrag.web_navigation import with_navigation  # noqa: E402
+from originrag.web_navigation import with_navigation, navigation_for_profile  # noqa: E402
 from originrag.collection_uploads import CollectionUploads  # noqa: E402
 from originrag.web_onboarding import with_onboarding  # noqa: E402
 from originrag.web_shelf import with_shelf  # noqa: E402
@@ -489,7 +489,7 @@ class AuthenticatedWebChatRegistry:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Self-hosted local OriginRAG web chat.")
     parser.add_argument('--profile', choices=PROFILES, default=os.environ.get('ORIGINRAG_APP_PROFILE', 'full'),
-                        help='Run the full workspace, RAG tools or OriginWrite without chat/model services.')
+                        help='Run the full workspace, RAG tools or Quill without chat/model services.')
     parser.add_argument("--host", default=os.environ.get("PFEMPIRE_WEB_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PFEMPIRE_WEB_PORT", "8765")))
     parser.add_argument(
@@ -1731,14 +1731,14 @@ def build_handler(
                 self.respond_redirect(runtime_profile.home)
                 return
             if parsed.path in {"/", "/chat"}:
-                self.respond_text(INDEX_HTML, content_type="text/html; charset=utf-8")
+                self.respond_text(navigation_for_profile(INDEX_HTML, runtime_profile), content_type="text/html; charset=utf-8")
                 return
             if parsed.path in WORKSPACE_PAGES or parsed.path in {"/api/writing", "/api/writing/export", "/api/writing/bibliography"} | collaboration_routes:
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
                     self.respond_json({"error": "Use the local browser or sign in to open your workspace."}, status=HTTPStatus.FORBIDDEN)
                     return
                 if parsed.path in WORKSPACE_PAGES:
-                    self.respond_text(WORKSPACE_HTML, content_type="text/html; charset=utf-8")
+                    self.respond_text(navigation_for_profile(WORKSPACE_HTML, runtime_profile), content_type="text/html; charset=utf-8")
                 else:
                     if not runtime_profile.write:
                         self.handle_collection_request(parsed, current_app)
@@ -2300,7 +2300,7 @@ def build_handler(
                     finally:
                         db.close()
                     self.respond_json({'collections': collections, 'projects': [], 'templates': [],
-                                       'compiler': {'available': False, 'reason': 'OriginWrite is not enabled in this profile.'}})
+                                       'compiler': {'available': False, 'reason': 'Quill is not enabled in this profile.'}})
             except WritingConflict as exc:
                 self.respond_json({'error': str(exc)}, status=HTTPStatus.CONFLICT)
             except KeyError:

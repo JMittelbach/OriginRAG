@@ -15,9 +15,9 @@ Installs the selected modules and records the profile in .env. Existing private
 settings are preserved. Without --profile, the saved profile is reused (full
 for a new installation). No language model is downloaded by setup.
 
-  full   OriginRAG + OriginWrite, with shared Library, Bookshelf and Reader
+  full   OriginRAG + Quill, with shared Library, Bookshelf and Reader
   rag    OriginRAG, with shared Library, Bookshelf and Reader
-  write  OriginWrite, with shared Library, Bookshelf and Reader; no LLM required
+  write  Quill, with shared Library, Bookshelf and Reader; no LLM required
 
 After setup, activate the environment with:
   conda activate originrag
@@ -118,7 +118,7 @@ conda run -n "$ENV_NAME" python scripts/install_git_hooks.py
 if [ "$RUN_CHECKS" -eq 1 ]; then
   echo "Running environment checks."
   if [ "$APP_PROFILE" = write ]; then
-    conda run -n "$ENV_NAME" python -c 'from originrag.writing_compile import compiler_status; import fitz, dotenv; print("OriginWrite installed."); print(compiler_status()["message"])'
+    conda run -n "$ENV_NAME" python -c 'from originrag.writing_compile import compiler_status; import fitz, dotenv; print("Quill installed."); print(compiler_status()["message"])'
   else
     conda run -n "$ENV_NAME" python scripts/check_environment.py
     conda run -n "$ENV_NAME" python scripts/validate_metadata.py
@@ -138,5 +138,5 @@ Open the selected workspace:
 For generated answers (full/rag only), configure your model separately:
   ./originrag setup-model
 
-OriginWrite PDF compilation needs an isolated TeX compiler. See docs/writing.md.
+Quill PDF compilation needs an isolated TeX compiler. See docs/writing.md.
 EOF

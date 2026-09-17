@@ -75,7 +75,7 @@ def test_real_editor_dirty_source_reference_sync_and_cursor(workspace_server):
             playwright.expect(page.locator('#pdfPages canvas')).to_have_count(1, timeout=30000)
             playwright.expect(page.locator('#previewState')).to_contain_text('PDF · revision')
         page.screenshot(path=str(tmp / 'originwrite-references-integrated.png'), full_page=True)
-        print('OriginWrite reference screenshot:', tmp / 'originwrite-references-integrated.png')
+        print('Quill reference screenshot:', tmp / 'originwrite-references-integrated.png')
         assert not errors
         browser.close()
 
@@ -126,8 +126,8 @@ def test_template_gallery_creates_new_project_and_preserves_unsaved_original(wor
         page.get_by_role('button', name='Clear', exact=True).click()
         playwright.expect(page.locator('#deskPanel .template-card')).to_have_count(6)
         page.screenshot(path=str(tmp / 'originwrite-expanded-templates.png'), full_page=True)
-        print('OriginWrite dashboard screenshot:', tmp / 'originwrite-dashboard.png')
-        print('OriginWrite template screenshot:', tmp / 'originwrite-template-gallery.png')
+        print('Quill dashboard screenshot:', tmp / 'originwrite-dashboard.png')
+        print('Quill template screenshot:', tmp / 'originwrite-template-gallery.png')
         assert not errors
         browser.close()
 
@@ -178,7 +178,7 @@ def test_real_compile_stacked_height_and_independent_code_pdf_zoom(workspace_ser
         page.locator('#autoCompile').check()
         playwright.expect(page.locator('#previewState')).to_contain_text('saved build', timeout=10000)
         assert compile_payloads[-1]['force'] is False
-        print('OriginWrite editor screenshot:', tmp / 'originwrite-editor-pdf.png')
-        print('OriginWrite stacked screenshot:', tmp / 'originwrite-stacked-editor.png')
+        print('Quill editor screenshot:', tmp / 'originwrite-editor-pdf.png')
+        print('Quill stacked screenshot:', tmp / 'originwrite-stacked-editor.png')
         assert not errors
         browser.close()

@@ -10,6 +10,7 @@ const $ = id => document.getElementById(id);
 const content = $('content');
 document.body.classList.add('workspace-page');
 const mode = location.pathname;
+if (mode === '/write') document.title = 'Quill';
 let sourceEditor, writerLayout, outlineTimer, diffTextChanges, serverProject, syncTimer, syncBusy = false, syncFailures = 0;
 const textTypes = /\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i;
 let state, project, activeFile, editVersion = 0, savedVersion = 0, saving = null;
@@ -193,7 +194,7 @@ async function projects() {
   collaborationStyle();
   content.classList.add('write-home');
   const h = node('div', undefined, 'write-heading'), title = node('div'), actions = node('div', undefined, 'desk-actions');
-  title.append(node('p', 'YOUR WRITING DESK', 'eyebrow'), node('h1', 'OriginWrite'), node('p', 'Your manuscripts, templates and personal libraries.', 'muted'));
+  title.append(node('p', 'YOUR WRITING DESK', 'eyebrow'), node('h1', 'Quill'), node('p', 'Your manuscripts, templates and personal libraries.', 'muted'));
   actions.append(button('+ New manuscript', () => newManuscript(), 'primary')); h.append(title, actions); content.append(h);
   const upload = node('input'); upload.type = 'file'; upload.accept = '.zip'; upload.hidden = true; content.append(upload);
   actions.append(button('Import LaTeX ZIP', () => upload.click()));
@@ -432,7 +433,7 @@ async function compile(force = false, retry = 0) {
 async function editor(id) {
   const [editorModule, {setupWriterLayout}] = await Promise.all([import('./latex-editor.mjs'), import('./writer-layout.mjs')]);
   const {createLatexEditor} = editorModule; diffTextChanges = editorModule.diffTextChanges; collaborationStyle();
-  project = await api('/api/writing?id=' + encodeURIComponent(id)); document.body.classList.add('writing'); document.title = project.name + ' · OriginWrite';
+  project = await api('/api/writing?id=' + encodeURIComponent(id)); document.body.classList.add('writing'); document.title = project.name + ' · Quill';
   serverProject = snapshotProject(project);
   content.innerHTML = `
     <div class="writer-toolbar">

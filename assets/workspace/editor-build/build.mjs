@@ -10,7 +10,7 @@ const packages = new Set(Object.keys(result.metafile.inputs).filter(p => p.inclu
   const parts = p.split('node_modules/').pop().split('/');
   return parts[0].startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
 }));
-let notices = 'OriginWrite editor — bundled third-party licences\n';
+let notices = 'Quill editor — bundled third-party licences\n';
 for (const name of [...packages].sort()) {
   const folder = path.join(root, 'node_modules', name);
   const metadata = JSON.parse(await readFile(path.join(folder, 'package.json'), 'utf8'));

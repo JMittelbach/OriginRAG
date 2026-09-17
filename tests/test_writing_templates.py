@@ -23,7 +23,7 @@ def test_gallery_is_local_and_returned_metadata_is_not_mutable():
 def test_complete_template_projects(template_id):
     files, main = template_files(template_id)
     validate_files(files, main)
-    assert 'OriginWrite-LICENSE.txt' in files and 'references.bib' in files
+    assert 'Quill-LICENSE.txt' in files and 'references.bib' in files
     assert files['references.bib'] == ''
     assert '\\begin{document}' in files[main]
     if template_id.startswith('plos-'):

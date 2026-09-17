@@ -23,12 +23,19 @@ def test_profile_navigation_and_shared_login(profile_server):
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(base + '/workspace')
-        page.locator('#modules .card').first.wait_for()
-        assert page.locator('[data-feature="rag"]').is_visible() == (profile != 'write')
-        assert page.locator('[data-feature="write"]').is_visible() == (profile != 'rag')
-        assert page.locator('#modules .card').count() == (4 if profile == 'full' else 3)
-        playwright.expect(page.locator('#workspaceUser')).to_contain_text('alice')
-        page.get_by_role('link', name='Library', exact=True).click()
+        page.wait_for_url(base + ('/write' if profile == 'write' else '/chat'))
+        if profile != 'write':
+            page.locator('#guideSkip').click()
+        header = page.locator('#globalNavigation' if profile == 'full' else '#applicationHeader')
+        assert page.locator('#globalNavigation').count() == (1 if profile == 'full' else 0)
+        assert header.locator('nav a').count() == (4 if profile == 'full' else 2)
+        if profile == 'write':
+            playwright.expect(header.locator('.origin-brand')).to_have_text('Quill')
+            assert header.get_by_role('link', name='OriginRAG', exact=True).count() == 0
+        elif profile == 'rag':
+            assert header.get_by_role('link', name='Quill', exact=True).count() == 0
+        playwright.expect(page.locator('#globalAccount')).to_contain_text('alice')
+        header.get_by_role('link', name='Library', exact=True).click()
         page.get_by_role('button', name='+ Collection').click()
         page.locator('#newName').fill('Private sources')
         page.get_by_role('button', name='Create', exact=True).click()
@@ -37,7 +44,8 @@ def test_profile_navigation_and_shared_login(profile_server):
             assert page.get_by_role('button', name='Write with this library').count() == 0
         else:
             page.get_by_role('button', name='Write with this library').wait_for()
-        page.locator('#workspaceLogout').click()
+        page.locator('#globalAccount').click()
+        page.locator('#globalSignOut').click()
         page.wait_for_url(base + '/login')
         assert context.request.get(base + '/api/shelf').status == 401
         assert context.request.get(base + '/api/writing').status == 401

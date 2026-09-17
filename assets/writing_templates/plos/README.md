@@ -1,6 +1,6 @@
 # PLOS manuscript starters
 
-These are independently written OriginWrite starters (MIT), not copies of the
+These are independently written Quill starters (MIT), not copies of the
 complete publisher template and not publisher-endorsed submission checks.
 They provide a single-column, double-spaced manuscript with continuous line
 numbers. Computational Biology and Genetics also include an author summary.

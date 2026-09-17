@@ -1,8 +1,8 @@
-# OriginWrite templates
+# Quill templates
 
 The gallery contains ready-to-edit starter manuscripts and the complete,
 unmodified OUP authoring-template distribution, version 1.5 (14 July 2026).
-The journal starters are written for OriginWrite using that publisher class.
+The journal starters are written for Quill using that publisher class.
 They are not the publisher's sample manuscript or a guarantee of submission
 compliance. Journal requirements must still be checked before submission.
 
@@ -20,7 +20,7 @@ and bibliography styles themselves remain unmodified. The helper has no
 effect on pdfLaTeX. The publisher class's optional external word-count
 command remains disabled by the untrusted compiler.
 
-The small OriginWrite starter documents are MIT-licensed. Their licence is
+The small Quill starter documents are MIT-licensed. Their licence is
 included in every project. No publisher logos or third-party paper PDFs
 are added.
 
