@@ -3,6 +3,18 @@ from __future__ import annotations
 from originrag.analysis import ollama_client
 
 
+def test_optional_keep_alive_does_not_change_existing_call_defaults(monkeypatch):
+    requests = []
+    def post(url, payload, timeout):
+        requests.append(payload)
+        return {'response': 'ok'}
+    monkeypatch.setattr(ollama_client, 'post_json', post)
+    ollama_client.call_ollama_generate('Test', model='qwen3:32b', keep_alive='60s')
+    ollama_client.call_ollama_generate('Test', model='qwen3:32b')
+    assert requests[0]['keep_alive'] == '60s'
+    assert 'keep_alive' not in requests[1]
+
+
 def test_qwen_structured_calls_disable_thinking_explicitly(monkeypatch) -> None:
     captured = {}
 

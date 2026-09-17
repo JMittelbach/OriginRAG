@@ -8,6 +8,7 @@ from .writing import WritingConflict, WritingStore
 from .writing_compile import CompilerBusy, compiler_status
 from .writing_builds import compile_saved_project
 from .writing_collaboration import LOCAL_COLLABORATION, ProjectAccess
+from . import writing_language
 
 PAGES = {'/workspace', '/bookshelf', '/library', '/write'}
 
@@ -39,7 +40,7 @@ def project_access(store, collaboration, user, key, *, owner_only=False):
         yield ProjectAccess(store, dict(LOCAL_COLLABORATION))
 
 
-def handle_writing(handler, path, query, owner_directory, catalogue, *, post=False, collaboration=None, user=None):
+def handle_writing(handler, path, query, owner_directory, catalogue, *, post=False, collaboration=None, user=None, language_lock=None):
     store = WritingStore(owner_directory)
     try:
         if path in {'/api/writing/collaboration', '/api/writing/collaborators'}:
@@ -99,10 +100,26 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                 if not collaboration:
                     for item in snapshot['projects']:
                         item['collaboration'] = dict(LOCAL_COLLABORATION)
-                handler.respond_json({**snapshot, 'compiler': compiler_status()})
+                handler.respond_json({**snapshot, 'compiler': compiler_status(), 'language_check': writing_language.enabled()})
         else:
             payload = handler.read_json_body()
-            if payload.get('action') == 'compile':
+            if payload.get('action') == 'language_check':
+                if not writing_language.enabled() or language_lock is None:
+                    raise writing_language.LanguageUnavailable('Language checking is not enabled on this host.')
+                key = payload.get('id')
+                with project_access(store, collaboration, user, key) as access:
+                    selected = writing_language.selection(access.store.get(key), payload)
+                if not language_lock.acquire(blocking=False):
+                    raise WritingConflict('The model is busy with another request. Please try again shortly.')
+                try:
+                    result = writing_language.check_language(*selected)
+                finally:
+                    language_lock.release()
+                with project_access(store, collaboration, user, key) as access:
+                    if access.store.revision(key) != payload['revision']:
+                        raise WritingConflict('The manuscript changed during the check. Select the passage again.')
+                handler.respond_json({**result, 'revision': payload['revision'], 'file': payload['file']})
+            elif payload.get('action') == 'compile':
                 key = payload.get('id')
                 with project_access(store, collaboration, user, key) as access:
                     project = access.store.get(key)
@@ -135,6 +152,8 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                     with project_access(store, collaboration, user, data['id']) as access:
                         data = access.public(data)
                 handler.respond_json(data)
+    except writing_language.LanguageUnavailable as exc:
+        handler.respond_json({'error': str(exc)}, status=HTTPStatus.SERVICE_UNAVAILABLE)
     except PermissionError as exc:
         handler.respond_json({'error': str(exc)}, status=HTTPStatus.FORBIDDEN)
     except (WritingConflict, CompilerBusy) as exc:

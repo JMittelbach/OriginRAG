@@ -76,7 +76,7 @@ def test_watchdog_timeout_returns_structured_failure_and_releases_slot(monkeypat
     def timed_out(*args, **kwargs):
         raise subprocess.TimeoutExpired('ps', 2)
 
-    monkeypatch.setattr(compiler.subprocess, 'run', timed_out)
+    monkeypatch.setattr(compiler, '_resident_kib', timed_out)
     result = compiler.compile_project(PROJECT)
     assert not result['ok'] and result['pdf'] == b''
     assert 'resource monitoring was unavailable' in result['log']

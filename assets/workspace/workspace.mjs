@@ -3,6 +3,7 @@ import {openReferences} from './writing-references.mjs';
 import {createPDFPreview} from './pdf-preview.mjs';
 import {openLibraryImport} from './library-import.mjs';
 import {collaborationStyle, snapshotProject, rebaseDraft, openSharing, openProjectCitations} from './writing-collaboration.mjs';
+import {openLanguageCheck} from './writing-language.mjs';
 
 const $ = id => document.getElementById(id);
 const content = $('content');
@@ -386,6 +387,7 @@ async function editor(id) {
           <button data-edit-command="bold" title="Bold selection" aria-label="Bold selection"><b>B</b></button><button data-edit-command="italic" title="Italic selection" aria-label="Italic selection"><i>I</i></button><button data-edit-command="comment" title="Toggle comment (Ctrl/Cmd+/)" aria-label="Toggle comment">%</button>
           <button data-edit-command="search" class="search-code" title="Find and replace (Ctrl/Cmd+F)" aria-label="Find and replace">⌕ <span>Find</span></button>
           <button id="insertCitation" title="Insert a citation from your library" aria-label="Insert citation">Cite</button>
+          <button id="languageCheck" title="Check spelling and grammar in selected prose" aria-label="Language check">Check</button>
           <button id="codeZoomOut" title="Smaller code" aria-label="Decrease code zoom">−</button>
           <select id="codeZoom" aria-label="Code font size"><option value="11">11 px</option><option value="12">12 px</option><option value="13">13 px</option><option value="14" selected>14 px</option><option value="16">16 px</option><option value="18">18 px</option><option value="20">20 px</option><option value="24">24 px</option></select>
           <button id="codeZoomIn" title="Larger code" aria-label="Increase code zoom">+</button>
@@ -443,6 +445,10 @@ async function editor(id) {
     insertCitation
   }).catch(e => notice(e.message, true)); };
   $('referenceButton').onclick = $('insertCitation').onclick = $('updateBibliography').onclick = references;
+  $('languageCheck').hidden = !state.language_check;
+  $('languageCheck').onclick = () => openLanguageCheck({api, save, getProject: () => project,
+    editor: sourceEditor, enabled: state.language_check,
+    reveal: (file, line) => { selectFile(file); writerLayout.showCode(); sourceEditor.jump(line); }});
   $('templateButton').onclick = () => openTemplateGallery(state.templates, item => newManuscript(item, project.collection));
   $('draft').onclick = () => download(JSON.stringify({name: project.name, main: project.main, files: project.files}, null, 2), 'originwrite-draft.json', 'application/json');
   $('conflictDraft').onclick = $('draft').onclick;

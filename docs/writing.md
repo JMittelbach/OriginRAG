@@ -31,6 +31,27 @@ Unchanged successful builds can reuse a cached PDF from your own project.
 is reported even if the LaTeX engine produced a PDF; it is not presented as a
 successful new preview.
 
+Independent manuscripts can compile simultaneously. The default is two compiler
+workers (one on a single-CPU host); the host can set
+`ORIGINWRITE_MAX_PARALLEL_BUILDS=4` before starting the service. Values are limited
+to 1–8 workers per web-service process. Up to 16 additional builds can wait in
+arrival order, for at most 60 seconds, instead of immediately returning a busy
+error. A full or expired queue still returns a retry message. Each active build
+retains its existing isolation, 45-second execution and resource limits.
+Four workers therefore allow four builds at once, not unlimited compilation.
+Rootless Linux limits each engine process's virtual address space to 768 MiB;
+container builds limit memory per container to 768 MiB. These are not aggregate
+RAM guarantees for the application. Choose the worker count to leave room for
+the web process, other users and additional services.
+
+Simultaneous requests for identical sources in the same account and project
+share one running build, including repeated **Recompile** clicks. Different
+projects or accounts never share build results. Successful completed builds
+remain eligible for the existing bounded cache; errors are not cached. Shared
+build waiters are also bounded so repeated clicks cannot create unlimited
+waiting requests. This coordination is process-local: multiple service
+processes each have their own worker limit.
+
 ## Connect your papers
 
 Personal libraries are collections of papers from the shared corpus, private to
@@ -128,6 +149,29 @@ require this build step.
 Projects and personal collections are stored per account in `.writing.sqlite3`
 under the existing private user-data directory, excluded from Git. They are not
 stored in the shared corpus. Back up that directory along with account data.
+
+## Check a passage
+
+Select a short passage in the LaTeX editor, choose **Check**, then **Check language**.
+The optional language assistant suggests spelling and grammar corrections in English
+or German. Click a suggestion's line number to find its location, then edit normally.
+It never applies changes or rewrites scientific claims. Results can be wrong or
+incomplete, and are discarded if the manuscript changes during the check.
+
+The host can enable this experimental feature with `ORIGINWRITE_LANGUAGE_CHECK=1`
+before starting the web service. It uses the existing Ollama answer-model configuration
+(`ORIGINRAG_OLLAMA_ANSWER_MODEL` or `ORIGINRAG_OLLAMA_MODEL`) and configured endpoint.
+No model is downloaded automatically. Only the selected passage is sent, not the
+whole project or corpus. An alternative installed model can be selected with
+`ORIGINWRITE_LANGUAGE_MODEL` without changing the RAG model. The
+endpoint may be remote if the host configured it that way.
+There are no background checks while typing. Each explicit check is limited to
+3,000 selected UTF-16 units, source files of 250,000 characters, a 4,096-token context
+and 900 output tokens. The request timeout is 60 seconds; the model is kept warm
+for 60 seconds after use unless another request changes that setting. A busy RAG/import/check
+operation causes a retry message instead of starting a parallel check. Compiler
+errors remain in the normal compile log. This is a language aid, not a scientific
+review or a complete LaTeX parser.
 
 ## Write together
 

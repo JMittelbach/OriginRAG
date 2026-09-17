@@ -39,6 +39,7 @@ def generate_text(
     num_ctx: int | None = None,
     format: str | dict[str, Any] | None = None,
     assistant_prefix: str | None = None,
+    keep_alive: str | int | None = None,
 ) -> OllamaResult:
     """Generate text with a local Ollama model.
 
@@ -85,6 +86,8 @@ def generate_text(
         payload["think"] = False
     if format:
         payload["format"] = format
+    if keep_alive is not None:
+        payload["keep_alive"] = keep_alive
 
     try:
         response = post_json(
@@ -128,6 +131,7 @@ def call_ollama_generate(
     num_ctx: int | None = None,
     format: str | dict[str, Any] | None = None,
     assistant_prefix: str | None = None,
+    keep_alive: str | int | None = None,
 ) -> OllamaResult:
     return generate_text(
         prompt,
@@ -140,6 +144,7 @@ def call_ollama_generate(
         num_ctx=num_ctx,
         format=format,
         assistant_prefix=assistant_prefix,
+        keep_alive=keep_alive,
     )
 
 

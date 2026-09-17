@@ -162,6 +162,10 @@ export function createLatexEditor(parent, onChange, onCursor) {
     },
     applyRemote,
     isComposing() { return view.compositionStarted; },
+    selection() {
+      const {from, to} = view.state.selection.main;
+      return {file: current, from, to, text: view.state.sliceDoc(from, to)};
+    },
     destroy() { view.destroy(); documents.clear(); current = ''; },
     jump(line) {
       const target = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines)));

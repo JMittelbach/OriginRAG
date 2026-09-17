@@ -1975,7 +1975,7 @@ def build_handler(
                     self.handle_collection_request(parsed, current_app, post=True)
                     return
                 handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog(), post=True,
-                               collaboration=writing_collaboration, user=user)
+                               collaboration=writing_collaboration, user=user, language_lock=corpus_lock)
                 return
             if parsed.path == "/api/job/cancel":
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):

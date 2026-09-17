@@ -80,13 +80,16 @@ def test_zip_validation_and_roundtrip(tmp_path):
         unpack_project(base64.b64encode(stream.getvalue()))
 
 
-def test_compile_busy_does_not_start_engine():
-    COMPILE_SLOT.acquire()
+def test_compile_busy_does_not_start_engine(monkeypatch):
+    monkeypatch.setattr(compiler, 'QUEUE_WAIT_SECONDS', 0)
+    for _ in range(COMPILE_SLOT.capacity):
+        COMPILE_SLOT.acquire()
     try:
         with pytest.raises(CompilerBusy):
             compile_project({'files': {'main.tex': ''}, 'main': 'main.tex', 'revision': 1})
     finally:
-        COMPILE_SLOT.release()
+        for _ in range(COMPILE_SLOT.capacity):
+            COMPILE_SLOT.release()
 
 
 def test_diagnostics():

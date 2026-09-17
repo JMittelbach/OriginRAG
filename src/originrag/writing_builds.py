@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from concurrent.futures import Future, TimeoutError
 from copy import deepcopy
 from datetime import datetime
 import hashlib
@@ -10,13 +11,18 @@ import threading
 import time
 
 from .writing import validate_files
-from .writing_compile import compile_project, select_compiler_backend
+from .writing_compile import compile_project, select_compiler_backend, CompilerBusy, TIME_LIMIT
+from .writing_scheduler import QUEUE_WAIT_SECONDS
 
 _CACHE = OrderedDict()
 _LOCK = threading.Lock()
 _MAX_BYTES = 32 * 1024 * 1024
 _MAX_ITEMS = 16
 _TTL = 1800
+_INFLIGHT = {}
+_WAITERS = 0
+_MAX_INFLIGHT = 24
+_MAX_WAITERS = 16
 
 
 def _cache_budget():
@@ -101,6 +107,7 @@ def compiler_fingerprint():
 def compile_saved_project(project, owner_directory, *, force=False):
     """Reuse successful, unchanged builds only within the same account and project."""
     started = time.monotonic()
+    global _WAITERS
     if not isinstance(force, bool):
         raise ValueError('The force option must be true or false.')
     validate_files(project['files'], project['main'])
@@ -113,9 +120,43 @@ def compile_saved_project(project, owner_directory, *, force=False):
         elif key in _CACHE:
             _CACHE.move_to_end(key)
             result = deepcopy(_CACHE[key][1])
-            result.update(revision=project['revision'], cached=True, build_seconds=result['seconds'], seconds=round(time.monotonic() - started, 3))
+            result.update(revision=project['revision'], cached=True, shared_build=False, queue_seconds=0,
+                          build_seconds=result['seconds'], seconds=round(time.monotonic() - started, 3))
             return result
-    result = compile_project(project)
+        follower = key in _INFLIGHT
+        if follower:
+            if _WAITERS >= _MAX_WAITERS:
+                raise CompilerBusy('Too many requests are waiting for PDFs. Please retry shortly.')
+            _WAITERS += 1
+            future = _INFLIGHT[key]
+        else:
+            if len(_INFLIGHT) >= _MAX_INFLIGHT:
+                raise CompilerBusy('The compiler queue is full. Please retry shortly.')
+            future = _INFLIGHT[key] = Future()
+    if follower:
+        try:
+            result = deepcopy(future.result(timeout=QUEUE_WAIT_SECONDS + TIME_LIMIT + 15))
+            return {**result, 'revision': project['revision'], 'cached': False, 'shared_build': True,
+                    'wait_seconds': round(time.monotonic() - started, 3)}
+        except TimeoutError:
+            raise CompilerBusy('The shared build has not finished. Please retry shortly.') from None
+        finally:
+            with _LOCK:
+                _WAITERS -= 1
+    try:
+        result = compile_project(project)
+        _remember_result(key, result)
+        future.set_result(result)
+        return {**result, 'cached': False, 'shared_build': False}
+    except BaseException as exc:
+        future.set_exception(exc)
+        raise
+    finally:
+        with _LOCK:
+            _INFLIGHT.pop(key, None)
+
+
+def _remember_result(key, result):
     if result['ok']:
         with _LOCK:
             budget = _cache_budget()
@@ -128,4 +169,3 @@ def compile_saved_project(project, owner_directory, *, force=False):
                 if size + sys.getsizeof(_CACHE) + 512 <= budget:
                     _CACHE[key] = (time.monotonic(), cached, size)
             _prune_cache(budget)
-    return {**result, 'cached': False}

@@ -10,13 +10,13 @@ import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import uuid
 
 from .writing import decode_file, validate_files
+from .writing_scheduler import CompileSlots, QUEUE_WAIT_SECONDS
 
-COMPILE_SLOT = threading.BoundedSemaphore(1)
+COMPILE_SLOT = CompileSlots()
 TIME_LIMIT = 45
 OUTPUT_LIMIT = 32_000_000
 
@@ -60,13 +60,14 @@ def select_compiler_backend():
 
 def compiler_status():
     backend = select_compiler_backend()
+    status = COMPILE_SLOT.status()
     if backend and backend['kind'] == 'macos':
-        return {'configured': True, 'engine': 'Tectonic', 'isolation': 'macOS sandbox', 'message': 'Uses installed, cached TeX packages. No network access during compilation.'}
+        return {**status, 'configured': True, 'engine': 'Tectonic', 'isolation': 'macOS sandbox', 'message': 'Uses installed, cached TeX packages. No network access during compilation.'}
     if backend and backend['kind'] == 'container':
-        return {'configured': True, 'engine': 'pdfLaTeX / latexmk', 'isolation': 'container', 'message': 'Requires a running container engine and a prebuilt TeX image.'}
+        return {**status, 'configured': True, 'engine': 'pdfLaTeX / latexmk', 'isolation': 'container', 'message': 'Requires a running container engine and a prebuilt TeX image.'}
     if backend and backend['kind'] == 'rootless':
-        return {'configured': True, 'engine': 'Tectonic', 'isolation': 'rootless Linux sandbox', 'message': 'Isolated compilation with cached TeX packages, no network and no access to account files.'}
-    return {'configured': False, 'engine': '', 'message': 'Editing and export are available. The host must configure an isolated LaTeX compiler to enable PDF preview.'}
+        return {**status, 'configured': True, 'engine': 'Tectonic', 'isolation': 'rootless Linux sandbox', 'message': 'Isolated compilation with cached TeX packages, no network and no access to account files.'}
+    return {**status, 'configured': False, 'engine': '', 'message': 'Editing and export are available. The host must configure an isolated LaTeX compiler to enable PDF preview.'}
 
 
 def mac_command(work, backend=None):
@@ -110,6 +111,7 @@ def rootless_command(work, main, tools=None):
     if Path('/etc/fonts').is_dir():
         command += ['--ro-bind', '/etc/fonts', '/etc/fonts']
     command += ['--remount-ro', '/', '--setenv', 'HOME', '/tmp', '--setenv', 'TMPDIR', '/tmp',
+                '--setenv', 'RAYON_NUM_THREADS', '1', '--setenv', 'OMP_NUM_THREADS', '1',
                 '--setenv', 'XDG_CACHE_HOME', '/tmp/cache', '--setenv', 'LANG', 'C.UTF-8',
                 '--setenv', 'TECTONIC_CACHE_DIR', '/tex-cache', '--setenv', 'TECTONIC_UNTRUSTED_MODE', '1',
                 '--chdir', '/source', '/engine/tectonic', '--untrusted', '--only-cached',
@@ -159,11 +161,24 @@ def _log_excerpt(path):
         return (start[:50_000] + b'\n[Earlier compiler output shortened]\n' + handle.read(50_000)).decode('utf-8', errors='replace')
 
 
+def _resident_kib(pid):
+    if sys.platform.startswith('linux'):
+        try:
+            status = Path(f'/proc/{pid}/status').read_text()
+            return next((int(line.split()[1]) for line in status.splitlines() if line.startswith('VmRSS:')), 0)
+        except FileNotFoundError:
+            return 0
+    memory = subprocess.run(['/bin/ps', '-o', 'rss=', '-p', str(pid)], capture_output=True, timeout=2)
+    return int(memory.stdout.strip()) if memory.stdout.strip().isdigit() else 0
+
+
 def compile_project(project):
     validate_files(project['files'], project['main'])
-    if not COMPILE_SLOT.acquire(blocking=False):
-        raise CompilerBusy('Another manuscript is compiling. Please try again shortly.')
+    waiting_since = time.monotonic()
+    if not COMPILE_SLOT.acquire(timeout=QUEUE_WAIT_SECONDS):
+        raise CompilerBusy('The compiler queue is full or the wait limit was reached. Your source is saved; please retry shortly.')
     started = time.monotonic()
+    queue_seconds = round(started - waiting_since, 3)
     container_name = 'originwrite-' + uuid.uuid4().hex
     process = None
     is_container = False
@@ -200,7 +215,7 @@ def compile_project(project):
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(decode_file(name, content))
             env = {'PATH': '/usr/bin:/bin:/opt/homebrew/bin', 'LANG': 'en_US.UTF-8', 'HOME': str(work),
-                   'TMPDIR': str(work), 'TECTONIC_UNTRUSTED_MODE': '1'}
+                   'TMPDIR': str(work), 'TECTONIC_UNTRUSTED_MODE': '1', 'RAYON_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'}
             if backend['kind'] == 'macos':
                 command, cache = mac_command(work, backend)
                 command[-1] = project['main']
@@ -220,7 +235,7 @@ def compile_project(project):
                            '--memory=768m', '--memory-swap=768m', '--cpus=1', '--pids-limit=64', '--user=65534:65534',
                            '--ulimit', 'fsize=32000000:32000000', '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
                            '-v', f'{source}:/source:ro', '-v', f'{work / "output"}:/output:rw', '-w', '/source',
-                           '-e', 'openin_any=p', '-e', 'openout_any=p', '-e', 'HOME=/tmp',
+                           '-e', 'openin_any=p', '-e', 'openout_any=p', '-e', 'HOME=/tmp', '-e', 'OMP_NUM_THREADS=1',
                            backend['image'], 'latexmk', '-pdf', '-no-shell-escape',
                            '-interaction=nonstopmode', '-halt-on-error', '-file-line-error', '-outdir=/output', project['main']]
                 env = None
@@ -236,8 +251,7 @@ def compile_project(project):
                         reason = 'Compilation exceeded the output-size limit.'
                     if not is_container:
                         try:
-                            memory = subprocess.run(['/bin/ps', '-o', 'rss=', '-p', str(process.pid)], capture_output=True, timeout=2)
-                            if memory.stdout.strip().isdigit() and int(memory.stdout.strip()) > 768 * 1024:
+                            if _resident_kib(process.pid) > 768 * 1024:
                                 reason = 'Compilation exceeded the memory limit.'
                         except (OSError, subprocess.TimeoutExpired):
                             reason = 'Compiler resource monitoring was unavailable. Compilation could not continue safely; please retry.'
@@ -256,7 +270,7 @@ def compile_project(project):
             success = not reason and process.returncode == 0 and pdf.is_file() and not pdf.is_symlink() and pdf.stat().st_size <= OUTPUT_LIMIT
             pdf_bytes = pdf.read_bytes() if success else b''
             success = success and pdf_bytes.startswith(b'%PDF-')
-            return {'ok': bool(success), 'exit_code': process.returncode, 'revision': project['revision'], 'seconds': round(time.monotonic() - started, 2),
+            return {'ok': bool(success), 'exit_code': process.returncode, 'revision': project['revision'], 'seconds': round(time.monotonic() - started, 2), 'queue_seconds': queue_seconds,
                     'log': (reason + '\n' + log).strip(),
                     'diagnostics': ([{'file': '', 'line': 0, 'message': reason}] if reason else []) + diagnostics(log),
                     'pdf': pdf_bytes if success else b''}
@@ -265,7 +279,7 @@ def compile_project(project):
         if cleanup_error:
             message += ' ' + cleanup_error
         return {'ok': False, 'exit_code': process.returncode if process else None, 'revision': project['revision'],
-                'seconds': round(time.monotonic() - started, 2), 'log': message,
+                'seconds': round(time.monotonic() - started, 2), 'queue_seconds': queue_seconds, 'log': message,
                 'diagnostics': [{'file': '', 'line': 0, 'message': message}], 'pdf': b''}
     finally:
         COMPILE_SLOT.release()
