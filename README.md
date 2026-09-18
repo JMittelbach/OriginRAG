@@ -1,7 +1,5 @@
 # OriginRAG
 
-[![CI](https://github.com/JMittelbach/OriginRAG/actions/workflows/public-ci.yml/badge.svg)](https://github.com/JMittelbach/OriginRAG/actions/workflows/public-ci.yml)
-
 Search your scientific literature and ask questions in a browser or terminal.
 OriginRAG generates answers with source passages and checks whether papers
 may share a study, cohort or dataset — because **five papers do not necessarily
@@ -15,13 +13,24 @@ support they provide, including when their relationships are uncertain.
 - **Chat with your papers** using a local model through Ollama.
 - **Inspect the evidence:** follow citations, read source passages and review
   possible study overlap.
-- **Write manuscripts** in Quill, with LaTeX/PDF side-by-side, journal
-  starters and references from your personal paper collections.
 
-Library topic groups are generated from your paper titles, with up to ten groups
-for larger collections and fewer for small libraries. No subject-specific category
-list is required. The evidence-accounting method is domain-general; equivalent
-performance in other fields has not been established.
+The evidence-accounting method is domain-general. Equivalent performance in
+other fields has not yet been established.
+
+## Features
+
+OriginRAG is the main application. The same installation can optionally provide
+a few practical tools around the corpus:
+
+- **Library:** browse the shared corpus, find new papers, and create private
+  collections for projects. Collections are generated from the papers you add;
+  no subject-specific category list is required.
+- **Bookshelf:** save papers you are actively reading for quick access to the
+  reader, summaries and personal notes.
+- **Quill (optional):** a small LaTeX workspace with source and PDF side by
+  side. It can connect a manuscript to a Library collection and insert its
+  references. Quill is useful for writing, but it is separate from the
+  OriginRAG evidence workflow and does not require a language model.
 
 ## Install
 
@@ -44,19 +53,19 @@ Choose the modules you need:
 
 | Profile | Included |
 | --- | --- |
-| `full` | OriginRAG + Quill |
+| `full` | OriginRAG plus the optional Quill writing workspace |
 | `rag` | OriginRAG |
-| `write` | Quill, without a language model |
+| `write` | Quill writing workspace, without OriginRAG or a language model |
 
 The full installation has a shared application switcher. Standalone installations
 show only their own application tools, without the suite navigation.
 
 All profiles include Library, Bookshelf and PDF Reader. On a shared server,
-one account covers every enabled module. Use `./setup.sh --profile write`
-or `./setup.sh --profile rag` to enable just that application. The `write`
-profile also omits the RAG dependencies and does not load a search index. Setup saves the
-choice in `.env`; `./web` reuses it. `./web --profile full` overrides it for
-one run, provided the corresponding dependencies are installed.
+one account covers every enabled module. Use `./setup.sh --profile write` or
+`./setup.sh --profile rag` to enable only the selected application. The `write`
+profile also omits the RAG dependencies and does not load a search index. Setup
+saves the choice in `.env`; `./web` reuses it. `./web --profile full` overrides
+it for one run, provided the corresponding dependencies are installed.
 
 Setup creates the `originrag` Conda environment and preserves existing private
 settings. It does not download a language model or install a TeX compiler.
@@ -90,8 +99,7 @@ To preview the terminal interface without a model:
 
 ## Ask about your own papers
 
-This section applies to `rag` and `full`. For writing without a model, open
-`./web` and choose **Quill**.
+This section applies to `rag` and `full`.
 
 Set `ORIGINRAG_BIB_DIR` in `.env` to an absolute path for your PDF library.
 Then configure the model, preview the import, apply it and build the index:
@@ -164,18 +172,13 @@ See the [first-answer walkthrough](docs/web_chat.md#first-answer-walkthrough)
 and [corpus guide](docs/getting_started.md#4-import-and-index-pdfs) for filing,
 paper discovery and open-access downloads.
 
-## Read, collect and write
+## Optional writing workspace
 
-Choose **Workspace** in the web header to move between OriginRAG, your Bookshelf,
-the Library and **Quill**, depending on your enabled modules. Create personal
-paper collections, connect one to a manuscript, preview bibliography changes,
-and insert citations using stable keys. Quill includes editable templates,
-autosave, adjustable code/PDF panes, optional auto-compile and ZIP import/export.
-On an authenticated server, **Share** adds collaborators to a manuscript.
-They can edit together with automatic synchronisation and conflict protection,
-without gaining access to each other's private collections or notes.
-PDF compilation requires an isolated TeX setup; editing and export work without it.
-See [the writing guide](docs/writing.md) for installation and template details.
+If Quill is enabled, open it from the application switcher or at `/write`.
+It provides a compact LaTeX editor with a PDF preview, autosave, templates and
+ZIP import/export. A manuscript can use a private Library collection for its
+bibliography. PDF compilation requires an isolated TeX setup; editing and export
+work without it. See [the writing guide](docs/writing.md) for details.
 
 ## Understand the evidence
 
@@ -227,7 +230,7 @@ Use `systemctl --user stop originrag.service` before maintenance, and
 `systemctl --user start originrag.service` afterwards. The SSH tunnel is still
 required for remote access.
 
-## Data, documentation and development
+## Data and documentation
 
 OriginRAG builds your local corpus from imported PDFs or open-access downloads,
 organising papers and generating the retrieval index. PDFs and generated corpus
@@ -246,5 +249,5 @@ python -m pip install -e '.[dev]'
 make check
 ```
 
-CI checks linting, tests, CLI startup, package building and wheel installation.
-It does not rerun all manuscript experiments.
+The repository checks cover linting, tests, CLI startup, package building and
+wheel installation. They do not rerun all manuscript experiments.
