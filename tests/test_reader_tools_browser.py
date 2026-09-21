@@ -54,7 +54,6 @@ def tools_page(reader_server):  # noqa: F811
         }''')
         yield page, playwright
         assert not errors
-        assert page.evaluate('state.fullscreenCalls') == []
         browser.close()
 
 
@@ -90,7 +89,7 @@ def test_reader_tools_fit_progress_and_stale_fit(tools_page):
     assert page.evaluate('state.jumps.length') == 2
 
 
-def test_reader_tools_focus_view_uses_button_and_keyboard_without_native_fullscreen(tools_page):
+def test_reader_tools_focus_view_falls_back_when_native_fullscreen_is_denied(tools_page):
     page, playwright = tools_page
     button = page.locator('#fullscreen')
     playwright.expect(button).to_be_enabled()
@@ -117,6 +116,7 @@ def test_reader_tools_focus_view_uses_button_and_keyboard_without_native_fullscr
     playwright.expect(button).to_have_attribute('aria-pressed', 'false')
     assert page.evaluate('state.messages') == []
     assert page.evaluate('document.fullscreenElement') is None
+    assert page.evaluate('state.fullscreenCalls') == ['request'] * 3
 
 
 def test_reader_tools_keyboard_help_and_focus_shortcut_guards(tools_page):
@@ -164,6 +164,60 @@ def test_reader_tools_keyboard_help_and_focus_shortcut_guards(tools_page):
     page.keyboard.press('Escape')
     playwright.expect(button).to_have_attribute('aria-pressed', 'false')
     assert page.evaluate('state.messages') == []
+
+
+def test_reader_tools_native_fullscreen_and_browser_exit(tools_page):
+    page, playwright = tools_page
+    page.evaluate('''() => {
+      delete document.documentElement.requestFullscreen;
+      delete document.exitFullscreen;
+    }''')
+    button = page.locator('#fullscreen')
+    button.click()
+    page.wait_for_function('document.fullscreenElement === document.documentElement')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'true')
+    button.click()
+    page.wait_for_function('document.fullscreenElement === null')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'false')
+    page.keyboard.press('f')
+    page.wait_for_function('document.fullscreenElement === document.documentElement')
+    page.evaluate('document.exitFullscreen()')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'false')
+    assert not page.evaluate('document.documentElement.classList.contains("reader-focus")')
+
+
+@pytest.mark.parametrize('destroy', [False, True])
+def test_reader_tools_late_fullscreen_entry_is_cancelled(tools_page, destroy):
+    page, playwright = tools_page
+    page.evaluate('''() => {
+      state.nativeElement = null;
+      delete document.documentElement.requestFullscreen;
+      delete document.exitFullscreen;
+      Object.defineProperty(document, 'fullscreenElement', {configurable:true,get:()=>state.nativeElement});
+      document.documentElement.requestFullscreen = () => new Promise(resolve => {
+        state.fullscreenCalls.push('request');
+        state.enter = () => {
+          state.nativeElement = document.documentElement;
+          document.dispatchEvent(new Event('fullscreenchange'));
+          resolve();
+        };
+      });
+      document.exitFullscreen = async () => {
+        state.fullscreenCalls.push('exit');
+        state.nativeElement = null;
+        document.dispatchEvent(new Event('fullscreenchange'));
+      };
+    }''')
+    page.locator('#fullscreen').click()
+    if destroy:
+        page.evaluate('reading.destroy()')
+    else:
+        page.locator('#fullscreen').click()
+    page.evaluate('state.enter()')
+    page.wait_for_function('state.fullscreenCalls.includes("exit")')
+    assert page.evaluate('state.fullscreenCalls') == ['request', 'exit']
+    assert page.evaluate('document.fullscreenElement') is None
+    playwright.expect(page.locator('#fullscreen')).to_have_attribute('aria-pressed', 'false')
 
 
 def test_reader_tools_focus_shortcuts_respect_consumed_events_and_search(tools_page):

@@ -17,6 +17,9 @@ export function readingTools({getPdf, getPage, getZoom, renderPage, status = () 
   const fullscreen = $('fullscreen'), fitPage = $('fitPage'), help = $('shortcuts'), dialog = $('shortcutsDialog');
   const removers = [];
   let frame = 0, fitting = false, drag = null, disposed = false, fitSequence = 0;
+  let fullscreenPending = false, nativeFocus = false;
+  const root = document.documentElement;
+  const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
   let notesWidth = panel?.getBoundingClientRect().width || 330;
   const listen = (target, name, handler, options) => {
     target?.addEventListener(name, handler, options);
@@ -76,7 +79,7 @@ export function readingTools({getPdf, getPage, getZoom, renderPage, status = () 
       const label = focused ? 'Exit focus' : 'Focus view';
       if (fullscreen.textContent !== label) fullscreen.textContent = label;
       fullscreen.setAttribute('aria-pressed', String(focused));
-      fullscreen.title = focused ? 'Exit focus view (F or Esc)' : 'Focus on the paper in this window (F)';
+      fullscreen.title = focused ? 'Exit focus view (F or Esc)' : 'Read full screen (F)';
     }
     if (resize) {
       resize.hidden = Boolean(panel?.hidden);
@@ -109,11 +112,48 @@ export function readingTools({getPdf, getPage, getZoom, renderPage, status = () 
     }
   }
 
-  function toggleFocus() {
-    if (disposed) return;
-    document.documentElement.classList.toggle('reader-focus');
+  function setFocus(focused) {
+    root.classList.toggle('reader-focus', focused);
     setNotesWidth(notesWidth);
     update();
+  }
+
+  async function exitNativeFocus() {
+    if (!nativeFocus || fullscreenElement() !== root) return;
+    try {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      await exit?.call(document);
+    } catch {
+      if (!disposed && fullscreenElement() === root) setFocus(true);
+    }
+  }
+
+  function syncFullscreen() {
+    if (fullscreenElement() === root) {
+      nativeFocus = true;
+      if (disposed || !root.classList.contains('reader-focus')) void exitNativeFocus();
+    } else if (nativeFocus) {
+      nativeFocus = false;
+      if (!disposed) setFocus(false);
+    }
+  }
+
+  async function toggleFocus() {
+    if (disposed) return;
+    const focused = !root.classList.contains('reader-focus');
+    setFocus(focused);
+    if (!focused) {await exitNativeFocus(); return;}
+    const request = root.requestFullscreen || root.webkitRequestFullscreen;
+    if (fullscreenPending || fullscreenElement() || !request || document.fullscreenEnabled === false || document.webkitFullscreenEnabled === false) return;
+    fullscreenPending = true;
+    try {
+      await request.call(root);
+      syncFullscreen();
+    } catch {
+      // Keep the in-window reading layout when full screen is unavailable or denied.
+    } finally {
+      fullscreenPending = false;
+    }
   }
 
   function openHelp() {
@@ -123,6 +163,8 @@ export function readingTools({getPdf, getPage, getZoom, renderPage, status = () 
 
   listen(fitPage, 'click', fit);
   listen(fullscreen, 'click', toggleFocus);
+  listen(document, 'fullscreenchange', syncFullscreen);
+  listen(document, 'webkitfullscreenchange', syncFullscreen);
   listen(help, 'click', openHelp);
   listen($('shortcutsClose'), 'click', () => dialog?.close());
   listen(workspace, 'scroll', scheduleProgress, {passive: true});
@@ -165,6 +207,7 @@ export function readingTools({getPdf, getPage, getZoom, renderPage, status = () 
   update();
   return {update, destroy() {
     document.documentElement.classList.remove('reader-focus');
+    void exitNativeFocus();
     update();
     disposed = true;
     fitSequence++;

@@ -239,7 +239,7 @@ def test_reader_concurrently_deleted_note_keeps_downloadable_unsaved_draft(reade
 
 
 @pytest.mark.parametrize('supported', [True, False])
-def test_reader_focus_view_expands_reading_space_without_native_fullscreen(reader_page, supported):
+def test_reader_focus_view_expands_reading_space_when_fullscreen_unavailable(reader_page, supported):
     page, expect, base, _ = reader_page
     replacement = "() => {fullscreenCalls.push('request');return Promise.reject(new Error('Browser denied full screen'))}" if supported else 'undefined'
     page.add_init_script(f'''window.fullscreenCalls=[];
@@ -283,7 +283,7 @@ def test_reader_focus_view_expands_reading_space_without_native_fullscreen(reade
     expect(button).to_have_attribute('aria-pressed', 'true')
     button.click()
     expect(button).to_have_attribute('aria-pressed', 'false')
-    assert page.evaluate('fullscreenCalls') == []
+    assert page.evaluate('fullscreenCalls') == (['request', 'request'] if supported else [])
     assert page.evaluate('document.fullscreenElement') is None
 
 
