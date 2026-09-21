@@ -9,8 +9,37 @@ import time
 import uuid
 
 
+# Notebook quotas are per owner and separate from PDF highlights. Empty rows count
+# toward the paper limit: retaining their revisions prevents stale-write ABA bugs.
+MAX_NOTEBOOK_CHARACTERS = 50_000
+MAX_NOTEBOOK_PAPERS = 10_000
+MAX_NOTEBOOK_BYTES = 20_000_000
+
+
 class NoteConflict(ValueError):
     pass
+
+
+def notebook_paper_key(paper_id):
+    if (not isinstance(paper_id, str) or not 1 <= len(paper_id) <= 160
+            or not paper_id.strip()
+            or any(ord(character) < 32 or ord(character) == 127 for character in paper_id)):
+        raise ValueError('A valid paper_id is required.')
+    paper_id.encode('utf-8')
+    return paper_id
+
+
+def validate_notebook(payload):
+    if not isinstance(payload, dict) or set(payload) != {'paper_id', 'text', 'revision'}:
+        raise ValueError('Supply paper_id, text and revision only.')
+    notebook_paper_key(payload['paper_id'])
+    if not isinstance(payload['text'], str) or len(payload['text']) > MAX_NOTEBOOK_CHARACTERS:
+        raise ValueError(f'Paper notes must contain at most {MAX_NOTEBOOK_CHARACTERS:,} characters.')
+    payload['text'].encode('utf-8')
+    # Keep both the supplied and next revision exactly representable in browsers.
+    if type(payload['revision']) is not int or not 0 <= payload['revision'] < 2 ** 53 - 1:
+        raise ValueError('A valid notebook revision is required.')
+    return payload
 
 
 def document_key(paper_id, fingerprint):
@@ -56,9 +85,35 @@ class ReaderNotes:
         try:
             db.execute('CREATE TABLE IF NOT EXISTS marks (paper TEXT NOT NULL, fingerprint TEXT NOT NULL, id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload TEXT NOT NULL, updated INTEGER NOT NULL)')
             db.execute('CREATE INDEX IF NOT EXISTS marks_document ON marks(paper, fingerprint)')
+            db.execute('CREATE TABLE IF NOT EXISTS paper_notes (paper TEXT PRIMARY KEY, text TEXT NOT NULL, revision INTEGER NOT NULL, updated INTEGER NOT NULL)')
             yield db
         finally:
             db.close()
+
+    def notebook_snapshot(self, paper_id):
+        notebook_paper_key(paper_id)
+        with self.connection() as db:
+            row = db.execute('SELECT text, revision, updated FROM paper_notes WHERE paper=?', (paper_id,)).fetchone()
+        text, revision, updated = row if row else ('', 0, None)
+        return {'paper_id': paper_id, 'text': text, 'revision': revision, 'updated_at': updated}
+
+    def change_notebook(self, payload):
+        validate_notebook(payload)
+        paper, text, revision = payload['paper_id'], payload['text'], payload['revision']
+        with self.connection() as db, db:
+            db.execute('BEGIN IMMEDIATE')
+            previous = db.execute('SELECT revision, length(CAST(text AS BLOB)) FROM paper_notes WHERE paper=?', (paper,)).fetchone()
+            if revision != (previous[0] if previous else 0):
+                raise NoteConflict('These paper notes changed in another window. Reload notes before saving again.')
+            count, total_bytes = db.execute('SELECT count(*), coalesce(sum(length(CAST(text AS BLOB))), 0) FROM paper_notes').fetchone()
+            if previous is None and count >= MAX_NOTEBOOK_PAPERS:
+                raise ValueError('Your paper notebook limit has been reached.')
+            if total_bytes - (previous[1] if previous else 0) + len(text.encode('utf-8')) > MAX_NOTEBOOK_BYTES:
+                raise ValueError('Your paper notes storage limit has been reached. Shorten notes before saving more.')
+            updated = time.time_ns() // 1_000_000
+            db.execute('INSERT INTO paper_notes (paper, text, revision, updated) VALUES (?, ?, ?, ?) ON CONFLICT(paper) DO UPDATE SET text=excluded.text, revision=excluded.revision, updated=excluded.updated',
+                       (paper, text, revision + 1, updated))
+        return {'paper_id': paper, 'text': text, 'revision': revision + 1, 'updated_at': updated}
 
     def snapshot(self, paper_id, fingerprint):
         document_key(paper_id, fingerprint)

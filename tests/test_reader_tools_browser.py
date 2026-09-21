@@ -16,6 +16,10 @@ def tools_page(reader_server):  # noqa: F811
     </style></head><body>
     <button id="fitPage">Fit page</button><button id="fullscreen">Focus view</button>
     <button id="shortcuts">Shortcuts</button><input id="typing"><p id="selection">A selected passage.</p>
+    <textarea id="typingArea"></textarea><select id="choice"><option>Default</option></select>
+    <div id="editing" contenteditable="true">Editable notes</div>
+    <div id="textbox" role="textbox" tabindex="0">Custom note editor</div>
+    <form id="searchBar" hidden><input id="searchQuery" type="search"></form>
     <main><section id="workspace"><div>Page</div></section>
     <div id="notesResize" role="separator" tabindex="0"></div><aside id="notesPanel">Notes</aside></main>
     <progress id="readingProgress" max="100"></progress><output id="readingPosition"></output>
@@ -31,12 +35,17 @@ def tools_page(reader_server):  # noqa: F811
         page.evaluate('''async()=>{
           const module=await import('/assets/reader/reading-tools.mjs');
           window.toolsModule=module;
-          window.state={page:1,zoom:1,jumps:[],messages:[],delay:false};
+          window.state={page:1,zoom:1,jumps:[],messages:[],delay:false,fullscreenCalls:[]};
           state.pdf={numPages:4,getPage:async number=>{
             if(state.delay)await new Promise(resolve=>state.release=resolve);
             return {getViewport:()=>number===4?{width:842,height:595}:{width:595,height:842}};
           }};
-          Object.defineProperty(document.documentElement,'requestFullscreen',{configurable:true,value:()=>Promise.reject(new Error('blocked'))});
+          Object.defineProperty(document.documentElement,'requestFullscreen',{configurable:true,value:()=>{
+            state.fullscreenCalls.push('request');return Promise.reject(new Error('blocked'));
+          }});
+          Object.defineProperty(document,'exitFullscreen',{configurable:true,value:()=>{
+            state.fullscreenCalls.push('exit');return Promise.reject(new Error('blocked'));
+          }});
           window.reading=module.readingTools({
             getPdf:()=>state.pdf,getPage:()=>state.page,getZoom:()=>state.zoom,
             renderPage:async(page,zoom,y)=>{state.jumps.push({page,zoom,y});state.page=page;state.zoom=zoom;reading.update()},
@@ -45,6 +54,7 @@ def tools_page(reader_server):  # noqa: F811
         }''')
         yield page, playwright
         assert not errors
+        assert page.evaluate('state.fullscreenCalls') == []
         browser.close()
 
 
@@ -80,33 +90,113 @@ def test_reader_tools_fit_progress_and_stale_fit(tools_page):
     assert page.evaluate('state.jumps.length') == 2
 
 
-def test_reader_tools_keyboard_help_and_fullscreen_failure(tools_page):
+def test_reader_tools_focus_view_uses_button_and_keyboard_without_native_fullscreen(tools_page):
     page, playwright = tools_page
+    button = page.locator('#fullscreen')
+    playwright.expect(button).to_be_enabled()
+    playwright.expect(button).to_have_text('Focus view')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'false')
+    assert not page.evaluate('document.documentElement.classList.contains("reader-focus")')
+    button.click()
+    playwright.expect(button).to_have_text('Exit focus')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'true')
+    assert page.evaluate('document.documentElement.classList.contains("reader-focus")')
+    page.keyboard.press('f')
+    playwright.expect(button).to_have_text('Focus view')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'false')
+    assert not page.evaluate('document.documentElement.classList.contains("reader-focus")')
+    page.keyboard.press('Shift+F')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'true')
+    page.keyboard.press('Escape')
+    playwright.expect(button).to_have_text('Focus view')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'false')
+    page.keyboard.press('f')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'true')
+    button.click()
+    playwright.expect(button).to_have_text('Focus view')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'false')
+    assert page.evaluate('state.messages') == []
+    assert page.evaluate('document.fullscreenElement') is None
+
+
+def test_reader_tools_keyboard_help_and_focus_shortcut_guards(tools_page):
+    page, playwright = tools_page
+    button = page.locator('#fullscreen')
     page.locator('#typing').fill('f?')
     page.locator('#typing').press('?')
     page.locator('#typing').press('f')
-    assert page.evaluate('state.messages.length') == 0
+    playwright.expect(button).to_have_attribute('aria-pressed', 'false')
     playwright.expect(page.locator('#shortcutsDialog')).not_to_be_visible()
     page.locator('#typing').evaluate('el=>el.blur()')
     page.locator('#selection').evaluate('el=>{const range=document.createRange();range.selectNodeContents(el);const selected=getSelection();selected.removeAllRanges();selected.addRange(range)}')
     page.keyboard.press('?')
+    page.keyboard.press('f')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'false')
     playwright.expect(page.locator('#shortcutsDialog')).not_to_be_visible()
     page.evaluate('getSelection().removeAllRanges()')
     page.keyboard.press('?')
     playwright.expect(page.locator('#shortcutsDialog')).to_be_visible()
     page.keyboard.press('f')
-    assert page.evaluate('state.messages.length') == 0
+    playwright.expect(button).to_have_attribute('aria-pressed', 'false')
     page.keyboard.press('Escape')
     playwright.expect(page.locator('#shortcutsDialog')).not_to_be_visible()
-    page.locator('#fullscreen').click()
-    page.wait_for_function('state.messages.length===1')
-    assert page.evaluate('state.messages[0].error') is True
-    assert 'keep reading' in page.evaluate('state.messages[0].text')
-    playwright.expect(page.locator('#fullscreen')).to_be_enabled()
+    button.click()
+    playwright.expect(button).to_have_attribute('aria-pressed', 'true')
+    for selector in ['#typing', '#typingArea', '#choice', '#editing', '#textbox']:
+        page.locator(selector).focus()
+        page.keyboard.press('f')
+        page.keyboard.press('Escape')
+        playwright.expect(button).to_have_attribute('aria-pressed', 'true')
+    page.evaluate('document.activeElement.blur()')
+    page.locator('#selection').evaluate('el=>{const range=document.createRange();range.selectNodeContents(el);const selected=getSelection();selected.removeAllRanges();selected.addRange(range)}')
+    page.keyboard.press('Escape')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'true')
+    page.evaluate('getSelection().removeAllRanges()')
     page.locator('#shortcuts').click()
     playwright.expect(page.locator('#shortcutsDialog')).to_be_visible()
+    page.keyboard.press('f')
+    page.keyboard.press('Escape')
+    playwright.expect(page.locator('#shortcutsDialog')).not_to_be_visible()
+    playwright.expect(button).to_have_attribute('aria-pressed', 'true')
+    page.locator('#shortcuts').click()
     page.locator('#shortcutsClose').click()
     playwright.expect(page.locator('#shortcutsDialog')).not_to_be_visible()
+    page.keyboard.press('Escape')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'false')
+    assert page.evaluate('state.messages') == []
+
+
+def test_reader_tools_focus_shortcuts_respect_consumed_events_and_search(tools_page):
+    page, playwright = tools_page
+    button = page.locator('#fullscreen')
+    button.click()
+    for key, flags in [
+        ('f', {'repeat': True}),
+        ('f', {'isComposing': True}),
+        ('f', {'ctrlKey': True}),
+        ('f', {'metaKey': True}),
+        ('f', {'altKey': True}),
+        ('Escape', {'isComposing': True}),
+        ('Escape', {'ctrlKey': True}),
+        ('Escape', {'metaKey': True}),
+        ('Escape', {'altKey': True}),
+    ]:
+        page.evaluate('''({key,flags})=>document.dispatchEvent(new KeyboardEvent('keydown', {
+          key,bubbles:true,cancelable:true,...flags
+        }))''', {'key': key, 'flags': flags})
+        playwright.expect(button).to_have_attribute('aria-pressed', 'true')
+    for key in ['f', 'Escape']:
+        page.evaluate('''key=>{
+          const event=new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true});
+          event.preventDefault();document.dispatchEvent(event);
+        }''', key)
+        playwright.expect(button).to_have_attribute('aria-pressed', 'true')
+    page.evaluate('document.querySelector("#searchBar").hidden=false')
+    page.keyboard.press('Escape')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'true')
+    page.evaluate('document.querySelector("#searchBar").hidden=true')
+    page.keyboard.press('Escape')
+    playwright.expect(button).to_have_attribute('aria-pressed', 'false')
 
 
 def test_reader_tools_resizable_notes_and_cleanup(tools_page):
@@ -137,22 +227,36 @@ def test_reader_tools_resizable_notes_and_cleanup(tools_page):
     handle.focus()
     handle.press('End')
     assert int(handle.get_attribute('aria-valuenow')) <= 422
+    page.locator('#fullscreen').click()
+    playwright.expect(page.locator('#fullscreen')).to_have_attribute('aria-pressed', 'true')
     page.evaluate('reading.destroy()')
+    assert not page.evaluate('document.documentElement.classList.contains("reader-focus")')
+    playwright.expect(page.locator('#fullscreen')).to_have_text('Focus view')
+    playwright.expect(page.locator('#fullscreen')).to_have_attribute('aria-pressed', 'false')
+    page.locator('#fullscreen').click()
+    page.keyboard.press('f')
+    playwright.expect(page.locator('#fullscreen')).to_have_attribute('aria-pressed', 'false')
     page.locator('#shortcuts').click()
     playwright.expect(page.locator('#shortcutsDialog')).not_to_be_visible()
 
 
-def test_reader_tools_missing_fullscreen_and_fit_failure(tools_page):
+def test_reader_tools_focus_without_fullscreen_api_and_fit_failure(tools_page):
     page, playwright = tools_page
     page.evaluate('''()=>{
       reading.destroy();
       Object.defineProperty(document.documentElement,'requestFullscreen',{configurable:true,value:undefined});
+      Object.defineProperty(document,'exitFullscreen',{configurable:true,value:undefined});
+      Object.defineProperty(document,'fullscreenEnabled',{configurable:true,value:false});
       state.pdf.getPage=async()=>{throw new Error('page unavailable')};
       window.reading=toolsModule.readingTools({getPdf:()=>state.pdf,getPage:()=>state.page,getZoom:()=>state.zoom,
         renderPage:async()=>{throw new Error('should not render')},status:(text,error)=>state.messages.push({text,error})});
     }''')
-    playwright.expect(page.locator('#fullscreen')).to_be_disabled()
-    assert 'not available' in page.locator('#fullscreen').get_attribute('title')
+    playwright.expect(page.locator('#fullscreen')).to_be_enabled()
+    page.locator('#fullscreen').click()
+    playwright.expect(page.locator('#fullscreen')).to_have_attribute('aria-pressed', 'true')
+    page.keyboard.press('Escape')
+    playwright.expect(page.locator('#fullscreen')).to_have_attribute('aria-pressed', 'false')
+    assert page.evaluate('state.messages') == []
     page.locator('#fitPage').click()
     page.wait_for_function('state.messages.length===1')
     assert 'Try Fit width' in page.evaluate('state.messages[0].text')

@@ -49,8 +49,19 @@ the original PDF. **Download PDF** saves the unmodified document.
 
 Use **Fit page** to see a whole page or **Fit width** for larger text. Drag the
 divider to resize the notes panel, or focus it and use the arrow keys. **Notes**
-hides the panel. **Focus view** enters full screen where supported. The footer
+hides the panel. **Focus view** hides the footer while keeping the shared
+navigation, reading controls and notes available, without entering browser full screen.
+Use **Exit focus**, **F**, or **Esc** to return to the normal view. The footer
 shows the current page and scroll position. **?** opens the keyboard guide.
+
+The notes sidebar has separate **Highlights** and **Paper notes** tabs. Paper notes
+are private, free-form text linked to the paper, not to a marked passage or PDF
+version. They save after a brief typing pause or with **Save** / **Ctrl/Cmd+S**.
+**Export text** downloads your current draft. If saving fails, the draft stays in
+the open reader with a visible status and retry controls. Conflicting edits from
+another window require an explicit choice instead of silently overwriting notes.
+These notes use the same per-account notes database as highlights and are included
+in its backups. Unsaved drafts are not stored in shared browser storage.
 
 **Find** (Ctrl/Cmd+F) searches the PDF's selectable text and marks matching
 passages. Move between matches with the arrows or Enter/Shift+Enter in the search

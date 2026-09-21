@@ -16,9 +16,8 @@ export function readingTools({getPdf, getPage, getZoom, renderPage, status = () 
   const workspace = $('workspace'), panel = $('notesPanel'), resize = $('notesResize');
   const fullscreen = $('fullscreen'), fitPage = $('fitPage'), help = $('shortcuts'), dialog = $('shortcutsDialog');
   const removers = [];
-  let frame = 0, fitting = false, focusPending = false, drag = null, disposed = false, fitSequence = 0;
+  let frame = 0, fitting = false, drag = null, disposed = false, fitSequence = 0;
   let notesWidth = panel?.getBoundingClientRect().width || 330;
-  const fullscreenAvailable = typeof document.documentElement.requestFullscreen === 'function' && document.fullscreenEnabled !== false;
   const listen = (target, name, handler, options) => {
     target?.addEventListener(name, handler, options);
     removers.push(() => target?.removeEventListener(name, handler, options));
@@ -72,11 +71,12 @@ export function readingTools({getPdf, getPage, getZoom, renderPage, status = () 
     if (disposed) return;
     if (fitPage) fitPage.disabled = !getPdf() || !getReady() || getSaving() || fitting;
     if (fullscreen) {
-      fullscreen.disabled = !fullscreenAvailable || focusPending;
-      const label = document.fullscreenElement ? 'Exit focus' : 'Focus view';
+      const focused = document.documentElement.classList.contains('reader-focus');
+      fullscreen.disabled = false;
+      const label = focused ? 'Exit focus' : 'Focus view';
       if (fullscreen.textContent !== label) fullscreen.textContent = label;
-      fullscreen.setAttribute('aria-pressed', String(Boolean(document.fullscreenElement)));
-      fullscreen.title = fullscreenAvailable ? 'Toggle full-screen reading (F)' : 'Full-screen reading is not available in this browser';
+      fullscreen.setAttribute('aria-pressed', String(focused));
+      fullscreen.title = focused ? 'Exit focus view (F or Esc)' : 'Focus on the paper in this window (F)';
     }
     if (resize) {
       resize.hidden = Boolean(panel?.hidden);
@@ -109,19 +109,11 @@ export function readingTools({getPdf, getPage, getZoom, renderPage, status = () 
     }
   }
 
-  async function toggleFullscreen() {
-    if (!fullscreenAvailable || focusPending) return;
-    focusPending = true;
+  function toggleFocus() {
+    if (disposed) return;
+    document.documentElement.classList.toggle('reader-focus');
+    setNotesWidth(notesWidth);
     update();
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await document.documentElement.requestFullscreen();
-    } catch {
-      if (!disposed) status('Full-screen reading was not available. You can keep reading in this window.', true);
-    } finally {
-      focusPending = false;
-      update();
-    }
   }
 
   function openHelp() {
@@ -130,17 +122,17 @@ export function readingTools({getPdf, getPage, getZoom, renderPage, status = () 
   }
 
   listen(fitPage, 'click', fit);
-  listen(fullscreen, 'click', toggleFullscreen);
+  listen(fullscreen, 'click', toggleFocus);
   listen(help, 'click', openHelp);
   listen($('shortcutsClose'), 'click', () => dialog?.close());
-  listen(document, 'fullscreenchange', () => {setNotesWidth(notesWidth); update();});
   listen(workspace, 'scroll', scheduleProgress, {passive: true});
   listen(window, 'resize', () => {setNotesWidth(notesWidth); update();});
   listen(window, 'blur', endResize);
   listen(document, 'keydown', event => {
     if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || editable(event.target) || document.querySelector('dialog[open]') || selectionActive()) return;
     if (event.key === '?') {event.preventDefault(); openHelp();}
-    else if (event.key.toLowerCase() === 'f' && fullscreenAvailable && !event.repeat) {event.preventDefault(); toggleFullscreen();}
+    else if (event.key.toLowerCase() === 'f' && !event.repeat) {event.preventDefault(); toggleFocus();}
+    else if (event.key === 'Escape' && !event.repeat && document.documentElement.classList.contains('reader-focus') && $('searchBar')?.hidden !== false) {event.preventDefault(); toggleFocus();}
   });
   listen(resize, 'pointerdown', event => {
     if (event.button !== 0 || innerWidth <= 720 || panel?.hidden) return;
@@ -172,6 +164,8 @@ export function readingTools({getPdf, getPage, getZoom, renderPage, status = () 
   setNotesWidth(notesWidth);
   update();
   return {update, destroy() {
+    document.documentElement.classList.remove('reader-focus');
+    update();
     disposed = true;
     fitSequence++;
     endResize();

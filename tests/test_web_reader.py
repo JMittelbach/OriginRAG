@@ -18,8 +18,7 @@ def reader_server(tmp_path, monkeypatch, request):
     root = Path(__file__).resolve().parents[1]
     for folder in ('reader', 'vendor/pdfjs'):
         shutil.copytree(root / 'assets' / folder, tmp_path / 'assets' / folder)
-    (tmp_path / 'assets' / 'workspace').mkdir()
-    shutil.copy2(root / 'assets' / 'workspace' / 'request.mjs', tmp_path / 'assets' / 'workspace' / 'request.mjs')
+    shutil.copytree(root / 'assets' / 'workspace', tmp_path / 'assets' / 'workspace', ignore=shutil.ignore_patterns('editor-build'))
     bib = tmp_path / 'bib'
     bib.mkdir()
     configuration = getattr(request, 'param', False)
@@ -44,6 +43,8 @@ def reader_server(tmp_path, monkeypatch, request):
         for user in ('alice', 'bob'):
             auth.create_user(user, 'quiet-lantern-river-orbit-47')
     settings = web.WebChatSettings(backend='template')
+    if isinstance(configuration, dict):
+        settings.app_profile=configuration.get('profile','full')
     registry = web.AuthenticatedWebChatRegistry(settings, tmp_path / 'sessions') if auth else None
     app = None if auth else web.WebChatApp(settings, tmp_path / 'sessions')
     handler = web.build_handler(app, auth_store=auth, app_registry=registry, secure_cookies=False)
@@ -105,7 +106,7 @@ def test_real_browser_can_read_highlight_save_and_reopen(reader_server):
         page.locator('#textLayer span').first.evaluate('el => {const range=document.createRange();range.selectNodeContents(el);const s=window.getSelection();s.removeAllRanges();s.addRange(range);} ')
         page.locator('#highlight').click()
         page.wait_for_selector('.note')
-        page.locator('textarea').fill('Compare this finding with the next paper.')
+        page.locator('.note textarea').fill('Compare this finding with the next paper.')
         page.get_by_role('button', name='Save note', exact=True).click()
         playwright.expect(page.locator('#status')).to_have_text('Saved to your personal notes.')
         assert page.locator('.mark').count() >= 1
@@ -122,12 +123,12 @@ def test_real_browser_can_read_highlight_save_and_reopen(reader_server):
         page.wait_for_selector('.mark')
         page.reload()
         page.wait_for_selector('#fit:not([disabled])')
-        assert page.locator('textarea').input_value() == 'Compare this finding with the next paper.'
+        assert page.locator('.note textarea').input_value() == 'Compare this finding with the next paper.'
         page.route('**/api/reader/notes', lambda route: route.fulfill(status=503, content_type='application/json', body=json.dumps({'error': 'Temporary failure. Please retry.'})))
-        page.locator('textarea').fill('An unsaved thought survives a failed request.')
+        page.locator('.note textarea').fill('An unsaved thought survives a failed request.')
         page.get_by_role('button', name='Save note', exact=True).click()
         playwright.expect(page.locator('#status')).to_have_text('Temporary failure. Please retry.')
-        assert page.locator('textarea').input_value() == 'An unsaved thought survives a failed request.'
+        assert page.locator('.note textarea').input_value() == 'An unsaved thought survives a failed request.'
         page.unroute('**/api/reader/notes')
         page.get_by_role('button', name='Save note', exact=True).click()
         playwright.expect(page.locator('#status')).to_have_text('Saved to your personal notes.')
@@ -188,9 +189,9 @@ def test_reader_search_contents_selection_toolbar_and_shortcuts(reader_server):
         page.wait_for_selector('.mark.mint')
         page.locator('#textLayer span').last.evaluate('el=>{const r=document.createRange();r.selectNodeContents(el);const s=getSelection();s.removeAllRanges();s.addRange(r);}')
         page.locator('#selectionNote').click()
-        playwright.expect(page.locator('textarea').last).to_be_focused()
-        page.locator('textarea').last.fill('A quick note from the selection toolbar.')
-        page.locator('textarea').last.press('Control+s')
+        playwright.expect(page.locator('.note textarea').last).to_be_focused()
+        page.locator('.note textarea').last.fill('A quick note from the selection toolbar.')
+        page.locator('.note textarea').last.press('Control+s')
         playwright.expect(page.locator('#status')).to_have_text('Saved to your personal notes.')
         page.locator('#workspace').evaluate('el=>el.scrollTop+=document.querySelector("#page").getBoundingClientRect().top-el.getBoundingClientRect().top+250')
         old_fraction = page.locator('#workspace').evaluate('el=>(el.getBoundingClientRect().top-document.querySelector("#page").getBoundingClientRect().top+50)/document.querySelector("#page").clientHeight')
@@ -243,8 +244,8 @@ def test_copy_does_not_highlight_and_click_opens_comment(reader_server):
         end=(box['x']+box['width']-1,start[1])
         point=(start[0]+20,start[1])
         page.mouse.click(*point)
-        playwright.expect(page.locator('textarea')).to_be_focused()
-        page.locator('textarea').fill('My comment on the red passage.')
+        playwright.expect(page.locator('.note textarea')).to_be_focused()
+        page.locator('.note textarea').fill('My comment on the red passage.')
         page.get_by_role('button',name='Save note',exact=True).click()
         playwright.expect(page.locator('#status')).to_have_text('Saved to your personal notes.')
         count=len(posts)
@@ -271,11 +272,11 @@ def test_copy_does_not_highlight_and_click_opens_comment(reader_server):
         playwright.expect(page.locator('#notesPanel')).to_be_hidden()
         page.evaluate('()=>getSelection().removeAllRanges()')
         page.mouse.click(*point)
-        playwright.expect(page.locator('textarea')).to_be_focused()
-        assert page.locator('textarea').input_value() == 'My comment on the red passage.'
+        playwright.expect(page.locator('.note textarea')).to_be_focused()
+        assert page.locator('.note textarea').input_value() == 'My comment on the red passage.'
         page.reload()
         page.wait_for_selector('.mark.red')
-        assert page.locator('textarea').input_value() == 'My comment on the red passage.'
+        assert page.locator('.note textarea').input_value() == 'My comment on the red passage.'
         assert not errors
         page.screenshot(path=str(tmp/'reader-click-comment.png'),full_page=True)
         browser.close()

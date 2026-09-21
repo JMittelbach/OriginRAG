@@ -156,9 +156,13 @@ The page indicator follows your position; page controls and search still let you
 Select a passage to reveal the quick marker toolbar. Highlights stay separate from the original
 PDF and are saved to your account. Search or colour-filter your notes, copy quotes,
 and export saved annotations as Markdown or JSON. Fit a whole page, resize the
-notes panel, or use full-screen reading. **?** shows the keyboard shortcuts.
+notes panel, or use **Focus view** for more reading space within the window.
+The shared navigation stays visible, so you can return to your library or bookshelf.
+**?** shows the keyboard shortcuts.
 Selecting text to copy does not save a highlight. Choose a colour explicitly,
 then click the saved highlight whenever you want to add or edit a comment.
+Use the **Paper notes** tab for free-form thoughts about the whole paper.
+Notes save automatically to your account, with a **Save** button and text export.
 Use **Mark as read** to build your personal **Bookshelf → Finished** list, with
 dates, search and a count of papers finished. You can optionally remove the paper
 from your shelf without deleting its PDF or notes, and undo the read status later.

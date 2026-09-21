@@ -2,6 +2,7 @@ import {getDocument, GlobalWorkerOptions, TextLayer} from '/assets/vendor/pdfjs/
 import {navigation} from './navigation.mjs';
 import {readingTools} from './reading-tools.mjs';
 import {readingStatus} from './reading-status.mjs';
+import {paperNotebook} from './paper-notebook.mjs';
 import {requestJSON} from '/assets/workspace/request.mjs';
 
 GlobalWorkerOptions.workerSrc = '/assets/vendor/pdfjs/legacy/build/pdf.worker.min.mjs';
@@ -25,6 +26,41 @@ const dirty = () => recoveredDrafts.size>0 || [...drafts].some(([id,value])=>val
 const navigate = navigation({getPdf:()=>pdf,getPage:()=>currentPage,getZoom:()=>zoom,renderPage});
 const reading = readingTools({getPdf:()=>pdf,getPage:()=>currentPage,getZoom:()=>zoom,renderPage,status,getReady:()=>ready,getSaving:()=>saving});
 const readTracker = readingStatus({paperId,status});
+const notebook = paperNotebook({paperId,status});
+function showNotesTab(name, focus=false) {
+  const paper = name === 'paper';
+  $('highlightNotesPanel').hidden=paper;
+  $('paperNotebook').hidden=!paper;
+  for(const [id,selected] of [['highlightsTab',!paper],['paperNotesTab',paper]]) {
+    $(id).setAttribute('aria-selected',String(selected));
+    $(id).tabIndex=selected?0:-1;
+  }
+  if(focus)$(paper?'paperNotesTab':'highlightsTab').focus();
+}
+for(const [id,name] of [['highlightsTab','highlights'],['paperNotesTab','paper']]) {
+  $(id).onclick=()=>showNotesTab(name);
+  $(id).addEventListener('keydown',event=>{
+    if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+    event.preventDefault();event.stopPropagation();
+    showNotesTab(event.key==='Home'?'highlights':event.key==='End'?'paper':name==='paper'?'highlights':'paper',true);
+  });
+}
+window.originragSaveDraft=async()=>{
+  if(notebook.dirty() || notebook.saving())await notebook.save();
+  if(dirty() || saving)throw new Error('Save your highlight notes before leaving, or export any unsaved drafts.');
+};
+let leaving=false;
+for(const container of [document.querySelector('.origin-navigation'),$('readingFooter')])container?.addEventListener('click',async event=>{
+  const link=event.target.closest('a[href]');
+  if(!link || event.defaultPrevented || event.button!==0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || link.target==='_blank' || link.hasAttribute('download'))return;
+  if(!notebook.dirty() && !notebook.saving())return;
+  event.preventDefault();
+  if(leaving)return;
+  leaving=true;
+  try {await notebook.save();location.assign(link.href);}
+  catch(error){showNotesTab('paper');$('notesPanel').hidden=false;$('notesToggle').setAttribute('aria-expanded','true');status(error.message,true);}
+  finally{leaving=false;}
+});
 function noteState() {
   $('notesState').textContent = saving ? 'Saving…' : reloading ? 'Refreshing…' : noteError ? 'Save not confirmed' : !notesReady ? 'Notes unavailable' : dirty() ? 'Unsaved changes' : 'Saved';
   $('notesState').dataset.state = noteError ? 'error' : dirty() ? 'dirty' : 'saved';
@@ -81,6 +117,7 @@ function focusNote(id) {
   focusedNote=id;
   $('notesPanel').hidden=false;
   $('notesToggle').setAttribute('aria-expanded','true');
+  showNotesTab('highlights');
   $('notesFilter').value=''; $('notesColor').value='all'; filterNotes();
   for(const item of $('notes').querySelectorAll('.note')) item.classList.toggle('selected',item.dataset.noteId===id);
   drawMarks();
@@ -342,8 +379,11 @@ $('zoomOut').onclick = () => renderPage(currentPage,zoom-.2);
 async function fit() { if (!pdf) return; const p = await pdf.getPage(currentPage); const width = p.getViewport({scale:1}).width; const style=getComputedStyle($('workspace')); await renderPage(currentPage,Math.min(2,Math.max(.35,($('workspace').clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight))/width))); }
 $('fit').onclick = fit;
 $('notesToggle').onclick = () => { $('notesPanel').hidden = !$('notesPanel').hidden; $('notesToggle').setAttribute('aria-expanded',String(!$('notesPanel').hidden)); };
-$('theme').onclick = () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme=next; try {localStorage.setItem('originrag-reader-theme',next);} catch {} };
-try {document.documentElement.dataset.theme=localStorage.getItem('originrag-reader-theme') || 'light';} catch {}
+$('theme').onclick = () => {
+  const next = ['dark','black'].includes(document.documentElement.dataset.theme) ? 'light' : 'dark';
+  if(window.originragAppearance)window.originragAppearance.set({...window.originragAppearance.get(),mode:next});
+  else document.documentElement.dataset.theme=next;
+};
 $('reload').onclick = async () => {
   if(saving || reloading || !fingerprint)return;
   reloading=true;controls();renderNotes();
@@ -367,11 +407,12 @@ $('export').onclick = () => {
   downloadFile(content,markdown?'text/markdown;charset=utf-8':'application/json','originrag-reading-notes.'+(markdown?'md':'json'));
   status(dirty()?'Exported saved notes only. Save your draft to include it.':'Notes exported.');
 };
-window.addEventListener('beforeunload',event=>{if(dirty() || saving){event.preventDefault();event.returnValue='';}});
+window.addEventListener('beforeunload',event=>{if(dirty() || saving || notebook.dirty() || notebook.saving()){event.preventDefault();event.returnValue='';}});
 document.addEventListener('keydown',event=>{
   if(event.isComposing || document.querySelector('dialog[open]'))return;
   const editing=event.target.closest('input,textarea,select,[contenteditable="true"]');
   if((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='f' && pdf){event.preventDefault();navigate.open();return;}
+  if((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='s' && event.target.id==='paperNotes'){event.preventDefault();notebook.save().catch(error=>status(error.message,true));return;}
   if((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='s' && event.target.matches('textarea')){event.preventDefault();event.target.closest('.note')?.querySelector('.note-actions button')?.click();return;}
   if(editing || event.ctrlKey || event.metaKey || event.altKey || !ready)return;
   if(event.key.toLowerCase()==='h' && selection){event.preventDefault();$('highlight').click();}
@@ -386,6 +427,7 @@ async function start() {
     $('original').href=original; $('original').hidden=false;
     const info=await requestJSON('/api/reader/paper?'+new URLSearchParams({paper_id:paperId}),{timeout:15000}); $('title').textContent=info.title || paperId; $('title').title=$('title').textContent;document.title=(info.title || paperId)+' · OriginRAG Reader';
     void readTracker.init();
+    void notebook.init();
     $('downloadPDF').href=original;$('downloadPDF').download=($('title').textContent.replace(/[\\/:*?"<>|\x00-\x1f]/g,'_').slice(0,120) || 'paper')+'.pdf';$('downloadPDF').hidden=false;
     if (!crypto.subtle) throw new Error('The reader needs localhost or HTTPS to safely identify PDF versions. You can still open the original PDF.');
     const response=await fetch(original);

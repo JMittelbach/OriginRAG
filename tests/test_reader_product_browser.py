@@ -54,7 +54,9 @@ def test_reader_product_themes_responsive_layout_and_download(reader_server, rea
     seed_notes(reader_server)
     page, expect, base, _ = reader_page
     page.set_viewport_size({'width': width, 'height': height})
-    page.add_init_script(f"localStorage.setItem('originrag-reader-theme', {json.dumps(theme)})")
+    page.add_init_script(
+        f"localStorage.setItem('originrag.appearance.v1', JSON.stringify({json.dumps({'mode': theme, 'background': 'city-cat'})}))"
+    )
     open_reader(page, base)
     expect(page.locator('html')).to_have_attribute('data-theme', theme)
     expect(page.locator('.note')).to_have_count(2)
@@ -237,38 +239,106 @@ def test_reader_concurrently_deleted_note_keeps_downloadable_unsaved_draft(reade
 
 
 @pytest.mark.parametrize('supported', [True, False])
-def test_reader_focus_view_unavailable_keeps_reader_usable(reader_page, supported):
+def test_reader_focus_view_expands_reading_space_without_native_fullscreen(reader_page, supported):
     page, expect, base, _ = reader_page
-    replacement = "() => Promise.reject(new Error('Browser denied full screen'))" if supported else 'undefined'
-    page.add_init_script(f"Object.defineProperty(Element.prototype, 'requestFullscreen', {{configurable: true, value: {replacement}}})")
+    replacement = "() => {fullscreenCalls.push('request');return Promise.reject(new Error('Browser denied full screen'))}" if supported else 'undefined'
+    page.add_init_script(f'''window.fullscreenCalls=[];
+      Object.defineProperty(Element.prototype, 'requestFullscreen', {{configurable:true,value:{replacement}}});
+      Object.defineProperty(document, 'fullscreenEnabled', {{configurable:true,value:{str(supported).lower()}}});
+      Object.defineProperty(document, 'exitFullscreen', {{configurable:true,value:()=>{{
+        fullscreenCalls.push('exit');return Promise.reject(new Error('Unexpected native exit'));
+      }}}});
+    ''')
     open_reader(page, base)
-    if supported:
-        page.locator('#fullscreen').click()
-        expect(page.locator('#status')).to_have_text('Full-screen reading was not available. You can keep reading in this window.')
-        expect(page.locator('#fullscreen')).to_be_enabled()
-    else:
-        expect(page.locator('#fullscreen')).to_be_disabled()
+    button = page.locator('#fullscreen')
+    header = page.locator('#globalNavigation')
+    footer = page.locator('#readingFooter')
+    workspace = page.locator('#workspace')
+    original_height = workspace.bounding_box()['height']
+    chrome_height = footer.bounding_box()['height']
+    expect(button).to_be_enabled()
+    expect(button).to_have_text('Focus view')
+    expect(button).to_have_attribute('aria-pressed', 'false')
+    button.click()
+    expect(button).to_have_text('Exit focus')
+    expect(button).to_have_attribute('aria-pressed', 'true')
+    assert page.evaluate('document.documentElement.classList.contains("reader-focus")')
+    expect(header).to_be_visible()
+    expect(footer).to_be_hidden()
+    expect(page.get_by_role('navigation', name='Reading controls')).to_be_visible()
+    expect(page.locator('#notesPanel')).to_be_visible()
+    expect(page.locator('#notesToggle')).to_be_enabled()
+    assert workspace.bounding_box()['height'] >= original_height + chrome_height - 1
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     page.locator('#next').click()
     expect(page.locator('#pageNumber')).to_have_value('2')
+    page.keyboard.press('Escape')
+    expect(button).to_have_text('Focus view')
+    expect(button).to_have_attribute('aria-pressed', 'false')
+    expect(header).to_be_visible()
+    expect(footer).to_be_visible()
+    assert workspace.bounding_box()['height'] == pytest.approx(original_height, abs=1)
+    assert not page.evaluate('document.documentElement.classList.contains("reader-focus")')
+    page.keyboard.press('f')
+    expect(button).to_have_attribute('aria-pressed', 'true')
+    button.click()
+    expect(button).to_have_attribute('aria-pressed', 'false')
+    assert page.evaluate('fullscreenCalls') == []
+    assert page.evaluate('document.fullscreenElement') is None
+
+
+def test_reader_focus_shortcuts_preserve_note_edits_and_search(reader_server, reader_page):
+    seed_notes(reader_server)
+    page, expect, base, _ = reader_page
+    open_reader(page, base)
+    button = page.locator('#fullscreen')
+    button.click()
+    note = page.locator('.note textarea').first
+    note.fill('An unsaved thought')
+    note.press('End')
+    note.press('f')
+    note.press('Escape')
+    expect(note).to_have_value('An unsaved thoughtf')
+    expect(button).to_have_attribute('aria-pressed', 'true')
+    page.keyboard.press('Control+f')
+    expect(page.locator('#searchBar')).to_be_visible()
+    page.locator('#searchClose').focus()
+    page.keyboard.press('Escape')
+    expect(page.locator('#searchBar')).to_be_visible()
+    expect(button).to_have_attribute('aria-pressed', 'true')
+    page.locator('#searchQuery').focus()
+    page.keyboard.press('Escape')
+    expect(page.locator('#searchBar')).to_be_hidden()
+    expect(button).to_have_attribute('aria-pressed', 'true')
+    page.keyboard.press('Escape')
+    expect(button).to_have_attribute('aria-pressed', 'false')
+    expect(note).to_have_value('An unsaved thoughtf')
+    expect(page.locator('#notesState')).to_have_text('Unsaved changes')
 
 
 def test_reader_shortcuts_dialog_does_not_trigger_background_navigation(reader_page):
     page, expect, base, _ = reader_page
     open_reader(page, base)
+    page.locator('#fullscreen').click()
     page.locator('#shortcuts').click()
     expect(page.locator('#shortcutsDialog')).to_be_visible()
     page.keyboard.press('ArrowRight')
     expect(page.locator('#pageNumber')).to_have_value('1')
     page.keyboard.press('Control+f')
     expect(page.locator('#searchBar')).to_be_hidden()
+    page.keyboard.press('f')
+    expect(page.locator('#fullscreen')).to_have_attribute('aria-pressed', 'true')
     page.keyboard.press('Escape')
     expect(page.locator('#shortcutsDialog')).to_be_hidden()
+    expect(page.locator('#fullscreen')).to_have_attribute('aria-pressed', 'true')
     page.locator('#pageNumber').focus()
     page.keyboard.press('ArrowRight')
     expect(page.locator('#pageNumber')).to_have_value('1')
     page.evaluate('document.activeElement.blur()')
     page.keyboard.press('ArrowRight')
     expect(page.locator('#pageNumber')).to_have_value('2')
+    page.keyboard.press('Escape')
+    expect(page.locator('#fullscreen')).to_have_attribute('aria-pressed', 'false')
 
 
 @pytest.mark.parametrize('reader_server', [{'pages': 8}], indirect=True)

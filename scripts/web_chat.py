@@ -43,7 +43,7 @@ from originrag.web_local_access import local_browser_request  # noqa: E402
 from originrag.library_topics import assign_library_topics  # noqa: E402
 from originrag.personal_shelf import PersonalShelf  # noqa: E402
 from originrag.reading_history import ReadingHistory, reading_query  # noqa: E402
-from originrag.reader_notes import ReaderNotes, NoteConflict, document_key  # noqa: E402
+from originrag.reader_notes import ReaderNotes, NoteConflict, document_key, notebook_paper_key, validate_notebook  # noqa: E402
 from originrag.web_reader import HTML as READER_HTML  # noqa: E402
 from originrag.web_workspace import HTML as WORKSPACE_HTML, PAGES as WORKSPACE_PAGES, handle_writing  # noqa: E402
 from originrag.writing_collaboration import WritingCollaboration  # noqa: E402
@@ -1752,25 +1752,31 @@ def build_handler(
                     handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog,
                                    collaboration=writing_collaboration, user=user)
                 return
-            if parsed.path in {"/reader", "/api/reader/paper", "/api/reader/notes"}:
+            if parsed.path in {"/reader", "/api/reader/paper", "/api/reader/notes", "/api/reader/notebook"}:
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
                     self.respond_json({"error": "Use the local browser or sign in to read papers."}, status=HTTPStatus.FORBIDDEN)
                     return
                 if parsed.path == "/reader":
-                    self.respond_text(READER_HTML, content_type="text/html; charset=utf-8")
+                    self.respond_text(navigation_for_profile(READER_HTML, runtime_profile), content_type="text/html; charset=utf-8")
                     return
                 try:
-                    params = parse_qs(parsed.query)
+                    notebook = parsed.path == "/api/reader/notebook"
+                    params = (parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True,
+                                       max_num_fields=8, errors="strict") if notebook else parse_qs(parsed.query))
                     expected = {"paper_id", "fingerprint"} if parsed.path.endswith("/notes") else {"paper_id"}
                     if set(params) != expected or any(len(value) != 1 for value in params.values()):
                         raise ValueError("Invalid reader request.")
                     paper_id = params["paper_id"][0]
+                    if notebook:
+                        notebook_paper_key(paper_id)
                     paper = next((p for p in library_catalog() if p["paper_id"] == paper_id), None)
                     if not paper:
                         self.respond_json({"error": "Paper not found in the library."}, status=HTTPStatus.NOT_FOUND)
                         return
                     if parsed.path.endswith("/paper"):
                         self.respond_json({"paper_id": paper_id, "title": paper.get("title", "")})
+                    elif notebook:
+                        self.respond_json(ReaderNotes(REPO_ROOT / current_app.out_dir).notebook_snapshot(paper_id))
                     else:
                         self.respond_json(ReaderNotes(REPO_ROOT / current_app.out_dir).snapshot(paper_id, params["fingerprint"][0]))
                 except ValueError as exc:
@@ -2048,17 +2054,25 @@ def build_handler(
                 except (OSError, sqlite3.Error):
                     self.respond_json({"error": "Your shelf could not be saved. Please try again."}, status=HTTPStatus.SERVICE_UNAVAILABLE)
                 return
-            if parsed.path == "/api/reader/notes":
+            if parsed.path in {"/api/reader/notes", "/api/reader/notebook"}:
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
                     self.respond_json({"error": "Use the local browser or sign in to save notes."}, status=HTTPStatus.FORBIDDEN)
                     return
                 try:
-                    payload = self.read_json_body()
-                    paper_id, _ = document_key(payload.get("paper_id"), payload.get("fingerprint"))
+                    notebook = parsed.path == "/api/reader/notebook"
+                    if notebook and parsed.query:
+                        raise ValueError("Paper-note updates do not accept query parameters.")
+                    payload = self.read_json_body(reject_duplicate_fields=True) if notebook else self.read_json_body()
+                    if notebook:
+                        validate_notebook(payload)
+                        paper_id = payload["paper_id"]
+                    else:
+                        paper_id, _ = document_key(payload.get("paper_id"), payload.get("fingerprint"))
                     if not any(p["paper_id"] == paper_id for p in library_catalog()):
                         self.respond_json({"error": "Paper not found in the library."}, status=HTTPStatus.NOT_FOUND)
                         return
-                    self.respond_json(ReaderNotes(REPO_ROOT / current_app.out_dir).change(payload))
+                    store = ReaderNotes(REPO_ROOT / current_app.out_dir)
+                    self.respond_json(store.change_notebook(payload) if notebook else store.change(payload))
                 except NoteConflict as exc:
                     self.respond_json({"error": str(exc)}, status=HTTPStatus.CONFLICT)
                 except ValueError as exc:
@@ -2489,7 +2503,7 @@ def build_handler(
             morsel = cookies.get(name)
             return morsel.value if morsel else ""
 
-        def read_json_body(self) -> dict:
+        def read_json_body(self, *, reject_duplicate_fields: bool = False) -> dict:
             length = int(self.headers.get("Content-Length") or "0")
             limit = 36_000_000 if urlparse(self.path).path == "/api/writing" else 1_000_000
             if length < 0 or length > limit:
@@ -2497,7 +2511,15 @@ def build_handler(
             raw = self.rfile.read(length).decode("utf-8")
             if not raw.strip():
                 return {}
-            value = json.loads(raw)
+            def unique_fields(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError("JSON fields must not be repeated.")
+                    result[key] = value
+                return result
+
+            value = json.loads(raw, object_pairs_hook=unique_fields) if reject_duplicate_fields else json.loads(raw)
             if not isinstance(value, dict):
                 raise ValueError("JSON body must be an object.")
             return value
