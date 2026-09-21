@@ -37,6 +37,8 @@ h1 { flex:1; min-width:0; font-size:13px; font-weight:550; white-space:nowrap; o
 .document-actions { display:flex; gap:18px; align-items:center; font-size:12px; white-space:nowrap; }
 .document-actions a { text-decoration:none; }
 .document-actions a:hover { text-decoration:underline; }
+#readStatus { min-height:30px; padding:5px 9px; font-size:12px; }
+#readStatus[data-state=read] { color:var(--accent); background:var(--wash); border-color:transparent; }
 button,select,input { min-height:34px; font:inherit; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:7px; padding:6px 10px; }
 button,a,select { touch-action:manipulation; }
 button { cursor:pointer; font-weight:550; white-space:nowrap; }
@@ -115,11 +117,13 @@ textarea::placeholder,input::placeholder { color:var(--muted); opacity:1; }
 #export { flex:1; font-size:12px; }
 #readingFooter { display:flex; align-items:center; min-height:34px; gap:16px; padding:7px 24px; border-top:1px solid var(--line); background:var(--panel); color:var(--muted); font-size:11px; }
 #readingPosition { flex-shrink:0; min-width:80px; font-variant-numeric:tabular-nums; }
-#readingProgress { width:180px; max-width:25vw; height:4px; border:0; border-radius:8px; overflow:hidden; background:var(--line); color:var(--accent); accent-color:var(--accent); }
+#readingProgress { width:180px; min-width:0; max-width:25vw; height:4px; border:0; border-radius:8px; overflow:hidden; background:var(--line); color:var(--accent); accent-color:var(--accent); }
 #readingProgress::-webkit-progress-bar { background:var(--line); }
 #readingProgress::-webkit-progress-value { background:var(--accent); }
 #readingProgress::-moz-progress-bar { background:var(--accent); }
 .footer-hint { margin-left:auto; }
+#readHistoryLink { margin-left:auto; white-space:nowrap; }
+#readHistoryLink+.footer-hint { margin-left:12px; }
 [hidden] { display:none!important; }
 .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
 #searchBar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 24px; border-bottom:1px solid var(--line); background:var(--panel); }
@@ -142,6 +146,15 @@ dialog { width:min(520px,calc(100vw - 30px)); max-height:80dvh; overflow:auto; p
 dialog::backdrop { background:#081318aa; }
 dialog .notes-heading { align-items:flex-start; }
 dialog .notes-heading button { font-size:12px; }
+#readStatusDialog { width:min(440px,calc(100vw - 30px)); }
+#readStatusDescription { margin:18px 0; font-size:13px; color:var(--muted); line-height:1.7; }
+.reading-option { display:flex; align-items:flex-start; gap:10px; padding:13px; border:1px solid var(--line); border-radius:9px; background:var(--card); font-size:13px; cursor:pointer; }
+.reading-option input { flex:none; min-height:0; width:16px; height:16px; margin:3px 0 0; accent-color:var(--accent); }
+.reading-option small { display:block; margin-top:4px; font-size:11px; line-height:1.6; color:var(--muted); }
+#readStatusMessage { font-size:12px; line-height:1.6; color:var(--muted); overflow-wrap:anywhere; }
+#readStatusMessage.error { color:var(--danger); }
+.reading-dialog-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; margin-top:22px; }
+.reading-dialog-actions button { font-size:12px; }
 #outlineItems { display:grid; gap:6px; margin-top:20px; font-size:13px; color:var(--muted); }
 #outlineItems button { text-align:left; overflow-wrap:anywhere; white-space:normal; font-size:13px; }
 .shortcut-list { margin:20px 0; }
@@ -166,7 +179,7 @@ kbd { display:inline-block; min-width:24px; padding:2px 6px; border:1px solid va
   body { height:auto; min-height:100dvh; overflow:auto; }
   header { flex-wrap:wrap; gap:8px 14px; padding:12px 14px; }
   h1 { order:3; flex-basis:100%; }
-  .document-actions { margin-left:auto; gap:10px; font-size:11px; }
+  .document-actions { margin-left:auto; flex-wrap:wrap; gap:10px; font-size:11px; }
   .brand { font-size:14px; }
   nav { padding:10px 14px; gap:8px 12px; }
   .controls { flex-wrap:wrap; }
@@ -195,6 +208,7 @@ kbd { display:inline-block; min-width:24px; padding:2px 6px; border:1px solid va
   #searchClose { margin-left:0; }
   #readingFooter { padding:8px 14px; gap:12px; }
   #readingProgress { flex:1; max-width:none; }
+  #readHistoryLink { margin-left:0; font-size:10px; }
   .footer-hint { display:none; }
   dialog { padding:20px; }
 }

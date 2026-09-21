@@ -1,0 +1,194 @@
+.workspace-page:not(.writing) .reading-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 22px 0 26px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+.workspace-page:not(.writing) .reading-tabs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 13px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+.workspace-page:not(.writing) .reading-tabs a[aria-current=page] {
+  border-color: var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: inset 0 -2px var(--teal, var(--accent));
+  font-weight: 600;
+}
+.workspace-page:not(.writing) .reading-tab-count {
+  min-width: 22px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-page:not(.writing) .reading-history {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+.workspace-page:not(.writing) .reading-history-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.workspace-page:not(.writing) .reading-history-heading h2 {
+  margin: 0;
+  font: 600 23px/1.35 var(--ui-font, system-ui, sans-serif);
+  letter-spacing: -.025em;
+}
+.workspace-page:not(.writing) .reading-history-count {
+  margin: 0;
+  color: var(--teal, var(--accent));
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-page:not(.writing) .reading-history > .muted {
+  margin: 10px 0 20px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.workspace-page:not(.writing) .reading-history-search {
+  max-width: 680px;
+  margin-bottom: 16px;
+}
+.workspace-page:not(.writing) .reading-history-results {
+  font-size: 12px;
+  margin: 0 0 14px;
+}
+.workspace-page:not(.writing) .reading-history-list {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.workspace-page:not(.writing) .reading-history-list:empty {
+  border: 0;
+}
+.workspace-page:not(.writing) .reading-history-list[aria-busy=true] {
+  opacity: .65;
+}
+.workspace-page:not(.writing) .reading-history-paper {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 20px;
+}
+.workspace-page:not(.writing) .reading-history-paper + .reading-history-paper {
+  border-top: 1px solid var(--line);
+}
+.workspace-page:not(.writing) .reading-history-details {
+  flex: 1;
+  min-width: 0;
+}
+.workspace-page:not(.writing) .reading-history-paper h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: -.01em;
+  overflow-wrap: anywhere;
+}
+.workspace-page:not(.writing) .reading-history-paper p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.workspace-page:not(.writing) .reading-history-paper .reading-history-date {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-page:not(.writing) .reading-history-paper .actions {
+  flex: 0 0 auto;
+  max-width: 45%;
+  gap: 7px;
+}
+.workspace-page:not(.writing) .reading-history-paper .actions :is(button, .button) {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.workspace-page:not(.writing) .reading-on-shelf {
+  padding: 6px 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.workspace-page:not(.writing) .reading-history-empty {
+  padding: 34px 22px;
+  text-align: center;
+}
+.workspace-page:not(.writing) .reading-history-empty h3 {
+  margin-bottom: 10px;
+  font-size: 18px;
+  line-height: 1.5;
+}
+.workspace-page:not(.writing) .reading-history-empty p {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.workspace-page:not(.writing) .reading-history-feedback {
+  padding: 14px 16px;
+  margin: 0 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.workspace-page:not(.writing) .reading-history-feedback p {
+  margin: 0;
+}
+.workspace-page:not(.writing) .reading-history-feedback button {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.workspace-page:not(.writing) .reading-history-paging {
+  margin-top: 20px;
+  gap: 14px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-page:not(.writing) .book-read-badge {
+  align-self: flex-start;
+  padding: 2px 7px;
+  border: 1px solid #ffffff44;
+  border-radius: 5px;
+  color: inherit;
+  font-size: 10px;
+  line-height: 1.4;
+}
+@media (max-width: 900px) {
+  .workspace-page:not(.writing) .reading-history-paper {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 13px;
+    padding: 17px;
+  }
+  .workspace-page:not(.writing) .reading-history-paper .actions {
+    max-width: 100%;
+  }
+}
+@media (max-width: 700px) {
+  .workspace-page:not(.writing) .reading-history-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .workspace-page:not(.writing) .reading-history-heading h2 {
+    font-size: 21px;
+  }
+}

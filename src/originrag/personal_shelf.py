@@ -17,10 +17,14 @@ class PersonalShelf:
 
     def connect(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(self.path, os.O_CREAT | os.O_WRONLY, 0o600)
+        os.close(descriptor)
+        os.chmod(self.path, 0o600)
         connection = sqlite3.connect(self.path, timeout=10)
         try:
-            os.chmod(self.path, 0o600)
             connection.execute("CREATE TABLE IF NOT EXISTS books (paper_id TEXT PRIMARY KEY, metadata TEXT NOT NULL, saved_at INTEGER NOT NULL)")
+            connection.execute("CREATE TABLE IF NOT EXISTS reading (paper_id TEXT PRIMARY KEY, metadata TEXT NOT NULL, read_at INTEGER NOT NULL CHECK (read_at >= 0))")
+            connection.execute("CREATE INDEX IF NOT EXISTS reading_recent ON reading (read_at DESC, paper_id)")
         except Exception:
             connection.close()
             raise
@@ -29,18 +33,18 @@ class PersonalShelf:
     def snapshot(self, catalogue: tuple | list) -> dict:
         connection = self.connect()
         try:
-            rows = connection.execute("SELECT paper_id, metadata, saved_at FROM books ORDER BY saved_at DESC, paper_id").fetchall()
+            rows = connection.execute("SELECT b.paper_id, b.metadata, b.saved_at, r.read_at FROM books b LEFT JOIN reading r ON r.paper_id=b.paper_id ORDER BY b.saved_at DESC, b.paper_id").fetchall()
         finally:
             connection.close()
         current = {str(p["paper_id"]): p for p in catalogue}
         items = []
-        for paper_id, metadata, saved_at in rows:
+        for paper_id, metadata, saved_at, read_at in rows:
             paper = dict(current.get(paper_id) or json.loads(metadata))
             items.append({**{key: str(paper.get(key) or "") for key in FIELDS},
                           "available": paper_id in current,
                           "pdf_url": f"/api/library/pdf?paper_id={quote(paper_id, safe='')}" if paper_id in current and paper.get("local_pdf") else "",
                           "summary_available": bool(paper.get("summary_available") or paper.get("searchable")) if paper_id in current else False,
-                          "saved_at": saved_at})
+                          "saved_at": saved_at, "is_read": read_at is not None, "read_at": read_at})
         return {"items": items, "limit": MAX_BOOKS}
 
     def change(self, payload: object, catalogue: tuple | list) -> dict:

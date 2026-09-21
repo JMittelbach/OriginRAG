@@ -42,6 +42,7 @@ from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env 
 from originrag.web_local_access import local_browser_request  # noqa: E402
 from originrag.library_topics import assign_library_topics  # noqa: E402
 from originrag.personal_shelf import PersonalShelf  # noqa: E402
+from originrag.reading_history import ReadingHistory, reading_query  # noqa: E402
 from originrag.reader_notes import ReaderNotes, NoteConflict, document_key  # noqa: E402
 from originrag.web_reader import HTML as READER_HTML  # noqa: E402
 from originrag.web_workspace import HTML as WORKSPACE_HTML, PAGES as WORKSPACE_PAGES, handle_writing  # noqa: E402
@@ -1859,6 +1860,19 @@ def build_handler(
                     )
                 )
                 return
+            if parsed.path == "/api/reading":
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({"error": "Use the local browser or sign in to open your reading history."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                try:
+                    options = reading_query(parsed.query)
+                    history = ReadingHistory(REPO_ROOT / current_app.out_dir)
+                    self.respond_json(history.status(options["paper_id"]) if "paper_id" in options else history.snapshot(library_catalog(), **options))
+                except ValueError as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except (OSError, sqlite3.Error):
+                    self.respond_json({"error": "Your reading history is temporarily unavailable. Please try again."}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+                return
             if parsed.path == "/api/shelf":
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
                     self.respond_json({"error": "Use the local browser or sign in to open your shelf."}, status=HTTPStatus.FORBIDDEN)
@@ -2008,6 +2022,19 @@ def build_handler(
                     self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                     return
                 self.respond_json(result or {"error": "Request not found."}, status=HTTPStatus.OK if result else HTTPStatus.NOT_FOUND)
+                return
+            if parsed.path == "/api/reading":
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({"error": "Use the local browser or sign in to update your reading history."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                try:
+                    if parsed.query:
+                        raise ValueError("Reading-history updates do not accept query parameters.")
+                    self.respond_json(ReadingHistory(REPO_ROOT / current_app.out_dir).change(self.read_json_body(), library_catalog()))
+                except ValueError as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except (OSError, sqlite3.Error):
+                    self.respond_json({"error": "Your reading history could not be saved. Please try again."}, status=HTTPStatus.SERVICE_UNAVAILABLE)
                 return
             if parsed.path == "/api/shelf":
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):

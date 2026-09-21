@@ -7,6 +7,7 @@ import {openLanguageCheck} from './writing-language.mjs';
 import {uploadCollectionPDFs} from './collection-drop.mjs';
 import {requestJSON} from './request.mjs';
 import {getAppProfile} from './profile.mjs';
+import {readingNavigation, renderReadingHistory} from './reading-history.mjs';
 
 const $ = id => document.getElementById(id);
 const content = $('content');
@@ -65,6 +66,10 @@ function home() {
 
 async function shelf() {
   heading('Your bookshelf', 'A little space for the papers you are working with.');
+  const finished = new URLSearchParams(location.search).get('view') === 'read';
+  const updateCount = readingNavigation(content, finished);
+  if (finished) { await renderReadingHistory(content, {api, notice, updateCount}); return; }
+  api('/api/reading?offset=0&limit=1').then(data => updateCount(data.read_count)).catch(() => {});
   const books = node('div', undefined, 'shelf'); content.append(books);
   const data = await api('/api/shelf');
   const paging = node('div', undefined, 'shelf-paging'), label = node('span'); content.append(paging);
@@ -81,6 +86,7 @@ async function shelf() {
       for (const paper of data.items.slice(page * size + level * perRow, page * size + (level + 1) * perRow)) {
         const b = node('article', undefined, 'book'), title = node('h3', paper.title); title.title = paper.title;
         b.append(title, node('small', [paper.author, paper.year].filter(Boolean).join(' · ')));
+        if (paper.is_read) b.append(node('span', 'Read', 'book-read-badge'));
         if (paper.available) b.append(link('Read PDF', '/reader?paper_id=' + encodeURIComponent(paper.paper_id)));
         const remove = button('Remove', async () => { await api('/api/shelf', {action: 'remove', paper_id: paper.paper_id}); data.items = data.items.filter(item => item.paper_id !== paper.paper_id); draw(); });
         remove.setAttribute('aria-label', 'Remove from shelf: ' + paper.title); b.append(remove); plank.append(b);

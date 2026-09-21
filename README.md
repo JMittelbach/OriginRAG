@@ -159,6 +159,9 @@ and export saved annotations as Markdown or JSON. Fit a whole page, resize the
 notes panel, or use full-screen reading. **?** shows the keyboard shortcuts.
 Selecting text to copy does not save a highlight. Choose a colour explicitly,
 then click the saved highlight whenever you want to add or edit a comment.
+Use **Mark as read** to build your personal **Bookshelf → Finished** list, with
+dates, search and a count of papers finished. You can optionally remove the paper
+from your shelf without deleting its PDF or notes, and undo the read status later.
 **Original PDF** and **Publisher page** remain available separately.
 Scanned pages need OCR for text highlighting; the reader supports PDFs up to 64 MB.
 

@@ -22,6 +22,20 @@ storage shows the tour again.
 
 ## Reading and marking papers
 
+**Mark as read** in the PDF reader adds the paper to **Bookshelf → Finished**,
+your personal reading history. It records the date and counts each paper once.
+Opening or scrolling a PDF never marks it as read automatically. The confirmation
+offers **Also remove from bookshelf**, unchecked by default. Removing a shelf
+bookmark does not delete the paper, highlights, or notes.
+
+The **Finished** view shows how many papers you have marked as read and lets you
+search past reads by title, author, or DOI. You can reopen papers, save them back
+to your shelf, or undo the status with **Mark as unread**. Undoing the status does
+not change shelf membership. Reading history is private to your account on a
+shared server. Local use without accounts has one local history. It is stored
+alongside your bookmarks in `.personal_shelf.sqlite3`, so backing up your user
+directory preserves both.
+
 Choose a saved paper in **My shelf → Open reader**. The reader displays the
 corpus PDF inside OriginRAG, with page navigation, zoom, a reading theme, and
 personal notes. Select text, choose a marker colour and press **Highlight

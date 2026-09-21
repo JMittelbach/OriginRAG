@@ -38,6 +38,9 @@ jobs:
             tests/test_web_reader.py \
             tests/test_reader_product_browser.py \
             tests/test_reader_tools_browser.py \
+            tests/test_reading_history_browser.py \
+            tests/test_reading_history_recovery_browser.py \
+            tests/test_reader_reading_status_browser.py \
             tests/test_workspace_profiles_browser.py \
             tests/test_workspace_navigation.py \
             tests/test_writing.py \

@@ -33,7 +33,7 @@ HTML = '''<!doctype html>
 <dialog id="createDialog"><form id="createForm"><h2 id="createTitle">New project</h2><label>Name<input id="newName" maxlength="120" required autocomplete="off"></label><p id="createError" role="alert"></p><div class="actions"><button type="button" id="cancelCreate">Cancel</button><button class="primary">Create</button></div></form></dialog>
 <script type="module" src="/assets/workspace/workspace.mjs"></script></body></html>'''
 HTML = with_navigation(with_appearance(HTML.replace('</head>',
-    '<link rel="stylesheet" href="/assets/workspace/library-polish.css"></head>', 1)))
+    '<link rel="stylesheet" href="/assets/workspace/library-polish.css"><link rel="stylesheet" href="/assets/workspace/reading-history.css"></head>', 1)))
 
 
 def binary_response(handler, data, content_type, name):

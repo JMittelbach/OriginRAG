@@ -1,6 +1,7 @@
 import {getDocument, GlobalWorkerOptions, TextLayer} from '/assets/vendor/pdfjs/legacy/build/pdf.min.mjs';
 import {navigation} from './navigation.mjs';
 import {readingTools} from './reading-tools.mjs';
+import {readingStatus} from './reading-status.mjs';
 import {requestJSON} from '/assets/workspace/request.mjs';
 
 GlobalWorkerOptions.workerSrc = '/assets/vendor/pdfjs/legacy/build/pdf.worker.min.mjs';
@@ -23,6 +24,7 @@ const changed = mark => (drafts.has(mark.id) && drafts.get(mark.id) !== mark.not
 const dirty = () => recoveredDrafts.size>0 || [...drafts].some(([id,value])=>value!==marks.find(mark=>mark.id===id)?.note) || [...colorDrafts].some(([id,value])=>value!==marks.find(mark=>mark.id===id)?.color);
 const navigate = navigation({getPdf:()=>pdf,getPage:()=>currentPage,getZoom:()=>zoom,renderPage});
 const reading = readingTools({getPdf:()=>pdf,getPage:()=>currentPage,getZoom:()=>zoom,renderPage,status,getReady:()=>ready,getSaving:()=>saving});
+const readTracker = readingStatus({paperId,status});
 function noteState() {
   $('notesState').textContent = saving ? 'Saving…' : reloading ? 'Refreshing…' : noteError ? 'Save not confirmed' : !notesReady ? 'Notes unavailable' : dirty() ? 'Unsaved changes' : 'Saved';
   $('notesState').dataset.state = noteError ? 'error' : dirty() ? 'dirty' : 'saved';
@@ -383,6 +385,7 @@ async function start() {
     if (!paperId) throw new Error('Choose a paper from your shelf first.');
     $('original').href=original; $('original').hidden=false;
     const info=await requestJSON('/api/reader/paper?'+new URLSearchParams({paper_id:paperId}),{timeout:15000}); $('title').textContent=info.title || paperId; $('title').title=$('title').textContent;document.title=(info.title || paperId)+' · OriginRAG Reader';
+    void readTracker.init();
     $('downloadPDF').href=original;$('downloadPDF').download=($('title').textContent.replace(/[\\/:*?"<>|\x00-\x1f]/g,'_').slice(0,120) || 'paper')+'.pdf';$('downloadPDF').hidden=false;
     if (!crypto.subtle) throw new Error('The reader needs localhost or HTTPS to safely identify PDF versions. You can still open the original PDF.');
     const response=await fetch(original);

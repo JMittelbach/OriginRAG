@@ -63,6 +63,7 @@ def test_shared_workspace_requires_authentication_and_csrf(secured_workspace):
     port, users, fingerprint, profile = secured_workspace
     notes = '/api/reader/notes?paper_id=P1&fingerprint=' + fingerprint
     routes = ['/api/app-profile', '/api/library', '/api/library/pdf?paper_id=P1', '/api/shelf',
+              '/api/reading', '/api/reading?paper_id=P1',
               '/api/reader/paper?paper_id=P1', notes, '/api/writing', '/api/writing/bibliography?id=' + 'a' * 32,
               '/api/writing?collection_refs=' + 'a' * 32, '/api/paper-imports']
     if profile != 'rag':
@@ -74,6 +75,7 @@ def test_shared_workspace_requires_authentication_and_csrf(secured_workspace):
         assert response[0] == 303 and response[1]['location'].startswith('/login')
     changes = [('/api/writing', {'action': 'create_collection', 'name': 'Private references'}),
                ('/api/shelf', {'action': 'add', 'paper_id': 'P1'}),
+               ('/api/reading', {'action': 'mark_read', 'paper_id': 'P1'}),
                ('/api/reader/notes', {'action': 'add', 'paper_id': 'P1', 'fingerprint': fingerprint, 'mark': MARK})]
     for route, payload in changes:
         assert http.http_request(port, 'POST', route, payload=payload)[0] == 401
