@@ -2578,8 +2578,11 @@ def build_handler(
             self.send_header("Content-Length", str(len(body)))
             for name, value in extra_headers or []:
                 self.send_header(name, value)
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
 
         def respond_text(
             self, text: str, content_type: str, status: HTTPStatus = HTTPStatus.OK
@@ -6808,6 +6811,8 @@ INDEX_HTML = r"""<!doctype html>
     const cancelRequests = new Set();
     const composerStop = document.getElementById('composerStop');
     let jobPollBusy = false;
+    let jobPollFailures = 0;
+    let nextJobPollAt = 0;
     let lastJobSignature = "";
     let sessionLoadSequence = 0;
     let sessionsLoadSequence = 0;
@@ -8159,17 +8164,15 @@ INDEX_HTML = r"""<!doctype html>
       });
       if (queueSummary.textContent === "Queue idle") queueSummary.textContent = "Submitting question";
       try {
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({
+        const {requestJSON} = await import('/assets/workspace/request.mjs');
+        const data = await requestJSON("/api/chat", {
+          timeout: 60000,
+          payload: {
             message: text,
             settings: settings(),
             session_dir: submittedSession
-          })
+          }
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Request failed.");
         knownJobStates.set(data.job_id, data.state);
         if (data.session_dir === currentSessionDir) {
           addJobMessage(data);
@@ -8177,12 +8180,15 @@ INDEX_HTML = r"""<!doctype html>
         if (cancelSubmittedTurn) await cancelTurnJob(data.job_id);
         else statusEl.textContent = data.state === "queued" ? "Question queued." : "Question started.";
         loadSessions();
-        pollJobs();
+        pollJobs(true);
       } catch (error) {
         if (submittedSession === currentSessionDir) {
-          addMessage("assistant", `Error: ${error.message}`);
-          statusEl.textContent = "Error.";
+          if (!message.value.trim()) { message.value = text; resizeComposer(); }
+          const detail = error.retryable ? ' Check the queue before sending again; the server may already have received your question.' : '';
+          addMessage("assistant", `${error.message}${detail}`);
+          statusEl.textContent = 'Your question has been kept in the input field.';
         }
+        pollJobs(true);
       } finally {
         pendingSubmission.remove();
         setSubmitting(false);
@@ -8364,14 +8370,18 @@ INDEX_HTML = r"""<!doctype html>
       loadQueueDetails();
     }
 
-    async function pollJobs() {
-      if (jobPollBusy) return;
+    async function pollJobs(force = false) {
+      if (jobPollBusy || (!force && Date.now() < nextJobPollAt)) return;
       jobPollBusy = true;
       try {
-        const response = await fetch("/api/jobs");
-        if (!response.ok) return;
-        const data = await response.json();
+        const {requestJSON} = await import('/assets/workspace/request.mjs');
+        const data = await requestJSON('/api/jobs', {timeout: 15000});
         const jobs = data.jobs || [];
+        jobPollFailures = 0;
+        const active = jobs.some(job => ['queued', 'running', 'cancelling'].includes(job.state));
+        nextJobPollAt = Date.now() + (document.hidden ? 15000 : active || submittingTurn ? 900 : 5000);
+        connectionIndicator.classList.add('online');
+        connectionIndicator.title = 'Online'; connectionIndicator.setAttribute('aria-label', 'Online');
         for (const job of jobs) rememberTurnJob(job);
         const present = new Set(jobs.map(job => job.job_id));
         for (const id of activeTurnJobs.keys()) if (!present.has(id) && !cancelRequests.has(id)) activeTurnJobs.delete(id);
@@ -8412,8 +8422,13 @@ INDEX_HTML = r"""<!doctype html>
           sessionReconcilePending = true;
           scheduleVisibleSessionReconciliation();
         }
-      } catch {
-
+      } catch (error) {
+        nextJobPollAt = Date.now() + Math.min(30000, 1500 * 2 ** Math.min(jobPollFailures++, 4));
+        connectionIndicator.classList.remove('online');
+        connectionIndicator.title = 'Connection interrupted · reconnecting';
+        connectionIndicator.setAttribute('aria-label', 'Connection interrupted · reconnecting');
+        queueSummary.textContent = error.status === 401 ? 'Sign in to reconnect' : 'Reconnecting…';
+        queueSummary.title = error.status === 401 ? error.message : 'Live progress is temporarily unavailable. Accepted jobs may still be running.';
       } finally {
         jobPollBusy = false;
       }
@@ -8460,9 +8475,11 @@ INDEX_HTML = r"""<!doctype html>
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
+        pollJobs(true);
         scheduleVisibleSessionReconciliation();
       }
     });
+    window.addEventListener('online', () => pollJobs(true));
     window.addEventListener("focus", scheduleVisibleSessionReconciliation);
 
     async function loadSessions() {

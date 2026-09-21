@@ -31,7 +31,8 @@ def browser_page(tmp_path, request):
         if path.startswith("/assets/"):
             asset = ROOT / path.lstrip("/").split("?")[0]
             if asset.is_file():
-                route.fulfill(status=200, content_type="image/png", body=asset.read_bytes())
+                content_type = {'.mjs': 'text/javascript', '.js': 'text/javascript', '.css': 'text/css'}.get(asset.suffix, 'image/png')
+                route.fulfill(status=200, content_type=content_type, body=asset.read_bytes())
             else:
                 route.fulfill(status=404)
             return
@@ -53,6 +54,9 @@ def browser_page(tmp_path, request):
                                          "csrf_token": "local-test-token" if state["local_imports"] else ""}
             if state["authenticated"]:
                 payload["user"] = {"user_id": state["user_id"], "display_name": "Test user"}
+        elif path == '/api/app-profile':
+            payload = {**web_chat.app_profile('full').public(), 'authenticated': state['authenticated'],
+                       'user': {'username': state['user_id'], 'display_name': 'Test user'} if state['authenticated'] else None}
         elif path == "/api/library-stats":
             payload.update({key: state[key] for key in ("total", "searchable", "local_pdf")})
         elif path.startswith("/api/library?"):
@@ -196,9 +200,10 @@ def test_search_empty_state_updates_mobile_and_themes(browser_page):
     assert page.locator("header .header-left #discoveryButton").count() == 1
     assert page.locator(".library-start").count() == 0
     find_box = page.locator("#discoveryButton").bounding_box()
-    appearance_box = page.locator("#appearanceButton").bounding_box()
-    assert find_box["x"] < appearance_box["x"]
-    assert abs(find_box["y"] + find_box["height"] / 2 - appearance_box["y"] - appearance_box["height"] / 2) < 3
+    queue_box = page.locator("#queueSummary").bounding_box()
+    assert find_box["x"] < queue_box["x"]
+    assert abs(find_box["y"] + find_box["height"] / 2 - queue_box["y"] - queue_box["height"] / 2) < 3
+    assert page.locator('#globalNavigation #appearanceButton').count() == 1
     page.evaluate("window.dispatchEvent(new CustomEvent('originrag:library-stats', {detail: {total: 40, searchable: 0, local_pdf: 0}}))")
     assert page.locator(".library-start").count() == 0
     page.locator("#aboutButton").click()

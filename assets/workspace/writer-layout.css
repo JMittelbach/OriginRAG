@@ -28,7 +28,7 @@
 .writing #writerGrid[data-direction=stack][data-narrow=false] .panes-resize {grid-column:3}
 .writing #writerGrid[data-direction=stack] .panes-resize::after {
   top:2px;left:calc(50% - 14px);height:2px;width:28px;
-  background:repeating-linear-gradient(90deg,#94a3b7 0 2px,transparent 2px 4px);
+  background:repeating-linear-gradient(90deg,var(--muted) 0 2px,transparent 2px 4px);
 }
 .writing.resizing-rows {cursor:row-resize}
 .writing .code-zoom {display:flex;align-items:center;gap:2px;margin-left:4px}

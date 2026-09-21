@@ -1,6 +1,6 @@
 import pytest
 
-from test_writing import workspace_server
+from test_writing import workspace_server as workspace_server
 
 
 def test_corpus_drag_navigation_and_double_delete(workspace_server):
@@ -17,7 +17,7 @@ def test_corpus_drag_navigation_and_double_delete(workspace_server):
         page.locator('#query').fill('study')
         pw.expect(page.locator('#librarySuggestions option')).to_have_count(1)
         page.locator('#query').fill('')
-        pw.expect(page.locator('#libraryCount')).to_have_text('1 papers')
+        pw.expect(page.locator('#libraryCount')).to_have_text('1 paper')
         page.get_by_role('button', name='+ Collection').click()
         page.locator('#newName').fill('Working papers')
         page.get_by_role('button', name='Create', exact=True).click()

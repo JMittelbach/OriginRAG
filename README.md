@@ -23,8 +23,8 @@ OriginRAG is the main application. The same installation can optionally provide
 a few practical tools around the corpus:
 
 - **Library:** browse the shared corpus, find new papers, and create private
-  collections for projects. Collections are generated from the papers you add;
-  no subject-specific category list is required.
+  collections for projects. Topic groups are generated from your paper titles;
+  you choose which papers belong in each personal collection.
 - **Bookshelf:** save papers you are actively reading for quick access to the
   reader, summaries and personal notes.
 - **Quill (optional):** a small LaTeX workspace with source and PDF side by
@@ -154,7 +154,9 @@ text search, a table of contents where available, text highlights and personal n
 Scroll continuously through the pages with your mouse wheel, trackpad or touch.
 The page indicator follows your position; page controls and search still let you jump directly.
 Select a passage to reveal the quick marker toolbar. Highlights stay separate from the original
-PDF and are saved to your account. Export your notes as JSON when needed.
+PDF and are saved to your account. Search or colour-filter your notes, copy quotes,
+and export saved annotations as Markdown or JSON. Fit a whole page, resize the
+notes panel, or use full-screen reading. **?** shows the keyboard shortcuts.
 Selecting text to copy does not save a highlight. Choose a colour explicitly,
 then click the saved highlight whenever you want to add or edit a comment.
 **Original PDF** and **Publisher page** remain available separately.

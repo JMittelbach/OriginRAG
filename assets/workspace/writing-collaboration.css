@@ -1,16 +1,16 @@
 .writing .writer-toolbar{flex-wrap:wrap}.writing .writer-actions{flex-wrap:wrap;flex-shrink:1;justify-content:flex-end}
 .writing #exportZip,.writing #shareProject{white-space:nowrap}
-.sharing-badge{display:inline-block;color:#9de1c6;background:#21483d;border:1px solid #39725f;border-radius:99px;font-size:11px;font-weight:500;padding:2px 8px;margin-left:9px;vertical-align:middle}
-.writing #syncState{font-size:11px;color:#aebcc9;margin-left:9px}.writing #syncState:empty{display:none}
-.writing-conflict{flex-shrink:0;padding:10px 16px;background:#483321;color:#ffe3b1;border-bottom:1px solid #82643c;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.sharing-badge{display:inline-block;color:var(--teal);background:var(--teal-soft);border:1px solid var(--line);border-radius:99px;font-size:11px;font-weight:500;padding:2px 8px;margin-left:9px;vertical-align:middle}
+.writing #syncState{font-size:11px;color:var(--muted);margin-left:9px}.writing #syncState:empty{display:none}
+.writing-conflict{flex-shrink:0;padding:10px 16px;background:var(--panel-2);color:var(--amber);border-bottom:1px solid var(--amber);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .writing-conflict[hidden]{display:none}.writing-conflict p{margin:0;flex:1;min-width:200px}.writing-conflict button{white-space:nowrap}
-.writing-sharing{width:min(650px,calc(100vw - 28px));max-height:85dvh;overflow:auto;background:#1a2734;color:#e7edf4;border:1px solid #536679;border-radius:14px;padding:24px;box-shadow:0 20px 70px #0008}
-.writing-sharing::backdrop{background:#07121dbc;backdrop-filter:blur(4px)}
+.writing-sharing{width:min(650px,calc(100vw - 28px));max-height:85dvh;overflow:auto;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:24px;box-shadow:var(--ui-shadow)}
+.writing-sharing::backdrop{background:#07121dbc}
 .sharing-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}.sharing-heading h2{font-size:20px;margin:0}
-.sharing-muted{color:#b5c5d4;font-size:13px;line-height:1.6}.sharing-error{color:#ffc29e;white-space:pre-wrap}.sharing-error:empty{display:none}
-.writing-sharing label{display:block;font-size:13px;font-weight:600;margin:20px 0 8px}.writing-sharing input{display:block;width:100%;margin-top:8px;box-sizing:border-box;background:#101b26;color:#e7edf4;border:1px solid #607285;border-radius:6px;padding:10px}
-.writing-sharing button{border:1px solid #5b7284;border-radius:6px;background:#26394a;color:#eff6ff;padding:7px 11px;cursor:pointer;font-size:12px}
-.writing-sharing button:disabled{opacity:.5;cursor:default}.writing-sharing button:focus-visible,.writing-sharing input:focus-visible{outline:2px solid #83d8bd;outline-offset:2px}
-.sharing-person{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #3a4c5b}.sharing-person span,.sharing-person code{overflow-wrap:anywhere;min-width:0}.sharing-person button{flex-shrink:0}
+.sharing-muted{color:var(--muted);font-size:13px;line-height:1.6}.sharing-error{color:var(--danger);white-space:pre-wrap}.sharing-error:empty{display:none}
+.writing-sharing label{display:block;font-size:13px;font-weight:600;margin:20px 0 8px}.writing-sharing input{display:block;width:100%;margin-top:8px;box-sizing:border-box;background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px}
+.writing-sharing button{border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--text);padding:7px 11px;cursor:pointer;font-size:12px}
+.writing-sharing button:disabled{opacity:.5;cursor:default}.writing-sharing button:focus-visible,.writing-sharing input:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+.sharing-person{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}.sharing-person span,.sharing-person code{overflow-wrap:anywhere;min-width:0}.sharing-person button{flex-shrink:0}
 .sharing-members{padding:5px 0}.sharing-results{max-height:240px;overflow:auto}.sharing-results:empty{display:none}
 @media(max-width:759px){.writing .writer-actions{justify-content:flex-start}.writing-sharing{padding:16px}.writing-conflict{font-size:12px}.writing-conflict p{min-width:100%}}

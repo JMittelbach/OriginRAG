@@ -1,0 +1,288 @@
+.workspace-page:not(.writing) .section-head {
+  gap: 12px;
+  margin: 14px 0 12px;
+}
+.workspace-page:not(.writing) .section-head h1 {
+  margin-right: auto;
+  font-size: clamp(28px, 3vw, 36px);
+  letter-spacing: -.035em;
+}
+.workspace-page:not(.writing) #content > .muted {
+  max-width: 72ch;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.workspace-page:not(.writing) .library-layout {
+  grid-template-columns: 218px minmax(0, 1fr);
+  gap: 30px;
+  margin-top: 30px;
+}
+.workspace-page:not(.writing) .library-layout > aside {
+  align-self: start;
+  padding: 4px 18px 16px 0;
+  border-right: 1px solid var(--line);
+}
+.workspace-page:not(.writing) .library-layout .eyebrow {
+  margin: 8px 10px 14px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .12em;
+}
+.workspace-page:not(.writing) .collection-list {
+  gap: 5px;
+}
+.workspace-page:not(.writing) .collection-list button {
+  min-width: 0;
+  padding: 10px 12px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.workspace-page:not(.writing) .collection-list button[aria-pressed=true] {
+  background: var(--panel-2);
+  border-color: var(--line);
+  box-shadow: inset 3px 0 var(--teal, var(--accent));
+  color: var(--text);
+  font-weight: 600;
+}
+.workspace-page:not(.writing) .search {
+  padding: 5px;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.workspace-page:not(.writing) .search input {
+  padding: 10px 12px;
+  border-color: transparent;
+  background: transparent;
+  border-radius: 7px;
+  font-size: 14px;
+}
+.workspace-page:not(.writing) .search input:focus-visible {
+  outline: 2px solid var(--teal, var(--accent));
+  outline-offset: -2px;
+}
+.workspace-page:not(.writing) .search button {
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.workspace-page:not(.writing) #libraryCount {
+  margin: 16px 0 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-page:not(.writing) .collection-drop-hint {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.workspace-page:not(.writing) .library-tools:empty {
+  display: none;
+}
+.workspace-page:not(.writing) .library-tools button {
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.workspace-page:not(.writing) #papers {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.workspace-page:not(.writing) #papers:empty {
+  border: 0;
+}
+.workspace-page:not(.writing) #papers > .paper:last-child {
+  border-bottom: 0;
+}
+.workspace-page:not(.writing) #papers > .paper {
+  padding: 20px 12px;
+  border-radius: 0;
+}
+.workspace-page:not(.writing) #papers > .paper h3 {
+  max-width: 86ch;
+  margin-bottom: 7px;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: -.01em;
+  overflow-wrap: anywhere;
+}
+.workspace-page:not(.writing) #papers > .paper > p {
+  margin-bottom: 13px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.workspace-page:not(.writing) #papers .actions {
+  gap: 7px;
+}
+.workspace-page:not(.writing) #papers .actions :is(button, .button, select) {
+  max-width: 100%;
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.workspace-page:not(.writing) #papers + .actions {
+  padding-top: 20px;
+  gap: 12px;
+}
+.workspace-page:not(.writing) #libraryPage {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-page:not(.writing) .library-empty {
+  padding: 32px 20px;
+  background: var(--panel);
+}
+.workspace-page:not(.writing) .library-empty h3 {
+  font-size: 18px;
+  letter-spacing: -.02em;
+}
+.workspace-page:not(.writing) .library-empty p {
+  font-size: 13px;
+}
+.workspace-page:not(.writing) .write-heading {
+  margin: 14px 0 28px;
+}
+.workspace-page:not(.writing) .write-heading .eyebrow {
+  margin-bottom: 9px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .12em;
+}
+.workspace-page:not(.writing) .write-heading h1 {
+  font-size: 34px;
+  letter-spacing: -.035em;
+}
+.workspace-page:not(.writing) .write-heading .muted {
+  font-size: 14px;
+}
+.workspace-page:not(.writing) .desk-tabs {
+  gap: 6px;
+  margin-bottom: 20px;
+  padding-bottom: 8px;
+}
+.workspace-page:not(.writing) .desk-tabs button {
+  padding: 9px 13px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.workspace-page:not(.writing) .desk-tabs button[aria-selected=true] {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--text);
+  box-shadow: inset 0 -2px var(--teal, var(--accent));
+  font-weight: 600;
+}
+.workspace-page:not(.writing) .manuscript-list {
+  gap: 8px;
+}
+.workspace-page:not(.writing) .manuscript-row {
+  padding: 15px 18px;
+  border-radius: 10px;
+}
+.workspace-page:not(.writing) .manuscript-title h3 {
+  margin-bottom: 5px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: -.01em;
+}
+.workspace-page:not(.writing) .manuscript-title p {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-page:not(.writing) .manuscript-actions :is(button, .button) {
+  padding: 7px 10px;
+}
+.workspace-page:not(.writing) .manuscript-actions .danger {
+  background: transparent;
+  border-color: transparent;
+}
+.workspace-page:not(.writing) .personal-library-card {
+  padding: 22px;
+}
+.workspace-page:not(.writing) .personal-library-card h3 {
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.workspace-page:not(.writing) .template-preview {
+  background: var(--panel-2);
+}
+.workspace-page:not(.writing) .template-info h3 {
+  font-size: 16px;
+  line-height: 1.45;
+}
+.workspace-page:not(.writing) .template-info :is(.template-layout, a) {
+  color: var(--muted);
+}
+.workspace-page:not(.writing) .book {
+  box-shadow: 5px 5px #d9d0bc, 8px 11px 14px #0006, inset -1px 0 #ffffff12;
+}
+.workspace-page:not(.writing) .book a {
+  text-underline-offset: 3px;
+}
+.workspace-page:not(.writing) .shelf-paging {
+  font-variant-numeric: tabular-nums;
+}
+@media (hover: hover) {
+  .workspace-page:not(.writing) .collection-list button:hover {
+    background: var(--panel-2);
+    color: var(--text);
+  }
+  .workspace-page:not(.writing) #papers > .paper:hover {
+    background: var(--panel-2);
+  }
+  .workspace-page:not(.writing) .manuscript-actions .danger:hover {
+    border-color: currentColor;
+  }
+}
+@media (max-width: 950px) {
+  .workspace-page:not(.writing) .library-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .workspace-page:not(.writing) .library-layout > aside {
+    padding: 0 0 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .workspace-page:not(.writing) .library-layout .eyebrow {
+    margin: 0 0 10px;
+  }
+}
+@media (max-width: 700px) {
+  .workspace-page:not(.writing) .section-head h1 {
+    flex-basis: 100%;
+  }
+  .workspace-page:not(.writing) .section-head > button {
+    padding: 9px 12px;
+    font-size: 12px;
+  }
+  .workspace-page:not(.writing) .collection-list button {
+    max-width: 100%;
+  }
+  .workspace-page:not(.writing) #papers > .paper {
+    padding: 18px 12px;
+  }
+  .workspace-page:not(.writing) #papers > .paper h3 {
+    font-size: 15px;
+  }
+  .workspace-page:not(.writing) .manuscript-row {
+    padding: 14px;
+    gap: 12px;
+  }
+  .workspace-page:not(.writing) .manuscript-actions :is(button, .button) {
+    padding: 8px 10px;
+  }
+}

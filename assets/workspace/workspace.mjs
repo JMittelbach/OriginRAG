@@ -5,6 +5,8 @@ import {openLibraryImport} from './library-import.mjs';
 import {collaborationStyle, snapshotProject, rebaseDraft, openSharing, openProjectCitations} from './writing-collaboration.mjs';
 import {openLanguageCheck} from './writing-language.mjs';
 import {uploadCollectionPDFs} from './collection-drop.mjs';
+import {requestJSON} from './request.mjs';
+import {getAppProfile} from './profile.mjs';
 
 const $ = id => document.getElementById(id);
 const content = $('content');
@@ -13,22 +15,28 @@ const mode = location.pathname;
 if (mode === '/write') document.title = 'Quill';
 let sourceEditor, writerLayout, outlineTimer, diffTextChanges, serverProject, syncTimer, syncBusy = false, syncFailures = 0;
 const textTypes = /\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i;
-let state, project, activeFile, editVersion = 0, savedVersion = 0, saving = null;
+let state, project, activeFile, editVersion = 0, savedVersion = 0, saving = null, unconfirmedSave = null;
 let appProfile = {profile: 'full', features: {rag: true, write: true}};
 let saveTimer, compileTimer, compiling = false, saveBlocked = false, pdfURL = '', pdfPreview;
 function node(tag, text, cls) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; }
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
-async function api(path = '/api/writing', payload) {
+async function api(path = '/api/writing', payload, options = {}) {
   const headers = new Headers();
   const token = document.cookie.split('; ').find(v => v.startsWith('pfempire_csrf='))?.split('=')[1];
   if (token) headers.set('X-CSRF-Token', decodeURIComponent(token));
-  if (payload) headers.set('Content-Type', 'application/json');
-  const r = await fetch(path, {method: payload ? 'POST' : 'GET', headers, body: payload ? JSON.stringify(payload) : undefined});
-  const data = await r.json();
-  if (!r.ok) { const error = new Error(data.error || `Request failed (${r.status}).`); error.status = r.status; throw error; }
-  return data;
+  const timeout = payload?.action === 'compile' ? 150000 : payload?.action === 'language_check' ? 75000 : 30000;
+  return requestJSON(path, {payload, headers, timeout, ...options});
 }
-function button(text, fn, cls) { const b = node('button', text, cls); b.type = 'button'; b.onclick = () => Promise.resolve().then(fn).catch(e => notice(e.message, true)); return b; }
+function button(text, fn, cls) {
+  const b = node('button', text, cls); b.type = 'button';
+  b.onclick = async () => {
+    if (b.disabled || b.getAttribute('aria-busy') === 'true') return;
+    b.setAttribute('aria-busy', 'true');
+    try { await fn(); } catch (error) { notice(error.message, true); }
+    finally { b.removeAttribute('aria-busy'); }
+  };
+  return b;
+}
 function link(text, href, cls) { const a = node('a', text, cls); a.href = href; return a; }
 function download(data, name, type = 'text/plain') { const u = URL.createObjectURL(new Blob([data], {type})); const a = link('', u); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); }
 async function refresh() { state = await api(); }
@@ -90,9 +98,9 @@ async function library() {
   const h = heading('Library', 'One shared corpus. Personal collections for each project.');
   h.append(button('+ Collection', () => askName('New collection', async name => { await api('/api/writing', {action: 'create_collection', name}); await refresh(); content.replaceChildren(); await library(); })));
   h.append(button('Find or import papers', () => openLibraryImport({notice, changed: () => load()})));
-  content.insertAdjacentHTML('beforeend', '<div class="library-layout"><aside><p class="eyebrow">MY COLLECTIONS</p><div id="collections" class="collection-list"></div></aside><section><form id="searchForm" class="search"><input id="query" type="search" placeholder="Search title, author, journal…" aria-label="Search library"><button>Search</button></form><p id="libraryCount" class="muted"></p><div id="papers"></div><div class="actions"><button id="previousPapers">Previous</button><button id="nextPapers">Next</button></div></section></div>');
+  content.insertAdjacentHTML('beforeend', '<div class="library-layout"><aside><p class="eyebrow">MY COLLECTIONS</p><div id="collections" class="collection-list"></div></aside><section><form id="searchForm" class="search"><input id="query" type="search" placeholder="Search title, author, journal or DOI…" aria-label="Search library"><button>Search</button></form><p id="libraryCount" class="muted" role="status"></p><div id="libraryFeedback" role="status" hidden></div><div id="papers"></div><div class="actions"><button id="previousPapers">Previous</button><span id="libraryPage" class="muted"></span><button id="nextPapers">Next</button></div></section></div>');
   const params = new URLSearchParams(location.search);
-  let selected = state.collections.some(c => c.id === params.get('collection')) ? params.get('collection') : '', offset = 0, sequence = 0, browse = false, autoBrowse = true;
+  let selected = state.collections.some(c => c.id === params.get('collection')) ? params.get('collection') : '', offset = 0, sequence = 0, browse = false, autoBrowse = true, searchRequest;
   $('query').value = params.get('query') || '';
   const tools = node('div', undefined, 'library-tools'); $('libraryCount').after(tools);
   const collectionButtons = [];
@@ -124,8 +132,14 @@ async function library() {
       }
     });
   }
+  function updateURL() {
+    const query = new URLSearchParams();
+    if (selected) query.set('collection', selected);
+    if ($('query').value.trim()) query.set('query', $('query').value.trim());
+    history.replaceState(null, '', '/library' + (query.size ? '?' + query : ''));
+  }
   for (const c of [{id: '', name: 'All papers'}, ...state.collections]) {
-    const b = button(c.name, async () => { selected = c.id; browse = false; autoBrowse = true; offset = 0; history.replaceState(null, '', '/library' + (selected ? '?collection=' + selected : '')); collectionButtons.forEach(([id, el]) => el.setAttribute('aria-pressed', String(id === selected))); await load(); });
+    const b = button(c.name, async () => { selected = c.id; browse = false; autoBrowse = true; offset = 0; collectionButtons.forEach(([id, el]) => el.setAttribute('aria-pressed', String(id === selected))); await load(); });
     b.setAttribute('aria-pressed', String(c.id === selected)); collectionButtons.push([c.id, b]); $('collections').append(b);
     if (c.id) { acceptDrop(b, () => c.id); b.title = 'Drop corpus papers or PDFs into ' + c.name; }
   }
@@ -133,18 +147,29 @@ async function library() {
   acceptDrop(content, () => selected);
   const suggestions = node('datalist'); suggestions.id = 'librarySuggestions'; content.append(suggestions); $('query').setAttribute('list', suggestions.id);
   async function load() {
-    const current = ++sequence; const q = $('query').value.trim();
+    const current = ++sequence; const q = $('query').value.trim(), selectedId = selected;
+    searchRequest?.abort(); searchRequest = new AbortController();
+    const options = {signal: searchRequest.signal};
+    updateURL();
+    const feedback = $('libraryFeedback'); feedback.hidden = true;
+    $('papers').setAttribute('aria-busy', 'true'); $('libraryCount').textContent = 'Searching your library…';
+    $('papers').inert = true; tools.inert = true;
+    $('previousPapers').disabled = $('nextPapers').disabled = true;
+    try {
     let data, collection;
-    if (selected) {
-      collection = await api('/api/writing?id=' + selected + '&kind=collections');
+    if (selectedId) {
+      collection = await api('/api/writing?id=' + selectedId + '&kind=collections', undefined, options);
+      if (current !== sequence) return;
       if (autoBrowse) { browse = !collection.items.length; autoBrowse = false; }
-      if (browse) data = await api('/api/library?limit=40&offset=' + offset + '&query=' + encodeURIComponent(q));
+      if (browse) data = await api('/api/library?limit=40&offset=' + offset + '&query=' + encodeURIComponent(q), undefined, options);
       else {
         const items = collection.items.filter(p => [p.title, p.author, p.year, p.journal, p.doi].join(' ').toLowerCase().includes(q.toLowerCase()));
         data = {items: items.slice(offset, offset + 40), total: items.length};
       }
-    } else data = await api('/api/library?limit=40&offset=' + offset + '&query=' + encodeURIComponent(q));
+    } else data = await api('/api/library?limit=40&offset=' + offset + '&query=' + encodeURIComponent(q), undefined, options);
     if (current !== sequence) return;
+    if (offset && offset >= data.total) { offset = Math.max(0, Math.ceil(data.total / 40) - 1) * 40; return await load(); }
+    $('papers').inert = false; tools.inert = false;
     suggestions.replaceChildren(...data.items.slice(0, 8).map(p => new Option(p.author ? p.title + ' · ' + p.author : p.title, p.title)));
     tools.replaceChildren();
     if (collection) {
@@ -157,7 +182,19 @@ async function library() {
       tools.append(button('Rename', () => askName('Rename personal library', async name => { await api('/api/writing', {action: 'rename_collection', id: selected, revision: collection.revision, name}); await refresh(); content.replaceChildren(); await library(); })));
       if (appProfile.features.write) tools.append(button('Write with this library', () => newManuscript({id: 'article'}, selected)));
     }
-    $('papers').replaceChildren(); $('libraryCount').textContent = `${data.total} papers`; $('previousPapers').disabled = offset === 0; $('nextPapers').disabled = offset + 40 >= data.total;
+    $('papers').replaceChildren(); $('libraryCount').textContent = `${data.total} ${data.total === 1 ? 'paper' : 'papers'}`; $('previousPapers').disabled = offset === 0; $('nextPapers').disabled = offset + 40 >= data.total;
+    $('libraryPage').textContent = data.total ? `${offset + 1}–${Math.min(offset + 40, data.total)} of ${data.total}` : '';
+    if (!data.items.length) {
+      const empty = node('div', undefined, 'library-empty');
+      empty.append(node('h3', q ? 'No matching papers' : collection && !browse ? 'This collection is empty' : 'Your library is ready for its first paper'));
+      empty.append(node('p', q ? 'Try an author, a few words from the title, or a DOI.' : 'Find a paper online or add a PDF to get started.', 'muted'));
+      if (q) empty.append(button('Clear search', async () => { $('query').value = ''; offset = 0; await load(); $('query').focus(); }));
+      empty.append(button(collection && !browse ? 'Browse corpus' : 'Find or import papers', () => {
+        if (collection && !browse) { browse = true; offset = 0; return load(); }
+        return openLibraryImport({notice, changed: load});
+      }));
+      $('papers').append(empty);
+    }
     for (const p of data.items) {
       const row = node('article', undefined, 'paper'); row.append(node('h3', p.title), node('p', [p.author, p.year, p.journal].filter(Boolean).join(' · ')));
       row.draggable = true; row.dataset.paperId = p.paper_id;
@@ -172,16 +209,22 @@ async function library() {
       const pick = node('select'); pick.setAttribute('aria-label', 'Destination collection'); pick.append(new Option('Add to collection…', ''));
       state.collections.forEach(c => pick.append(new Option(c.name, c.id)));
       pick.onchange = async () => { if (!pick.value) return; pick.disabled = true; try {
-        const target = await api('/api/writing?id=' + pick.value + '&kind=collections');
-        await api('/api/writing', {action: 'collection_paper', id: target.id, revision: target.revision, paper_id: p.paper_id}); notice('Added to your collection.'); if (selected) await load();
+        await addPaper(pick.value, p.paper_id); notice('Added to your collection.');
       } catch (e) { notice(e.message, true); } finally { pick.value = ''; pick.disabled = false; } };
       actions.append(pick);
       if (selected && collection.papers.includes(p.paper_id)) actions.append(button('Remove from collection', async () => { await api('/api/writing', {action: 'collection_paper', id: selected, revision: collection.revision, paper_id: p.paper_id, remove: true}); await load(); }));
       row.append(actions); $('papers').append(row);
     }
+    } catch (error) {
+      if (current !== sequence || error.name === 'AbortError') return;
+      $('libraryCount').textContent = 'Search could not finish';
+      feedback.replaceChildren(node('p', error.message), button('Retry search', load)); feedback.hidden = false;
+    } finally {
+      if (current === sequence) $('papers').removeAttribute('aria-busy');
+    }
   }
   let searchTimer;
-  $('query').oninput = () => { clearTimeout(searchTimer); sequence++; offset = 0; searchTimer = setTimeout(() => load().catch(e => notice(e.message, true)), 220); };
+  $('query').oninput = () => { clearTimeout(searchTimer); sequence++; searchRequest?.abort(); offset = 0; searchTimer = setTimeout(load, 220); };
   $('searchForm').onsubmit = e => { e.preventDefault(); clearTimeout(searchTimer); offset = 0; load().catch(e => notice(e.message, true)); };
   $('previousPapers').onclick = () => { offset = Math.max(0, offset - 40); load().catch(e => notice(e.message, true)); };
   $('nextPapers').onclick = () => { offset += 40; load().catch(e => notice(e.message, true)); };
@@ -294,7 +337,10 @@ function pauseSaving(problem) {
   saveBlocked = true; clearTimeout(saveTimer); clearTimeout(compileTimer);
   $('savedState').textContent = 'Draft kept · saving paused'; $('syncState').textContent = 'Review changes';
   $('collaborationConflict').hidden = false;
-  $('conflictMessage').textContent = problem.message + ' Download your draft before replacing it with the saved version.';
+  $('retrySave').hidden = !problem.retryable;
+  $('conflictMessage').textContent = problem.message + (problem.retryable
+    ? ' Your edits are still here. Retry saving when the connection is available, or download your draft.'
+    : ' Download your draft before replacing it with the saved version.');
 }
 function collaborationControls() {
   const access = project.collaboration || {enabled: false, role: 'local'};
@@ -337,13 +383,16 @@ async function save() {
   const sent = snapshotProject(project);
   const payload = {action: 'save_project', id: project.id, ...sent, base: snapshotProject(serverProject)};
   $('savedState').textContent = 'Saving…';
-  saving = (async () => { try {
-    const result = await api('/api/writing', payload); await finishComposition();
+  saving = (async () => { let result; try {
+    result = await api('/api/writing', payload); unconfirmedSave = null; await finishComposition();
     const dirty = editVersion !== version;
     const updated = dirty ? rebaseDraft(sent, project, result, diffTextChanges) : result;
     adoptProject(updated, result, dirty);
     if (dirty) savedVersion = version;
-  } catch (e) { pauseSaving(e); throw e; } })();
+  } catch (e) {
+    if (e.retryable && !result) unconfirmedSave = {sent, version};
+    pauseSaving(e); throw e;
+  } })();
   try { await saving; } finally { saving = null; }
   if (editVersion !== savedVersion) await save();
 }
@@ -462,7 +511,7 @@ async function editor(id) {
         </div></details>
       </div>
     </div>
-    <aside id="collaborationConflict" class="writing-conflict" role="alert" hidden><p id="conflictMessage"></p><button id="conflictDraft">Download draft</button><button id="conflictReload">Reload saved version</button></aside>
+    <aside id="collaborationConflict" class="writing-conflict" role="alert" hidden><p id="conflictMessage"></p><button id="retrySave" hidden>Retry saving</button><button id="conflictDraft">Download draft</button><button id="conflictReload">Reload saved version</button></aside>
     <div class="editor-grid" id="writerGrid">
       <aside class="files" id="filesPane" aria-label="Project files">
         <div class="files-heading"><strong>File tree</strong><button id="hideFiles" title="Hide file sidebar" aria-label="Hide file sidebar">×</button></div>
@@ -546,8 +595,31 @@ async function editor(id) {
     editor: sourceEditor, enabled: state.language_check,
     reveal: (file, line) => { selectFile(file); writerLayout.showCode(); sourceEditor.jump(line); }});
   $('templateButton').onclick = () => openTemplateGallery(state.templates, item => newManuscript(item, project.collection));
-  $('draft').onclick = () => download(JSON.stringify({name: project.name, main: project.main, files: project.files}, null, 2), 'originwrite-draft.json', 'application/json');
+  $('draft').onclick = () => download(JSON.stringify({name: project.name, main: project.main, files: project.files}, null, 2), 'quill-draft.json', 'application/json');
   $('conflictDraft').onclick = $('draft').onclick;
+  $('retrySave').onclick = async () => {
+    const retry = $('retrySave'); if (retry.disabled) return;
+    retry.disabled = true;
+    try {
+      if (unconfirmedSave) {
+        const remote = await api('/api/writing?id=' + encodeURIComponent(project.id));
+        const {sent, version} = unconfirmedSave;
+        const confirmed = remote.revision > sent.revision && remote.main === sent.main
+          && (remote.collection || '') === sent.collection
+          && Object.keys(remote.files).length === Object.keys(sent.files).length
+          && Object.entries(sent.files).every(([name, value]) => remote.files[name] === value);
+        if (confirmed) {
+          await finishComposition();
+          adoptProject(rebaseDraft(sent, project, remote, diffTextChanges), remote, editVersion !== version);
+        }
+        unconfirmedSave = null;
+      }
+      saveBlocked = false;
+      await save(); $('collaborationConflict').hidden = true; notice('All changes saved.'); scheduleSync();
+      if ($('autoCompile').checked) compile().catch(error => notice(error.message, true));
+    } catch (error) { pauseSaving(error); notice(error.message, true); }
+    finally { retry.disabled = false; }
+  };
   $('conflictReload').onclick = async () => {
     if (!confirm('Replace your open draft with the saved project? Download your draft first if you want to keep it.')) return;
     try {
@@ -555,7 +627,7 @@ async function editor(id) {
       await finishComposition();
       sourceEditor.destroy();
       sourceEditor = createLatexEditor($('source'), (name, text) => { project.files[name] = text; changed(); clearTimeout(outlineTimer); outlineTimer = setTimeout(outline, 300); }, (line, col) => { $('cursorPosition').textContent = `Ln ${line}, Col ${col}`; });
-      adoptProject(updated); saveBlocked = false; $('collaborationConflict').hidden = true; notice('Saved version loaded.'); scheduleSync();
+      adoptProject(updated); unconfirmedSave = null; saveBlocked = false; $('collaborationConflict').hidden = true; notice('Saved version loaded.'); scheduleSync();
     } catch (error) { notice(error.message, true); }
   };
   $('shareProject').onclick = () => openSharing({api, project, notice, changed: access => { project.collaboration = access; collaborationControls(); }}).catch(error => notice(error.message, true));
@@ -575,13 +647,28 @@ async function editor(id) {
   window.addEventListener('beforeunload', e => { if (editVersion !== savedVersion) { e.preventDefault(); e.returnValue = ''; } });
 }
 
-try {
-  window.originragSaveDraft = async () => { if (project) await save(); };
-  appProfile = await api('/api/app-profile');
-  for (const item of document.querySelectorAll('[data-feature]')) item.hidden = !appProfile.features[item.dataset.feature];
-  await refresh();
-  if (mode === '/bookshelf') await shelf();
-  else if (mode === '/library') await library();
-  else if (mode === '/write') { const id = new URLSearchParams(location.search).get('id'); if (id) await editor(id); else await projects(); }
-  else home();
-} catch (e) { notice(e.message, true); }
+window.originragSaveDraft = async () => { if (project) await save(); };
+let openingWorkspace = false;
+async function openWorkspace() {
+  if (openingWorkspace) return;
+  openingWorkspace = true;
+  notice('');
+  const loading = node('p', 'Opening your workspace…');
+  loading.setAttribute('role', 'status');
+  content.replaceChildren(loading);
+  try {
+    const [profile, snapshot] = await Promise.all([getAppProfile(), api()]);
+    appProfile = profile; state = snapshot;
+    for (const item of document.querySelectorAll('[data-feature]')) item.hidden = !appProfile.features[item.dataset.feature];
+    content.replaceChildren();
+    if (mode === '/bookshelf') await shelf();
+    else if (mode === '/library') await library();
+    else if (mode === '/write') { const id = new URLSearchParams(location.search).get('id'); if (id) await editor(id); else await projects(); }
+    else home();
+  } catch (error) {
+    const panel = node('section', undefined, 'library-empty');
+    panel.append(node('h2', 'This page could not be loaded'), node('p', error.message), button('Retry loading', openWorkspace));
+    content.replaceChildren(panel);
+  } finally { openingWorkspace = false; }
+}
+openWorkspace();

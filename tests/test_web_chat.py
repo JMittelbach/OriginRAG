@@ -56,6 +56,30 @@ from web_chat import (  # noqa: E402
 from originrag.web_auth import AuthStore  # noqa: E402
 
 
+@pytest.mark.parametrize('failure', [BrokenPipeError, ConnectionResetError])
+@pytest.mark.parametrize('during_headers', [False, True])
+def test_disconnected_json_response_does_not_report_a_storage_failure(tmp_path, failure, during_headers):
+    app = WebChatApp(WebChatSettings(backend='template', app_profile='write'), tmp_path / 'sessions')
+    handler_type = build_handler(app, profile='write')
+    handler = object.__new__(handler_type)
+    responses = []
+    handler.send_response = lambda status: responses.append(status)
+    handler.send_security_headers = lambda: None
+    handler.send_header = lambda *args: None
+    handler.close_connection = False
+
+    def disconnect(*args):
+        raise failure('Client disconnected after the request completed')
+
+    handler.end_headers = disconnect if during_headers else lambda: None
+    handler.wfile = io.BytesIO()
+    if not during_headers:
+        handler.wfile.write = disconnect
+    handler.respond_json({'saved': True})
+    assert responses == [200]
+    assert handler.close_connection
+
+
 def test_library_catalog_merges_metadata_and_searches_without_model(tmp_path: Path) -> None:
     registry = tmp_path / "paper_registry.tsv"
     registry.write_text(
@@ -2983,7 +3007,7 @@ def test_web_ui_exposes_one_auto_routed_chat_and_accessible_assurance_controls()
     assert 'fetch("/api/jobs?details=1")' in html
     assert "Active jobs across all users · questions stay private" in html
     assert "job.question" not in html
-    assert 'fetch("/api/jobs")' in html
+    assert "requestJSON('/api/jobs', {timeout: 15000})" in html
     assert "Browse or search the shared bibliography. This does not run Qwen." not in html
     assert "Foundation models/RAG" not in html
     assert 'paper.topic_label || libraryCategoryLabel' in html

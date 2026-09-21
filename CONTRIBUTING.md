@@ -61,6 +61,18 @@ git diff --check
 Add a regression test for a corrected failure. Keep Python compatible with
 3.11, repository text in English, and Markdown prose concise.
 
+Browser tests use Playwright and a local test server with temporary data:
+
+```bash
+python -m pip install playwright
+python -m playwright install chromium
+python -m pytest -q tests/test_workspace_recovery_browser.py tests/test_workspace_profiles_browser.py
+```
+
+CI runs browser checks separately, including failed imports, interrupted
+connections, manuscript saving and collaboration. These checks need no model
+or personal corpus.
+
 ## Scientific and experiment changes
 
 Claims must not exceed the evidence. In particular, retrieval quality,

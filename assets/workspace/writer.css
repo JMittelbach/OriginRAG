@@ -1,11 +1,11 @@
 body.writing {
-  --bg:#18222e; --line:#354150; --muted:#acb8c5; --accent:#71d6b2;
+  --writer-accent:var(--teal,#79debe);
   --code-bg:#fff; --code-text:#263342; --code-gutter:#f5f7fa; --code-muted:#8795a5;
   --code-line:#e4e9ef; --code-active:#eff5f9; --code-selection:#bdd9fa;
   --tex-command:#6d43c3; --tex-comment:#528775; --tex-value:#116da8;
   --tex-number:#b04477; --tex-bracket:#7f8994; --tex-variable:#a26b20;
   height:100dvh; overflow:hidden; display:flex; flex-direction:column;
-  background:#151e29; font-size:13px;
+  background:var(--bg); font-size:13px;
 }
 body.writing[data-editor-theme=dark] {
   --code-bg:#17222e; --code-text:#dce5ef; --code-gutter:#1c2937; --code-muted:#8599ae;
@@ -13,65 +13,66 @@ body.writing[data-editor-theme=dark] {
   --tex-command:#c4a4ff; --tex-comment:#7eb5a2; --tex-value:#8acef3;
   --tex-number:#f2a8c5; --tex-bracket:#b0bccb; --tex-variable:#e4c285;
 }
-.writing header{flex-shrink:0;padding:9px 20px;gap:20px;background:#141e28;min-height:48px}
+.writing header{flex-shrink:0;padding:9px 20px;gap:20px;background:var(--bg);min-height:48px}
 .writing .brand{font-size:17px}.writing .brand span{font-size:13px}
 .writing nav{gap:3px}.writing nav a{padding:5px 10px;font-size:12px}
-.writing #notice{order:3;padding:3px 18px;min-height:0;flex-shrink:0;background:#182530}
+.writing #notice{order:3;padding:3px 18px;min-height:0;flex-shrink:0;background:var(--panel)}
 .writing #notice:empty{display:none}
 .writing main{width:100%;max-width:none;min-height:0;flex:1;display:flex;flex-direction:column;padding:0;margin:0}
-.writing button,.writing .button,.writing select{border-radius:5px;font-size:12px;padding:6px 10px}
-.writing button:focus-visible,.writing select:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.writing .writer-toolbar{gap:14px;flex-wrap:nowrap;min-height:61px;padding:10px 16px;flex-shrink:0;background:#1b2735;border-bottom:1px solid var(--line)}
-.writing .project-heading{flex:1;min-width:70px}.writing .project-heading h1{font:600 15px/1.4 system-ui,sans-serif;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.writing #savedState{font-size:11px;color:#9cb8af}.writing .writer-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
-.writing .writer-menu{position:relative;margin:0}.writing .writer-menu>summary{list-style:none;padding:6px 12px;cursor:pointer;border:1px solid var(--line);border-radius:5px}
+.writing button,.writing .button,.writing select{border-radius:7px;font-size:12px;padding:6px 10px}
+.writing button:focus-visible,.writing select:focus-visible,.writing summary:focus-visible{outline:2px solid var(--writer-accent);outline-offset:2px}
+.writing .writer-toolbar{gap:14px;flex-wrap:nowrap;min-height:61px;padding:10px 16px;flex-shrink:0;background:var(--panel);border-bottom:1px solid var(--line)}
+.writing .project-heading{flex:1;min-width:70px}.writing .project-heading h1{font:600 15px/1.4 var(--ui-font,system-ui,sans-serif);margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.writing #savedState{font-size:11px;color:var(--muted)}.writing .writer-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.writing .writer-menu{position:relative;margin:0}.writing .writer-menu>summary{list-style:none;padding:6px 12px;cursor:pointer;border:1px solid var(--line);border-radius:7px;background:var(--panel-2)}
 .writing .writer-menu>summary::-webkit-details-marker{display:none}
-.writing .writer-menu>div{position:absolute;right:0;top:36px;z-index:50;width:185px;padding:8px;display:grid;gap:5px;background:#223140;border:1px solid #526175;box-shadow:0 8px 24px #0006;border-radius:8px}
+.writing .writer-menu>summary:hover,.writing .writer-menu[open]>summary{border-color:var(--writer-accent)}
+.writing .writer-menu>div{position:absolute;right:0;top:36px;z-index:50;width:185px;padding:8px;display:grid;gap:5px;background:var(--panel);border:1px solid var(--line);box-shadow:var(--ui-shadow,0 8px 24px #0003);border-radius:10px}
 .writing .writer-menu>div>*{text-align:left;width:100%}
-.writing .editor-grid{--files-width:230px;--code-fr:.5fr;--pdf-fr:.5fr;display:grid;grid-template-columns:var(--files-width) 6px minmax(0,var(--code-fr)) 6px minmax(0,var(--pdf-fr));grid-template-rows:minmax(0,1fr);flex:1;min-height:160px;height:auto;border:0;border-radius:0;gap:0;background:#1b2735;position:relative;overflow:hidden}
-.writing .files{grid-column:1;grid-row:1;padding:0;background:#1b2735;display:flex;flex-direction:column;overflow:auto;min-height:0}
+.writing .editor-grid{--files-width:230px;--code-fr:.5fr;--pdf-fr:.5fr;display:grid;grid-template-columns:var(--files-width) 6px minmax(0,var(--code-fr)) 6px minmax(0,var(--pdf-fr));grid-template-rows:minmax(0,1fr);flex:1;min-height:160px;height:auto;border:0;border-radius:0;gap:0;background:var(--panel);position:relative;overflow:hidden}
+.writing .files{grid-column:1;grid-row:1;padding:0;background:var(--panel);display:flex;flex-direction:column;overflow:auto;min-height:0}
 .writing .files-heading{display:flex;align-items:center;justify-content:space-between;padding:9px 12px 4px;min-height:39px;flex-shrink:0}
-.writing .files-heading strong{font-weight:600;font-size:13px}
+.writing .files-heading strong{font-weight:650;font-size:12px;letter-spacing:.025em}
 .writing .files-heading button{width:28px;height:28px;text-align:center;border:0;background:transparent;font-size:20px;padding:0;margin:0}
 .writing .file-actions{display:flex;gap:6px;padding:5px 12px 10px;flex-shrink:0}
 .writing .file-actions button{flex:1;width:auto;margin:0;background:transparent;text-align:center;white-space:nowrap}
 .writing #fileList{padding:0 8px 14px;min-height:130px;flex:1;overflow:auto}
-.writing #fileList button{display:flex;align-items:center;gap:9px;border:0;background:transparent;padding:7px 9px;margin:2px 0;font-size:12px;border-radius:4px;min-height:32px;text-align:left}
+.writing #fileList button{display:flex;align-items:center;gap:9px;border:0;background:transparent;padding:7px 9px;margin:2px 0;font-size:12px;border-radius:6px;min-height:32px;text-align:left}
 .writing #fileList button>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.writing #fileList button:hover{background:#2b3949}.writing #fileList button.active{background:#214b40;color:#d5f5e7}
-.writing .file-icon{font:600 10px/1.5 ui-monospace,monospace;color:#9ac2b2;flex-shrink:0;min-width:24px}
-.writing .file-folder{margin:0;padding:0 0 0 10px}.writing .file-folder summary{color:#b5c1ce;padding:6px 0;font-size:12px}
+.writing #fileList button:hover{background:var(--panel-2)}.writing #fileList button.active{background:var(--panel-2);color:var(--writer-accent);box-shadow:inset 2px 0 var(--writer-accent);font-weight:600}
+.writing .file-icon{font:600 10px/1.5 ui-monospace,monospace;color:var(--writer-accent);flex-shrink:0;min-width:24px}
+.writing .file-folder{margin:0;padding:0 0 0 10px}.writing .file-folder summary{color:var(--muted);padding:6px 0;font-size:12px}
 .writing .outline-panel,.writing .project-settings{border-top:1px solid var(--line);padding:10px 12px;margin:0;flex-shrink:0}
-.writing .outline-panel summary,.writing .project-settings summary{font-size:12px;font-weight:600;color:#c4cdd7}
+.writing .outline-panel summary,.writing .project-settings summary{font-size:12px;font-weight:600;color:var(--text)}
 .writing #outline{overflow:auto;max-height:23dvh;padding-top:8px}
-.writing #outline button{border:0;background:transparent;font-size:12px;margin:1px 0;padding:6px;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;color:#b9c9d9}
-.writing #outline button:hover{color:var(--accent);background:#253748}.writing #outline .subsection{padding-left:18px}.writing #outline .subsubsection{padding-left:30px}
+.writing #outline button{border:0;background:transparent;font-size:12px;margin:1px 0;padding:6px;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;color:var(--muted)}
+.writing #outline button:hover{color:var(--writer-accent);background:var(--panel-2)}.writing #outline .subsection{padding-left:18px}.writing #outline .subsubsection{padding-left:30px}
 .writing .files .hint{font-size:11px;margin:10px 0 3px}.writing .project-settings label{margin-top:12px}.writing .project-settings select{margin-top:5px}
 .writing .source-pane{grid-column:3;grid-row:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;background:var(--code-bg)}
-.writing .source-tab{min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 14px;background:#253345;color:#dce6ee;overflow:hidden;flex-shrink:0}
-.writing #fileLabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.writing .tab-dot{width:5px;height:5px;border-radius:50%;background:#71d6b2;margin-left:auto}
+.writing .source-tab{min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--panel-2);color:var(--text);overflow:hidden;flex-shrink:0;box-shadow:inset 0 -1px var(--line)}
+.writing #fileLabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600}.writing .tab-dot{width:5px;height:5px;border-radius:50%;background:var(--writer-accent);margin-left:auto}
 .writing .code-toolbar{background:#edf1f6;color:#405267;display:flex;gap:3px;align-items:center;padding:4px 8px;border-bottom:1px solid var(--code-line);flex-shrink:0}
 .writing[data-editor-theme=dark] .code-toolbar{background:#233345;color:#d0dce9}
 .writing .code-toolbar button{border:0;background:transparent;color:inherit;min-width:30px;font-size:16px;line-height:1.2;padding:4px 7px}.writing .code-toolbar button:hover{background:var(--code-selection)}
-.writing .tool-divider{height:16px;width:1px;background:#b6c1cd;margin:0 5px}
+.writing .tool-divider{height:16px;width:1px;background:var(--code-line);margin:0 5px}
 .writing .code-toolbar .search-code{margin-left:auto}.writing .search-code span{font-size:11px;margin-left:3px}
 .writing #compileCode{display:none}.writing #writerGrid[data-mode=code] #compileCode{display:block;color:#248467}
 .writing #source{flex:1;width:100%;height:auto;min-height:0;padding:0;overflow:hidden;background:var(--code-bg);color:var(--code-text);font:inherit;white-space:normal;border:0}
 .writing .code-status{display:flex;gap:16px;justify-content:space-between;flex-shrink:0;padding:5px 13px;font-size:10px;background:var(--code-gutter);color:var(--code-muted);border-top:1px solid var(--code-line)}
 .tex-command{color:var(--tex-command)}.tex-comment{color:var(--tex-comment);font-style:italic}.tex-value{color:var(--tex-value)}.tex-number{color:var(--tex-number)}.tex-bracket{color:var(--tex-bracket)}.tex-variable{color:var(--tex-variable)}
 .writing .cm-editor .cm-search{font-size:12px;padding:6px 8px}.writing .cm-editor .cm-search label{display:inline-flex}.writing .cm-editor .cm-search input{max-width:140px;padding:3px;margin:3px}
-.writing .preview-pane{grid-column:5;grid-row:1;display:flex;flex-direction:column;min-height:0;max-height:none;overflow:hidden;background:#374455;color:#d5e0e9}
-.writing .pdf-toolbar{display:flex;gap:7px;align-items:center;padding:7px 10px;min-height:43px;flex-wrap:wrap;background:#253345;border-bottom:1px solid #455469;flex-shrink:0}
-.writing .pdf-toolbar .primary{background:#258867;border-color:#399e7c;color:#fff;font-weight:600;white-space:nowrap}.writing .auto-compile{font-size:11px;gap:4px;white-space:nowrap}
-.writing .pdf-toolbar select{margin-left:auto;max-width:110px;background:#1b2735}.writing #downloadPDF{padding:4px 8px;font-size:17px}
+.writing .preview-pane{grid-column:5;grid-row:1;display:flex;flex-direction:column;min-height:0;max-height:none;overflow:hidden;background:var(--panel-3);color:var(--text)}
+.writing .pdf-toolbar{display:flex;gap:7px;align-items:center;padding:7px 10px;min-height:43px;flex-wrap:wrap;background:var(--panel-2);border-bottom:1px solid var(--line);flex-shrink:0}
+.writing .pdf-toolbar .primary{background:var(--writer-accent);border-color:var(--writer-accent);color:var(--on-teal,#10231c);font-weight:650;white-space:nowrap}.writing .auto-compile{font-size:11px;gap:4px;white-space:nowrap;color:var(--muted)}
+.writing .pdf-toolbar select{margin-left:auto;max-width:110px;background:var(--panel)}.writing #downloadPDF{padding:4px 8px;font-size:17px}
 .writing #pdfPages{overflow:auto;flex:1;min-height:0;padding:22px;overscroll-behavior:contain;text-align:center}
 .writing #pdfPages canvas{display:block;margin:0 auto 22px;box-shadow:0 3px 14px #0006;flex-shrink:0}
-.writing .pdf-empty{margin:9dvh auto;max-width:300px;padding:22px;color:#c2d0dd}.writing .pdf-empty>span{font-size:62px;color:#91a6ba}.writing .pdf-empty h2{font:500 20px Georgia,serif;margin-top:14px}.writing .pdf-empty p{font-size:12px;color:#a7b9c9}
-.writing .pdf-status{font-size:10px;display:flex;justify-content:space-between;gap:8px;padding:5px 12px;background:#253345;flex-shrink:0;min-height:26px}
+.writing .pdf-empty{margin:9dvh auto;max-width:300px;padding:22px;color:var(--text)}.writing .pdf-empty>span{font-size:62px;color:var(--muted)}.writing .pdf-empty h2{font:600 20px/1.4 var(--ui-font,system-ui,sans-serif);margin-top:14px}.writing .pdf-empty p{font-size:12px;color:var(--muted)}
+.writing .pdf-status{font-size:10px;display:flex;justify-content:space-between;gap:8px;padding:5px 12px;background:var(--panel-2);color:var(--muted);flex-shrink:0;min-height:26px;box-shadow:inset 0 1px var(--line)}
 .writing #previewState{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.writing #pdfCount{flex-shrink:0}
-.writing .splitter{grid-row:1;background:#435165;cursor:col-resize;touch-action:none;position:relative;z-index:3;outline-offset:-1px}
-.writing .splitter::after{content:"";position:absolute;top:calc(50% - 14px);left:2px;width:2px;height:28px;background:repeating-linear-gradient(#94a3b7 0 2px,transparent 2px 4px)}
-.writing .splitter:hover,.writing .splitter:focus-visible{background:#66bda3;outline:0}.writing .files-resize{grid-column:2}.writing .panes-resize{grid-column:4}
+.writing .splitter{grid-row:1;background:var(--line);cursor:col-resize;touch-action:none;position:relative;z-index:3;outline-offset:-1px}
+.writing .splitter::after{content:"";position:absolute;top:calc(50% - 14px);left:2px;width:2px;height:28px;background:repeating-linear-gradient(var(--muted) 0 2px,transparent 2px 4px)}
+.writing .splitter:hover,.writing .splitter:focus-visible{background:var(--writer-accent);outline:0}.writing .files-resize{grid-column:2}.writing .panes-resize{grid-column:4}
 .writing.resizing{cursor:col-resize;user-select:none}.writing.resizing .cm-editor{pointer-events:none}
 .writing #writerGrid[data-swapped=true]{grid-template-columns:var(--files-width) 6px minmax(0,var(--pdf-fr)) 6px minmax(0,var(--code-fr))}
 .writing #writerGrid[data-swapped=true] .source-pane{grid-column:5}.writing #writerGrid[data-swapped=true] .preview-pane{grid-column:3}
@@ -82,9 +83,13 @@ body.writing[data-editor-theme=dark] {
 .writing #writerGrid[data-mode=code] .source-pane,.writing #writerGrid[data-mode=pdf] .preview-pane{grid-column:3}
 .writing #writerGrid[data-mode=code] .preview-pane,.writing #writerGrid[data-mode=pdf] .source-pane,.writing #writerGrid:not([data-mode=split]) .panes-resize{display:none}
 .writing #writerGrid[data-collapsed=true]:not([data-mode=split]){grid-template-columns:0 0 minmax(0,1fr)}
-.writing #logDetails{margin:0;flex-shrink:0;background:#1b2735;border-top:1px solid var(--line);font-size:12px}
-.writing #logDetails>summary{padding:8px 16px;color:#bfcbd7}.writing .log-body{max-height:27dvh;overflow:auto;padding:0 15px}
-.writing #compileLog{max-height:none;margin:4px 0 12px;font-size:11px}.writing #problems button{background:#2d3947;border-color:#48586a}
+.writing #logDetails{margin:0;flex-shrink:0;background:var(--panel);border-top:1px solid var(--line);font-size:12px}
+.writing #logDetails>summary{padding:8px 16px;color:var(--muted);font-weight:500}.writing #logDetails[open]>summary{color:var(--text)}.writing .log-body{max-height:27dvh;overflow:auto;padding:0 15px}
+.writing #compileLog{max-height:none;margin:4px 0 12px;font-size:11px;background:var(--bg);border-radius:7px}.writing #problems button{background:var(--panel-2);border-color:var(--line)}
+body.writing .writer-actions #referenceButton{color:var(--writer-accent);border-color:var(--line)}
+body.writing .writer-actions #templateButton{color:var(--text)}
+.writing .writer-actions button:hover:not(:disabled),.writing .writer-actions .button:hover,.writing .file-actions button:hover:not(:disabled),.writing .files-heading button:hover:not(:disabled){background:var(--panel-3);border-color:var(--writer-accent)}
+.writing .writer-actions button[aria-pressed=true]{color:var(--writer-accent);border-color:var(--writer-accent)}
 @media(max-width:950px){.writing header{flex-direction:row;align-items:center}.writing .writer-toolbar h1{width:auto}.writing .editor-grid{min-height:160px}.writing .source-pane{height:auto}.writing .preview-pane{max-height:none}.writing .brand span{display:none}}
 @media(max-width:759px){
   .writing header{padding:7px 10px;gap:6px}.writing nav{gap:0}.writing nav a{padding:5px 7px;font-size:11px}.writing .brand{font-size:14px}
@@ -93,8 +98,8 @@ body.writing[data-editor-theme=dark] {
   .writing #writerGrid[data-swapped=true]{grid-template-rows:minmax(0,var(--pdf-fr)) 6px minmax(0,var(--code-fr))}
   .writing #writerGrid .source-pane,.writing #writerGrid .preview-pane,.writing #writerGrid[data-swapped=true] .source-pane,.writing #writerGrid[data-swapped=true] .preview-pane{grid-column:1}
   .writing #writerGrid .source-pane{grid-row:1}.writing #writerGrid .preview-pane{grid-row:3}.writing #writerGrid[data-swapped=true] .preview-pane{grid-row:1}.writing #writerGrid[data-swapped=true] .source-pane{grid-row:3}
-  .writing #writerGrid .panes-resize{grid-column:1;grid-row:2;cursor:row-resize}.writing .panes-resize::after{top:2px;left:calc(50% - 14px);height:2px;width:28px;background:repeating-linear-gradient(90deg,#94a3b7 0 2px,transparent 2px 4px)}
-  .writing #writerGrid .files{position:absolute;top:0;bottom:0;left:0;width:min(280px,85%);z-index:10;box-shadow:8px 0 24px #0008;border-right:1px solid #526175}
+  .writing #writerGrid .panes-resize{grid-column:1;grid-row:2;cursor:row-resize}.writing .panes-resize::after{top:2px;left:calc(50% - 14px);height:2px;width:28px;background:repeating-linear-gradient(90deg,var(--muted) 0 2px,transparent 2px 4px)}
+  .writing #writerGrid .files{position:absolute;top:0;bottom:0;left:0;width:min(280px,85%);z-index:10;box-shadow:8px 0 24px #0004;border-right:1px solid var(--line)}
   .writing #writerGrid .files-resize{display:none}
   .writing #writerGrid[data-mode=code],.writing #writerGrid[data-mode=pdf],.writing #writerGrid[data-collapsed=true]:not([data-mode=split]){grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
   .writing #writerGrid[data-mode=code] .source-pane,.writing #writerGrid[data-mode=pdf] .preview-pane{grid-column:1;grid-row:1}

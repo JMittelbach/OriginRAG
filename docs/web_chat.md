@@ -26,8 +26,17 @@ Choose a saved paper in **My shelf → Open reader**. The reader displays the
 corpus PDF inside OriginRAG, with page navigation, zoom, a reading theme, and
 personal notes. Select text, choose a marker colour and press **Highlight
 selection**. Add a comment beside the highlight and press **Save note**.
-Click a note's page button to return to that passage. **Export notes** saves
-your saved highlights and comments as JSON, not as an annotated PDF.
+Click a note's page button to return to that passage. Search your notes or filter
+by highlight colour without losing unsaved edits. Each note offers **Copy quote**
+and a colour selector. Colour changes are applied with **Save note**.
+**Export notes** downloads all saved highlights and comments as JSON or readable
+Markdown, including PDF page numbers. It does not include unsaved drafts or modify
+the original PDF. **Download PDF** saves the unmodified document.
+
+Use **Fit page** to see a whole page or **Fit width** for larger text. Drag the
+divider to resize the notes panel, or focus it and use the arrow keys. **Notes**
+hides the panel. **Focus view** enters full screen where supported. The footer
+shows the current page and scroll position. **?** opens the keyboard guide.
 
 **Find** (Ctrl/Cmd+F) searches the PDF's selectable text and marks matching
 passages. Move between matches with the arrows or Enter/Shift+Enter in the search
@@ -53,6 +62,11 @@ notes when moving an installation. Removing a shelf bookmark does not erase note
 Notes are tied to the exact PDF contents. If a paper's PDF is replaced, earlier
 notes remain stored separately rather than appearing on the wrong passage.
 The reader warns about unsaved comments and rejects stale edits from another tab.
+The notes panel shows saving, unsaved and unconfirmed-save states. If a save is
+not confirmed, keep the tab open and reload notes to check the stored state before
+retrying. Existing drafts are kept when notes are refreshed.
+If a highlight was deleted in another window, its unsaved draft stays visible
+with **Save draft copy** so that it can be recovered before dismissal.
 
 PDF.js is bundled locally, including its fonts and codecs. No external PDF service
 or model call is involved. Use localhost (including an SSH tunnel) or HTTPS.

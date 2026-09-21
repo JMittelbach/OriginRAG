@@ -1,6 +1,5 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
-import json
 import os
 from pathlib import Path
 import sqlite3
@@ -151,15 +150,7 @@ class WritingCollaboration:
             for key, _ in shared:
                 try:
                     access = self._access(db, user, key)
-                    source = access.store.connect()
-                    try:
-                        row = source.execute("SELECT data,revision,updated FROM documents WHERE id=? AND kind='projects'", (key,)).fetchone()
-                    finally:
-                        source.close()
-                    data = json.loads(row[0])
-                    snapshot['projects'].append({'id': key, 'name': data['name'], 'revision': row[1], 'updated': row[2],
-                        'count': len(data.get('files', {})), 'collection': '', 'template': data.get('template', ''),
-                        'collaboration': access.info})
+                    snapshot['projects'].append({**access.store.summary(key), 'collection': '', 'collaboration': access.info})
                 except KeyError:
                     continue
         snapshot['projects'].sort(key=lambda item: item.get('updated', 0), reverse=True)

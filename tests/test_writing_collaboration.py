@@ -209,6 +209,22 @@ def test_editor_stale_merge_preserves_owner_collection_and_conflicts_keep_source
     assert call('GET', '/api/writing?id=' + p['id'])['files'] == merged['files']
 
 
+def test_shared_dashboard_uses_metadata_and_still_checks_access(workspace, monkeypatch):
+    from test_writing_summaries import reject_source_reads
+    call, _, _, _, users, _ = workspace
+    collection = call('POST', payload={'action': 'create_collection', 'name': 'Private library'})
+    p = project(call, collection=collection['id'])
+    share(call, p, users['bob'])
+    connect = WritingStore.connect
+    monkeypatch.setattr(WritingStore, 'connect', lambda self: reject_source_reads(connect(self)))
+    result = call('GET', who='bob')['projects']
+    assert len(result) == 1 and result[0]['id'] == p['id']
+    assert result[0]['collection'] == '' and result[0]['collaboration']['role'] == 'editor'
+    assert call('GET', who='carol')['projects'] == []
+    share(call, p, users['bob'], action='remove')
+    assert call('GET', who='bob')['projects'] == []
+
+
 def test_revoked_while_compiling_does_not_return_project_pdf(workspace, monkeypatch):
     call, _, _, auth, users, root = workspace
     p = project(call)

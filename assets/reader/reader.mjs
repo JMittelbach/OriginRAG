@@ -1,5 +1,7 @@
 import {getDocument, GlobalWorkerOptions, TextLayer} from '/assets/vendor/pdfjs/legacy/build/pdf.min.mjs';
 import {navigation} from './navigation.mjs';
+import {readingTools} from './reading-tools.mjs';
+import {requestJSON} from '/assets/workspace/request.mjs';
 
 GlobalWorkerOptions.workerSrc = '/assets/vendor/pdfjs/legacy/build/pdf.worker.min.mjs';
 const $ = id => document.getElementById(id);
@@ -7,36 +9,51 @@ const paperId = new URLSearchParams(location.search).get('paper_id');
 const original = '/api/library/pdf?paper_id=' + encodeURIComponent(paperId || '');
 const base = '/assets/vendor/pdfjs/';
 let pdf, fingerprint, currentPage = 1, zoom = 1, marks = [], selection = null;
-let generation = 0, saving = false, ready = false, notesReady = false;
+let generation = 0, saving = false, reloading = false, ready = false, notesReady = false, noteError = false;
 let views=[], navigating=false, scrollFrame=0;
 const drafts = new Map();
+const colorDrafts = new Map();
+const recoveredDrafts = new Map();
 const colors = new Set(['yellow', 'mint', 'rose', 'red']);
+const colorNames = {yellow:'Yellow',mint:'Green',red:'Red',rose:'Rose'};
 let focusedNote='', pendingNoteClick, pointerStart;
 const status = (message, error = false) => { $('status').textContent = message; $('status').classList.toggle('error', error); };
 const node = (tag, text, className) => { const el = document.createElement(tag); el.textContent = text; if (className) el.className = className; return el; };
-const dirty = () => [...drafts].some(([id, value]) => value !== marks.find(m => m.id === id)?.note);
+const changed = mark => (drafts.has(mark.id) && drafts.get(mark.id) !== mark.note) || (colorDrafts.has(mark.id) && colorDrafts.get(mark.id) !== mark.color);
+const dirty = () => recoveredDrafts.size>0 || [...drafts].some(([id,value])=>value!==marks.find(mark=>mark.id===id)?.note) || [...colorDrafts].some(([id,value])=>value!==marks.find(mark=>mark.id===id)?.color);
 const navigate = navigation({getPdf:()=>pdf,getPage:()=>currentPage,getZoom:()=>zoom,renderPage});
+const reading = readingTools({getPdf:()=>pdf,getPage:()=>currentPage,getZoom:()=>zoom,renderPage,status,getReady:()=>ready,getSaving:()=>saving});
+function noteState() {
+  $('notesState').textContent = saving ? 'Saving…' : reloading ? 'Refreshing…' : noteError ? 'Save not confirmed' : !notesReady ? 'Notes unavailable' : dirty() ? 'Unsaved changes' : 'Saved';
+  $('notesState').dataset.state = noteError ? 'error' : dirty() ? 'dirty' : 'saved';
+}
 function controls() {
   for (const id of ['zoomIn','zoomOut','fit','pageNumber','reload','export','find','contents']) $(id).disabled = !ready || saving;
   $('export').disabled = !ready || saving || !notesReady;
+  $('reload').disabled = !pdf || saving || reloading;
+  $('exportFormat').disabled = $('export').disabled;
   $('previous').disabled = !ready || currentPage <= 1;
   $('next').disabled = !ready || currentPage >= (pdf?.numPages || 0);
-  $('highlight').disabled = !ready || !selection || saving || !notesReady;
+  $('highlight').disabled = !ready || !selection || saving || reloading || !notesReady;
   $('selectionTools').hidden = $('highlight').disabled;
   if(document.activeElement!==$('pageNumber')) $('pageNumber').value = currentPage;
   $('zoomLabel').textContent = Math.round(zoom * 100) + '%';
+  noteState(); reading.update();
 }
 async function api(method, payload) {
   const token = document.cookie.split('; ').find(c => c.startsWith('pfempire_csrf='))?.slice('pfempire_csrf='.length) || '';
   const url = '/api/reader/notes' + (method === 'GET' ? '?' + new URLSearchParams({paper_id:paperId,fingerprint}) : '');
-  const response = await fetch(url, {method, headers:{'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(token)}, ...(payload ? {body:JSON.stringify({paper_id:paperId,fingerprint,...payload})} : {})});
-  if (response.status === 401) throw new Error('Please sign in again in another tab, then retry. Your unsaved note is still here.');
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Could not save your notes. Please retry.');
+  const data = await requestJSON(url, {headers:{'X-CSRF-Token':decodeURIComponent(token)},timeout:method==='GET'?15000:30000,...(payload?{payload:{paper_id:paperId,fingerprint,...payload}}:{})});
+  if(!Array.isArray(data?.items)) throw new Error('Your notes could not be loaded. Please reload notes and try again.');
   return data;
 }
 function applyNotes(data) {
   notesReady = true;
+  const available=new Set(data.items.map(mark=>mark.id));
+  for(const mark of marks)if(!available.has(mark.id)) {
+    if(changed(mark))recoveredDrafts.set(mark.id,{...mark,note:drafts.get(mark.id) ?? mark.note,color:colorDrafts.get(mark.id) ?? mark.color});
+    drafts.delete(mark.id);colorDrafts.delete(mark.id);
+  }
   marks = data.items;
   $('versionWarning').hidden = !data.other_version_count;
   $('versionWarning').textContent = 'You have notes on a different PDF version of this paper. They are preserved separately and are not overlaid on this version.';
@@ -62,6 +79,7 @@ function focusNote(id) {
   focusedNote=id;
   $('notesPanel').hidden=false;
   $('notesToggle').setAttribute('aria-expanded','true');
+  $('notesFilter').value=''; $('notesColor').value='all'; filterNotes();
   for(const item of $('notes').querySelectorAll('.note')) item.classList.toggle('selected',item.dataset.noteId===id);
   drawMarks();
   const input=document.querySelector(`[data-note-id="${id}"].note textarea`);
@@ -98,40 +116,77 @@ $('workspace').addEventListener('click',event=>{
   },350);
 });
 async function change(payload, savedId, focusNew=false) {
-  if (saving) return;
+  if (saving || reloading) return;
   const previousIds=new Set(marks.map(m=>m.id));
   let newId;
-  saving = true; controls(); renderNotes(); status('Saving…');
+  saving = true; noteError=false; controls(); renderNotes(); status('Saving…');
   try {
     const data = await api('POST',payload);
-    if (savedId) drafts.delete(savedId);
+    if (savedId) {drafts.delete(savedId);colorDrafts.delete(savedId);}
     if (payload.action === 'add') { selection = null; window.getSelection()?.removeAllRanges(); }
     applyNotes(data); status('Saved to your personal notes.');
     if (focusNew) newId=marks.find(m=>!previousIds.has(m.id))?.id;
-  } catch(error) { status(error.message, true); }
+  } catch(error) { noteError=true; status(error.message, true); }
   finally { saving = false; controls(); renderNotes();
     if(newId) focusNote(newId);
   }
 }
+function filterNotes() {
+  const query=$('notesFilter').value.trim().toLocaleLowerCase(),color=$('notesColor').value;
+  let shown=0;
+  const byId=new Map(marks.map(mark=>[mark.id,mark]));
+  for(const item of $('notes').querySelectorAll('.note')) {
+    if(item.classList.contains('draft-recovery'))continue;
+    const mark=byId.get(item.dataset.noteId);
+    const text=mark ? [mark.quote,drafts.get(mark.id) ?? mark.note].join('\n').toLocaleLowerCase() : '';
+    item.hidden=!mark || (color!=='all' && color!==mark.color) || (query && !text.includes(query));
+    if(!item.hidden)shown++;
+  }
+  $('notesCount').textContent=(shown===marks.length?String(marks.length):`${shown} of ${marks.length}`)+(marks.length===1?' highlight':' highlights');
+  $('notesEmpty').hidden=!marks.length || shown>0;
+  $('notesEmpty').textContent='No matching notes. Try another phrase or colour.';
+}
+$('notesFilter').addEventListener('input',filterNotes);
+$('notesColor').addEventListener('change',filterNotes);
+function downloadFile(content,type,filename) {
+  const url=URL.createObjectURL(new Blob([content],{type}));
+  const link=node('a','');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
 function renderNotes() {
   const container = $('notes'); container.replaceChildren();
-  if (!marks.length) { container.append(node('p','No highlights yet. Start with a passage that catches your eye.','hint')); return; }
+  for(const [id,draft] of recoveredDrafts) {
+    const item=node('section','','note draft-recovery');
+    item.append(node('strong','Unsaved draft · Page '+draft.page),node('p','This highlight was removed in another window. Save a copy of your draft before dismissing it.','warning'),node('blockquote',draft.quote));
+    const input=document.createElement('textarea');input.readOnly=true;input.value=draft.note;input.setAttribute('aria-label','Recovered draft from page '+draft.page);item.append(input);
+    const actions=node('div','','note-actions'),copy=node('button','Save draft copy'),discard=node('button','Dismiss draft');
+    copy.onclick=()=>downloadFile(JSON.stringify({format:'originrag-reader-draft-v1',paper_id:paperId,fingerprint,annotation:draft},null,2),'application/json','originrag-reading-draft.json');
+    discard.onclick=()=>{if(confirm('Dismiss this unsaved draft? Save a copy first if you want to keep it.')){recoveredDrafts.delete(id);renderNotes();controls();}};
+    actions.append(copy,discard);item.append(actions);container.append(item);
+  }
+  if (!marks.length) { container.append(node('p',notesReady?'No highlights yet. Select a passage and choose a colour to save it.':'Your personal notes have not loaded yet.','hint')); filterNotes();noteState();return; }
   for (const mark of [...marks].sort((a,b)=>a.page-b.page || a.rects[0][1]-b.rects[0][1])) {
     const item = node('section','','note'); item.dataset.noteId = mark.id; item.dataset.color=colors.has(mark.color)?mark.color:'yellow';
     item.classList.toggle('selected',mark.id===focusedNote);
     const heading = node('div','','note-heading');
     const jump = node('button','Page ' + mark.page); jump.onclick = () => renderPage(mark.page, zoom, mark.rects[0][1]);
-    heading.append(jump); item.append(heading,node('blockquote',mark.quote || 'Highlighted area'));
+    const recolor=document.createElement('select');recolor.className='note-color';recolor.setAttribute('aria-label','Highlight colour on page '+mark.page);
+    for(const [value,label] of Object.entries(colorNames)){const option=node('option',label);option.value=value;recolor.append(option);}
+    recolor.value=colorDrafts.get(mark.id) ?? mark.color;recolor.disabled=saving || reloading;
+    recolor.onchange=()=>{colorDrafts.set(mark.id,recolor.value);save.disabled=!changed(mark);noteState();};
+    heading.append(jump,recolor); item.append(heading,node('blockquote',mark.quote || 'Highlighted area'));
     const input = document.createElement('textarea'); input.setAttribute('aria-label','Note for highlight on page ' + mark.page); input.placeholder='What stood out to you?'; input.maxLength=10000;
-    input.value = drafts.has(mark.id) ? drafts.get(mark.id) : mark.note; input.disabled = saving;
-    input.oninput = () => { drafts.set(mark.id,input.value); save.disabled = input.value === mark.note; };
+    input.value = drafts.has(mark.id) ? drafts.get(mark.id) : mark.note; input.disabled = saving || reloading;
+    input.oninput = () => { drafts.set(mark.id,input.value); save.disabled = !changed(mark);noteState(); };
     const actions = node('div','','note-actions');
-    const save = node('button','Save note'); save.disabled = saving || input.value === mark.note;
-    save.onclick = () => { const {page,rects,quote,color} = mark; change({action:'update',id:mark.id,revision:mark.revision,mark:{page,rects,quote,color,note:input.value}}, mark.id); };
-    const remove = node('button','Delete'); remove.disabled = saving;
+    const save = node('button','Save note'); save.disabled = saving || reloading || !changed(mark);
+    save.onclick = () => { const {page,rects,quote} = mark; change({action:'update',id:mark.id,revision:mark.revision,mark:{page,rects,quote,color:recolor.value,note:input.value}}, mark.id); };
+    const copy=node('button','Copy quote','note-copy');copy.disabled=!mark.quote;
+    copy.onclick=async()=>{try {await navigator.clipboard.writeText(mark.quote);status('Quote copied.');}catch {status('Select the quote and use Ctrl/Cmd+C to copy it.',true);}};
+    const remove = node('button','Delete'); remove.disabled = saving || reloading;
     remove.onclick = () => { if (confirm('Delete this highlight and its note?')) change({action:'delete',id:mark.id,revision:mark.revision},mark.id); };
-    actions.append(save,remove); item.append(input,actions); container.append(item);
+    actions.append(save,copy,remove); item.append(input,actions); container.append(item);
   }
+  filterNotes();noteState();
 }
 function pageTop(view) {return view.wrapper.getBoundingClientRect().top-$('workspace').getBoundingClientRect().top+$('workspace').scrollTop;}
 function sizeView(view) {
@@ -223,6 +278,7 @@ async function renderPage(number, scale, jumpY=null) {
   cancelNoteClick();pointerStart=null;
   number=Math.max(1,Math.min(pdf.numPages,number));
   const previous=views[currentPage-1],fraction=jumpY ?? (number===currentPage ? Math.max(0,($('workspace').scrollTop-pageTop(previous)+50)/(previous.height*zoom)):0);
+  const topInset=jumpY===0 ? parseFloat(getComputedStyle($('workspace')).paddingTop) || 0 : 50;
   navigating=true;const token=++generation;
   selection=null;window.getSelection()?.removeAllRanges();ready=false;controls();
   for(const view of views){view.canvasTask?.cancel();view.textTask?.cancel();}
@@ -231,11 +287,11 @@ async function renderPage(number, scale, jumpY=null) {
   const nextZoom=Math.max(.35,Math.min(3,scale));
   if(nextZoom!==zoom){zoom=nextZoom;for(const view of views){release(view);sizeView(view);}}
   const view=views[number-1];activate(view);$('pageNumber').value=number;
-  $('workspace').scrollTop=Math.max(0,pageTop(view)+view.height*zoom*fraction-50);
+  $('workspace').scrollTop=Math.max(0,pageTop(view)+view.height*zoom*fraction-topInset);
   await ensureView(view);if(token!==generation)return;
-  $('workspace').scrollTop=Math.max(0,pageTop(view)+view.height*zoom*fraction-50);
+  $('workspace').scrollTop=Math.max(0,pageTop(view)+view.height*zoom*fraction-topInset);
   navigating=false;ready=true;controls();navigate.draw();renderNearby();
-  if(!saving)status(!notesReady?'Your notes could not be loaded. Press ↻ to retry.':'Scroll to read on. Select to copy; choose a colour to highlight. Click a highlight to comment.',!notesReady);
+  if(!saving && !noteError)status(!notesReady?'Your notes could not be loaded. Reload notes to retry.':'Select text to copy or highlight. Your notes are private.',!notesReady);
 }
 function captureSelection() {
   const selected = window.getSelection();
@@ -281,21 +337,37 @@ $('next').onclick = () => renderPage(currentPage+1,zoom);
 $('pageNumber').onchange = () => { const value=Number($('pageNumber').value); if(Number.isInteger(value)) renderPage(value,zoom); else controls(); };
 $('zoomIn').onclick = () => renderPage(currentPage,zoom+.2);
 $('zoomOut').onclick = () => renderPage(currentPage,zoom-.2);
-async function fit() { if (!pdf) return; const p = await pdf.getPage(currentPage); const width = p.getViewport({scale:1}).width; await renderPage(currentPage,Math.min(2,Math.max(.35,($('workspace').clientWidth-56)/width))); }
+async function fit() { if (!pdf) return; const p = await pdf.getPage(currentPage); const width = p.getViewport({scale:1}).width; const style=getComputedStyle($('workspace')); await renderPage(currentPage,Math.min(2,Math.max(.35,($('workspace').clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight))/width))); }
 $('fit').onclick = fit;
 $('notesToggle').onclick = () => { $('notesPanel').hidden = !$('notesPanel').hidden; $('notesToggle').setAttribute('aria-expanded',String(!$('notesPanel').hidden)); };
 $('theme').onclick = () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme=next; try {localStorage.setItem('originrag-reader-theme',next);} catch {} };
 try {document.documentElement.dataset.theme=localStorage.getItem('originrag-reader-theme') || 'light';} catch {}
-$('reload').onclick = async () => { try {applyNotes(await api('GET'));status(dirty()?'Notes refreshed. Your unsaved text has been kept. Review it before saving.':'Notes refreshed.');} catch(e) {status(e.message,true);} };
+$('reload').onclick = async () => {
+  if(saving || reloading || !fingerprint)return;
+  reloading=true;controls();renderNotes();
+  try {applyNotes(await api('GET'));noteError=false;status(dirty()?'Notes refreshed. Your unsaved changes have been kept. Review them before saving.':'Notes refreshed.');}
+  catch(e) {status(e.message,true);}
+  finally {reloading=false;controls();renderNotes();}
+};
+const markdownText = text => String(text).replace(/[\\`*_{}\[\]<>()#!|]/g,'\\$&');
 $('export').onclick = () => {
   const data = {format:'originrag-reader-notes-v1',paper_id:paperId,fingerprint,exported_at:new Date().toISOString(),annotations:marks};
-  const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
-  const link=node('a',''); link.href=url; link.download='originrag-reading-notes.json'; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const markdown=$('exportFormat').value==='markdown';
+  let content=JSON.stringify(data,null,2);
+  if(markdown) {
+    const lines=[`# ${markdownText($('title').textContent)}`, '', `Paper: ${markdownText(paperId)}`, `PDF fingerprint: ${fingerprint}`, `Exported: ${data.exported_at}`, '', 'Saved highlights and notes. Page numbers refer to PDF pages.', ''];
+    for(const mark of [...marks].sort((a,b)=>a.page-b.page || a.rects[0][1]-b.rects[0][1])) {
+      lines.push(`## Page ${mark.page} · ${colorNames[mark.color] || 'Highlight'}`, '', ...markdownText(mark.quote || 'Highlighted area').split('\n').map(line=>'> '+line), '');
+      if(mark.note)lines.push(markdownText(mark.note),'');
+    }
+    content=lines.join('\n');
+  }
+  downloadFile(content,markdown?'text/markdown;charset=utf-8':'application/json','originrag-reading-notes.'+(markdown?'md':'json'));
   status(dirty()?'Exported saved notes only. Save your draft to include it.':'Notes exported.');
 };
 window.addEventListener('beforeunload',event=>{if(dirty() || saving){event.preventDefault();event.returnValue='';}});
 document.addEventListener('keydown',event=>{
-  if(event.isComposing || $('outlineDialog').open)return;
+  if(event.isComposing || document.querySelector('dialog[open]'))return;
   const editing=event.target.closest('input,textarea,select,[contenteditable="true"]');
   if((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='f' && pdf){event.preventDefault();navigate.open();return;}
   if((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='s' && event.target.matches('textarea')){event.preventDefault();event.target.closest('.note')?.querySelector('.note-actions button')?.click();return;}
@@ -310,9 +382,8 @@ async function start() {
   try {
     if (!paperId) throw new Error('Choose a paper from your shelf first.');
     $('original').href=original; $('original').hidden=false;
-    const metadata = await fetch('/api/reader/paper?'+new URLSearchParams({paper_id:paperId}));
-    if (!metadata.ok) throw new Error(metadata.status===401?'Please sign in to OriginRAG first.':'This paper is not available in your library.');
-    const info=await metadata.json(); $('title').textContent=info.title || paperId; document.title=(info.title || paperId)+' · OriginRAG Reader';
+    const info=await requestJSON('/api/reader/paper?'+new URLSearchParams({paper_id:paperId}),{timeout:15000}); $('title').textContent=info.title || paperId; $('title').title=$('title').textContent;document.title=(info.title || paperId)+' · OriginRAG Reader';
+    $('downloadPDF').href=original;$('downloadPDF').download=($('title').textContent.replace(/[\\/:*?"<>|\x00-\x1f]/g,'_').slice(0,120) || 'paper')+'.pdf';$('downloadPDF').hidden=false;
     if (!crypto.subtle) throw new Error('The reader needs localhost or HTTPS to safely identify PDF versions. You can still open the original PDF.');
     const response=await fetch(original);
     if (!response.ok) throw new Error('The PDF could not be opened. Please sign in again or check the library.');

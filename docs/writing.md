@@ -28,6 +28,11 @@ omit the suite switcher and retain their own Library, Bookshelf, **Appearance**,
    successfully compiled PDF. **Download draft** preserves the current buffers
    as JSON, including unsaved changes, for recovery after a save conflict.
 
+If a connection or temporary server error interrupts saving, the draft stays
+in the editor. Choose **Retry saving** to resume. Quill checks for concurrent
+edits before accepting the save, including when an earlier save reached the
+server but its confirmation was lost. Conflicting edits still require review.
+
 Unchanged successful builds reuse a cached PDF from your own project.
 **Shift-click Recompile** requests a fresh build. A bibliography error or unresolved citation
 is reported even if the LaTeX engine produced a PDF; it is not presented as a
@@ -81,6 +86,17 @@ accepted PDFs are imported into the shared corpus and linked to your private
 collection automatically. Imports still require the host to enable PDF uploads.
 Papers needing review are not silently added. For PDFs already in the corpus,
 use **Browse corpus** to link the existing record.
+
+Library search updates as you type and keeps the query in the page URL. A search
+that finds no papers offers a clear-search action and paper import. A connection
+error offers **Retry search** without navigating away.
+
+**Find or import papers** shows import progress and recent import results. After
+your PDFs have uploaded, you can close the panel and return to check progress.
+Temporary connection failures trigger another progress check automatically.
+Failed downloads offer **Retry import**. If uploaded files are waiting for
+processing, choose **Resume library update**. When one file in a batch fails to
+upload, files already accepted by the server are still sent for processing.
 
 The manuscript list shows the last edit time, **Download ZIP** and, on a shared
 server, **Share → Add a collaborator**. Only the owner can delete a manuscript,

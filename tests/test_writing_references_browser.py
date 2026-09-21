@@ -30,7 +30,8 @@ HARNESS = r'''async () => {
 
 
 def start(page, base):
-    page.goto(base + '/workspace')
+    page.goto(base + '/library')
+    page.locator('#libraryCount').filter(has_text='1 paper').wait_for()
     page.evaluate(HARNESS)
     page.locator('#referencesDialog').wait_for()
 

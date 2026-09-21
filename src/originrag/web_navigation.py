@@ -8,13 +8,14 @@ NAVIGATION = '''<header id="globalNavigation" class="origin-navigation">
 <dialog id="globalSettingsDialog" class="origin-global-dialog"><h2>Workspace settings</h2>
 <label>Start page<select id="globalStartPage"><option value="/chat" data-feature="rag">OriginRAG</option><option value="/bookshelf">Bookshelf</option><option value="/library">Library</option><option value="/write" data-feature="write">Quill</option></select></label>
 <label><input type="checkbox" id="globalReduceMotion"> Reduce animations</label><p>Saved in this browser across all four areas. Answer settings remain in OriginRAG.</p><form method="dialog"><button>Done</button></form></dialog>
-<dialog id="globalAccountDialog" class="origin-global-dialog"><h2>Your account</h2><p id="globalAccountDetails"></p><p id="globalAccountError" role="alert"></p><button id="globalSignOut" hidden>Sign out</button><form method="dialog"><button>Close</button></form></dialog>'''
+<dialog id="globalAccountDialog" class="origin-global-dialog"><h2>Your account</h2><p id="globalAccountDetails" role="status"></p><p id="globalAccountError" role="alert"></p><button id="globalAccountRetry" type="button" hidden>Retry account connection</button><button id="globalSignOut" hidden>Sign out</button><form method="dialog"><button>Close</button></form></dialog>'''
 
 
 def with_navigation(html):
     html = re.sub(r'<button[^>]*id="appearanceButton"[^>]*>Appearance</button>', '', html, count=1)
     html = re.sub(r'<a[^>]*href="/workspace"[^>]*>Workspace</a>', '', html, count=1)
-    html = html.replace('</head>', '<link rel="stylesheet" href="/assets/workspace/navigation.css"></head>', 1)
+    html = html.replace('</head>', '<link rel="stylesheet" href="/assets/workspace/navigation.css">'
+                        '<link rel="stylesheet" href="/assets/workspace/design-system.css"></head>', 1)
     return html.replace('<body>', '<body>' + NAVIGATION, 1).replace('</body>', '<script type="module" src="/assets/workspace/navigation.mjs"></script></body>', 1)
 
 

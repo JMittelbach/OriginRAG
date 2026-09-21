@@ -399,8 +399,18 @@ class WritingStore:
         db.execute('CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, kind TEXT, data TEXT, revision INTEGER, updated REAL)')
         db.execute('CREATE INDEX IF NOT EXISTS documents_updated ON documents(updated DESC)')
         db.execute('CREATE INDEX IF NOT EXISTS documents_revision ON documents(id, kind, revision)')
+        db.execute('CREATE INDEX IF NOT EXISTS documents_listing ON documents(updated DESC, id, kind, revision)')
+        db.execute('CREATE TABLE IF NOT EXISTS writing_summaries (document_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, data TEXT NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS writing_bases (document_id TEXT, revision INTEGER, digest TEXT NOT NULL, PRIMARY KEY(document_id, revision))')
         return db
+
+    @staticmethod
+    def _remember_summary(db, key, revision, data):
+        summary = {'name': data['name'], 'count': len(data.get('papers', data.get('files', {}))),
+                   'collection': data.get('collection', ''), 'template': data.get('template', '')}
+        db.execute('INSERT INTO writing_summaries VALUES(?,?,?) ON CONFLICT(document_id) '
+                   'DO UPDATE SET revision=excluded.revision, data=excluded.data',
+                   (key, revision, json.dumps(summary)))
 
     @staticmethod
     def _remember_basis(db, key, revision, data):
@@ -418,20 +428,44 @@ class WritingStore:
         finally:
             db.close()
 
-    def snapshot(self):
+    def _summaries(self, key=None):
         db = self.connect()
         try:
-            rows = db.execute('SELECT id, kind, data, revision, updated FROM documents ORDER BY updated DESC')
-            result = {'projects': [], 'collections': [], 'templates': TEMPLATES}
+            query = ('SELECT d.id,d.kind,s.data,d.revision,d.updated '
+                     'FROM documents AS d INDEXED BY documents_listing '
+                     'LEFT JOIN writing_summaries AS s ON s.document_id=d.id AND s.revision=d.revision ')
+            parameters = ()
+            if key is not None:
+                query += "WHERE d.id=? AND d.kind='projects' "
+                parameters = (identifier(key),)
+            query += 'ORDER BY d.updated DESC'
+            rows = db.execute(query, parameters).fetchall()
+            if any(row[2] is None for row in rows):
+                with db:
+                    db.execute('BEGIN IMMEDIATE')
+                    for document_id, _, raw, _, _ in db.execute(query, parameters).fetchall():
+                        if raw is None:
+                            data, revision = db.execute('SELECT data,revision FROM documents WHERE id=?', (document_id,)).fetchone()
+                            self._remember_summary(db, document_id, revision, json.loads(data))
+                    rows = db.execute(query, parameters).fetchall()
+            result = []
             for key, kind, raw, revision, updated in rows:
-                data = json.loads(raw)
-                result[kind].append({'id': key, 'name': data['name'], 'revision': revision,
-                                     'count': len(data.get('papers', data.get('files', {}))),
-                                     'collection': data.get('collection', ''), 'updated': updated,
-                                     'template': data.get('template', '')})
+                result.append((kind, {**json.loads(raw), 'id': key, 'revision': revision, 'updated': updated}))
             return result
         finally:
             db.close()
+
+    def snapshot(self):
+        result = {'projects': [], 'collections': [], 'templates': TEMPLATES}
+        for kind, item in self._summaries():
+            result[kind].append(item)
+        return result
+
+    def summary(self, key):
+        rows = self._summaries(key)
+        if not rows:
+            raise KeyError('Project not found.')
+        return rows[0][1]
 
     def get(self, key, kind='projects'):
         db = self.connect()
@@ -493,6 +527,7 @@ class WritingStore:
                         if payload.get('confirm_name') != data['name'] or payload.get('confirm_delete') is not True:
                             raise ValueError('Confirm the manuscript name and deletion.')
                         db.execute('DELETE FROM writing_bases WHERE document_id=?', (key,))
+                        db.execute('DELETE FROM writing_summaries WHERE document_id=?', (key,))
                         db.execute("DELETE FROM documents WHERE id=? AND kind='projects'", (key,))
                         return {'id': key, 'deleted': True}
                     if action == 'save_project':
@@ -544,6 +579,7 @@ class WritingStore:
                     raise ValueError('Account writing storage limit reached (100 MB).')
                 db.execute('INSERT INTO documents VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data, revision=excluded.revision, updated=excluded.updated',
                            (key, kind, encoded, revision + 1, time.time()))
+                self._remember_summary(db, key, revision + 1, data)
                 if kind == 'projects':
                     self._remember_basis(db, key, revision + 1, data)
             return {**data, 'id': key, 'revision': revision + 1}
@@ -603,6 +639,7 @@ class WritingStore:
                 if used + len(encoded) > 100_000_000:
                     raise ValueError('Account writing storage limit reached (100 MB).')
                 db.execute('UPDATE documents SET data=?, revision=?, updated=? WHERE id=?', (encoded, revision + 1, time.time(), key))
+                self._remember_summary(db, key, revision + 1, data)
                 self._remember_basis(db, key, revision + 1, data)
             return {**data, 'id': key, 'revision': revision + 1}
         finally:

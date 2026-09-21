@@ -18,6 +18,8 @@ def reader_server(tmp_path, monkeypatch, request):
     root = Path(__file__).resolve().parents[1]
     for folder in ('reader', 'vendor/pdfjs'):
         shutil.copytree(root / 'assets' / folder, tmp_path / 'assets' / folder)
+    (tmp_path / 'assets' / 'workspace').mkdir()
+    shutil.copy2(root / 'assets' / 'workspace' / 'request.mjs', tmp_path / 'assets' / 'workspace' / 'request.mjs')
     bib = tmp_path / 'bib'
     bib.mkdir()
     configuration = getattr(request, 'param', False)

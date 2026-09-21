@@ -180,7 +180,7 @@ def test_browser_project_library_edit_and_reopen(workspace_server):
         page.locator('[aria-label="Destination collection"]').select_option(label='My study')
         playwright.expect(page.locator('#notice')).to_contain_text('Added')
         page.get_by_role('button', name='My study', exact=True).click()
-        playwright.expect(page.locator('#libraryCount')).to_have_text('1 papers')
+        playwright.expect(page.locator('#libraryCount')).to_have_text('1 paper')
         page.get_by_role('link', name='Quill', exact=True).click()
         page.get_by_role('button', name='+ New manuscript').click()
         page.locator('#newName').fill('Demo manuscript')

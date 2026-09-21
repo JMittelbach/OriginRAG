@@ -1,10 +1,10 @@
 #referencesDialog{width:min(1080px,94vw);max-height:91dvh;padding:0;border:1px solid var(--line,#35494f);border-radius:16px;background:var(--bg,#0d191f);color:var(--text,#e9f0ed);overflow:auto;box-shadow:0 24px 90px #0008}
-#referencesDialog::backdrop{background:#030b12b8;backdrop-filter:blur(4px)}
+#referencesDialog::backdrop{background:#030b12b8}
 #referencesDialog .references-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding:24px 26px 14px;border-bottom:1px solid var(--line,#35494f)}
-#referencesDialog h2{font:29px/1.2 Georgia,serif;margin:0 0 8px}#referencesDialog h3{font:600 15px/1.45 system-ui,sans-serif;margin:0 0 7px}
+#referencesDialog h2{font:600 24px/1.3 var(--ui-font,system-ui);letter-spacing:-.025em;margin:0 0 8px}#referencesDialog h3{font:600 15px/1.45 var(--ui-font,system-ui);margin:0 0 7px}
 #referencesDialog p{margin:0 0 12px}#referencesDialog .references-muted{font-size:12px;color:var(--muted,#9db2b6);line-height:1.5}
 #referencesDialog .references-layout{display:grid;grid-template-columns:252px minmax(0,1fr);min-height:470px}
-#referencesDialog .references-sidebar{padding:22px;background:#14242b;border-right:1px solid var(--line,#35494f)}
+#referencesDialog .references-sidebar{padding:22px;background:var(--panel-2);border-right:1px solid var(--line,#35494f)}
 #referencesDialog .references-sidebar label{display:flex;flex-direction:column;gap:7px;margin-bottom:13px;font-size:12px;font-weight:600;align-items:stretch}
 #referencesDialog .references-sidebar select,#referencesDialog .references-sidebar input[type=text]{width:100%;min-width:0;font-size:12px}
 #referencesDialog .references-create{display:grid;gap:8px;margin:18px 0 25px;padding-bottom:22px;border-bottom:1px solid var(--line,#35494f)}
@@ -14,23 +14,23 @@
 #referencesDialog .references-main{padding:20px 24px;min-width:0;max-height:70dvh;overflow:auto;overscroll-behavior:contain}
 #referencesDialog .references-tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--line,#35494f);padding-bottom:12px}
 #referencesDialog .references-tabs button{border:1px solid transparent;background:transparent;font-size:13px}
-#referencesDialog .references-tabs button[aria-selected=true]{background:#25423d;border-color:#45695f;color:var(--accent,#79debe)}
+#referencesDialog .references-tabs button[aria-selected=true]{background:var(--panel-2);border-color:var(--line);color:var(--teal);box-shadow:inset 0 -2px var(--teal)}
 #referencesDialog #referencesSearch{width:100%;font-size:13px;margin-bottom:11px}
 #referencesDialog .references-paper{padding:17px 0;border-bottom:1px solid var(--line,#35494f)}
-#referencesDialog .references-paper p{margin-bottom:6px}#referencesDialog .references-key{display:inline-block;max-width:100%;overflow-wrap:anywhere;font:11px ui-monospace,monospace;color:var(--accent,#79debe);background:#18312b;padding:4px 7px;border-radius:5px}
+#referencesDialog .references-paper p{margin-bottom:6px}#referencesDialog .references-key{display:inline-block;max-width:100%;overflow-wrap:anywhere;font:11px ui-monospace,monospace;color:var(--teal);background:var(--teal-soft);padding:4px 7px;border-radius:5px}
 #referencesDialog .references-doi{display:block;font-size:11px;color:var(--muted,#9db2b6);margin-top:6px;overflow-wrap:anywhere}
 #referencesDialog .references-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:11px}
 #referencesDialog .references-actions button,#referencesDialog .references-actions a{font-size:11px;padding:7px 10px}
 #referencesDialog .references-actions a{color:var(--muted,#9db2b6)}
-#referencesDialog .references-warning{font-size:11px;line-height:1.5;color:#e8bf7e;margin-top:7px}
+#referencesDialog .references-warning{font-size:11px;line-height:1.5;color:var(--amber);margin-top:7px}
 #referencesDialog .references-empty{padding:36px 12px;max-width:430px;color:var(--muted,#9db2b6);font-size:14px;line-height:1.7}
 #referencesDialog .references-pagination{display:flex;justify-content:space-between;gap:12px;padding-top:16px}
 #referencesDialog .references-pagination button{font-size:12px}
-#referencesDialog .references-error{margin:0;padding:0 25px;color:#ffb3a6;font-size:13px}
+#referencesDialog .references-error{margin:0;padding:0 25px;color:var(--danger);font-size:13px}
 #referencesDialog .references-error:not(:empty){padding-top:12px;padding-bottom:12px;background:#4c242533}
-#referencesDialog .references-review{margin-top:22px;padding:19px;border:1px solid #547e6e;border-radius:10px;background:#19352c;font-size:13px}
+#referencesDialog .references-review{margin-top:22px;padding:19px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);font-size:13px}
 #referencesDialog .references-review h3{font-size:17px}#referencesDialog .references-review details{margin:14px 0}
-#referencesDialog .references-review summary{font-size:12px}#referencesDialog .references-review pre{max-height:180px;overflow:auto;padding:12px;background:#0d211b;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.6 ui-monospace,monospace}
-#referencesDialog .references-review button{font-size:12px;margin-top:10px}#referencesDialog .references-conflicts{padding:12px;border:1px solid #ae8260;border-radius:7px;color:#ffe0b8;background:#472f26}
-#referencesDialog .references-conflicts p{font-size:12px;margin-top:9px;overflow-wrap:anywhere}#referencesDialog .references-pending{color:#b5ebd5;font-weight:600}
+#referencesDialog .references-review summary{font-size:12px}#referencesDialog .references-review pre{max-height:180px;overflow:auto;padding:12px;background:var(--panel);white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.6 ui-monospace,monospace}
+#referencesDialog .references-review button{font-size:12px;margin-top:10px}#referencesDialog .references-conflicts{padding:12px;border:1px solid var(--amber);border-radius:7px;color:var(--amber);background:var(--panel)}
+#referencesDialog .references-conflicts p{font-size:12px;margin-top:9px;overflow-wrap:anywhere}#referencesDialog .references-pending{color:var(--teal);font-weight:600}
 @media(max-width:700px){#referencesDialog{width:96vw;max-height:95dvh}#referencesDialog .references-heading{padding:18px;gap:10px}#referencesDialog h2{font-size:24px}#referencesDialog .references-layout{grid-template-columns:1fr}#referencesDialog .references-sidebar{padding:18px;border-right:0;border-bottom:1px solid var(--line,#35494f)}#referencesDialog .references-main{max-height:none;padding:18px}#referencesDialog .references-create{margin:12px 0;padding-bottom:14px}#referencesDialog .references-heading p{display:none}}
