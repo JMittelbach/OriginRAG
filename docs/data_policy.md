@@ -10,6 +10,10 @@ OriginRAG separates reproducible project files from local research data.
 - The bundled example catalogue in `assets/catalogue/` (metadata only)
 - User installation, web, and data-policy documentation
 
+The example catalogue contains bibliographic records, not local file locations
+or import histories. It does not indicate that a PDF is installed. Local import
+and indexing update your private working catalogue without changing the examples.
+
 ## Not Committed
 
 - PDFs

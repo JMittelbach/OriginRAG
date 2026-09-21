@@ -26,11 +26,6 @@ REMEMBER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
 SESSION_TOUCH_INTERVAL_SECONDS = 60
-VERIFICATION_TTL_SECONDS = 10 * 60
-VERIFICATION_MAX_ATTEMPTS = 5
-REGISTRATION_RESEND_SECONDS = 60
-REGISTRATION_EMAIL_HOURLY_LIMIT = 5
-REGISTRATION_SOURCE_HOURLY_LIMIT = 12
 MAX_ACTIVE_SESSIONS = 3
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_SECONDS = 15 * 60
@@ -92,17 +87,6 @@ class AuthenticationError(ValueError):
 
 class PasswordPolicyError(ValueError):
     pass
-
-
-class RegistrationError(ValueError):
-    pass
-
-
-@dataclass(frozen=True)
-class RegistrationChallenge:
-    email: str
-    code: str
-    expires_at: int
 
 
 class AuthStore:
@@ -196,27 +180,6 @@ class AuthStore:
                     PRIMARY KEY (user_id, usage_day),
                     FOREIGN KEY (user_id) REFERENCES web_users(user_id)
                 );
-                CREATE TABLE IF NOT EXISTS web_pending_registrations (
-                    email TEXT PRIMARY KEY,
-                    display_name TEXT NOT NULL,
-                    password_salt BLOB NOT NULL,
-                    password_hash BLOB NOT NULL,
-                    code_salt BLOB NOT NULL,
-                    code_hash BLOB NOT NULL,
-                    failed_attempts INTEGER NOT NULL DEFAULT 0,
-                    created_at INTEGER NOT NULL,
-                    expires_at INTEGER NOT NULL,
-                    last_sent_at INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS web_registration_events (
-                    event_id TEXT PRIMARY KEY,
-                    email_hash BLOB NOT NULL,
-                    source_hash BLOB NOT NULL,
-                    occurred_at INTEGER NOT NULL,
-                    outcome TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS web_registration_events_time_idx
-                    ON web_registration_events(occurred_at);
                 """
             )
             columns = {
@@ -294,189 +257,6 @@ class AuthStore:
         except sqlite3.IntegrityError as exc:
             raise ValueError("Account name already exists.") from exc
         return user
-
-    def begin_registration(
-        self,
-        email: str,
-        password: str,
-        *,
-        display_name: str,
-        source_key: str,
-        now: int | None = None,
-    ) -> RegistrationChallenge | None:
-        clean_email = normalize_bnitm_email(email)
-        clean_display_name = normalize_display_name(display_name)
-        username_hint = username_from_email(clean_email)
-        validate_password(
-            password,
-            username=username_hint,
-            display_name=clean_display_name,
-        )
-        timestamp = int(now if now is not None else time.time())
-        email_hash = hash_token(clean_email)
-        source_hash = hash_token(source_key or "unknown")
-        with self.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            self._enforce_registration_rate_limit(
-                connection,
-                email_hash=email_hash,
-                source_hash=source_hash,
-                now=timestamp,
-            )
-
-
-            password_salt = secrets.token_bytes(32)
-            password_hash = hash_password(password, password_salt)
-            existing = connection.execute(
-                "SELECT 1 FROM web_users WHERE lower(email) = ?",
-                (clean_email,),
-            ).fetchone()
-            pending = connection.execute(
-                "SELECT last_sent_at FROM web_pending_registrations WHERE email = ?",
-                (clean_email,),
-            ).fetchone()
-            if pending and timestamp - int(pending["last_sent_at"]) < REGISTRATION_RESEND_SECONDS:
-                raise RegistrationError("Please wait before requesting another code.")
-            if existing:
-                self._registration_event(
-                    connection, email_hash, source_hash, timestamp, "existing_account"
-                )
-                return None
-
-            code = f"{secrets.randbelow(1_000_000):06d}"
-            code_salt = secrets.token_bytes(32)
-            code_hash = hash_password(code, code_salt)
-            expires_at = timestamp + VERIFICATION_TTL_SECONDS
-            connection.execute(
-                """
-                INSERT INTO web_pending_registrations (
-                    email, display_name, password_salt, password_hash,
-                    code_salt, code_hash, failed_attempts, created_at,
-                    expires_at, last_sent_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-                ON CONFLICT(email) DO UPDATE SET
-                    display_name = excluded.display_name,
-                    password_salt = excluded.password_salt,
-                    password_hash = excluded.password_hash,
-                    code_salt = excluded.code_salt,
-                    code_hash = excluded.code_hash,
-                    failed_attempts = 0,
-                    created_at = excluded.created_at,
-                    expires_at = excluded.expires_at,
-                    last_sent_at = excluded.last_sent_at
-                """,
-                (
-                    clean_email,
-                    clean_display_name,
-                    password_salt,
-                    password_hash,
-                    code_salt,
-                    code_hash,
-                    timestamp,
-                    expires_at,
-                    timestamp,
-                ),
-            )
-            self._registration_event(connection, email_hash, source_hash, timestamp, "code_created")
-        return RegistrationChallenge(clean_email, code, expires_at)
-
-    def cancel_registration(self, email: str) -> None:
-        try:
-            clean_email = normalize_bnitm_email(email)
-        except ValueError:
-            return
-        with self.connect() as connection:
-            connection.execute(
-                "DELETE FROM web_pending_registrations WHERE email = ?", (clean_email,)
-            )
-
-    def complete_registration(
-        self,
-        email: str,
-        code: str,
-        *,
-        user_agent: str = "",
-        remember: bool = False,
-        now: int | None = None,
-    ) -> tuple[str, AuthSession]:
-        clean_email = normalize_bnitm_email(email)
-        clean_code = re.sub(r"\s+", "", str(code or ""))
-        timestamp = int(now if now is not None else time.time())
-        with self.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT * FROM web_pending_registrations WHERE email = ?",
-                (clean_email,),
-            ).fetchone()
-            if not row:
-                dummy_verify_password(clean_code)
-                raise RegistrationError("Invalid or expired verification code.")
-            if int(row["expires_at"]) <= timestamp:
-                connection.execute(
-                    "DELETE FROM web_pending_registrations WHERE email = ?", (clean_email,)
-                )
-                raise RegistrationError("Invalid or expired verification code.")
-            failures = int(row["failed_attempts"] or 0)
-            if failures >= VERIFICATION_MAX_ATTEMPTS or not verify_password(
-                clean_code,
-                bytes(row["code_salt"]),
-                bytes(row["code_hash"]),
-            ):
-                failures += 1
-                if failures >= VERIFICATION_MAX_ATTEMPTS:
-                    connection.execute(
-                        "DELETE FROM web_pending_registrations WHERE email = ?",
-                        (clean_email,),
-                    )
-                else:
-                    connection.execute(
-                        "UPDATE web_pending_registrations SET failed_attempts = ? WHERE email = ?",
-                        (failures, clean_email),
-                    )
-                connection.commit()
-                raise RegistrationError("Invalid or expired verification code.")
-
-            username = self._available_username(connection, username_from_email(clean_email))
-            user = AuthenticatedUser(
-                user_id=str(uuid.uuid4()),
-                username=username,
-                display_name=str(row["display_name"]),
-                role="user",
-            )
-            try:
-                connection.execute(
-                    """
-                    INSERT INTO web_users (
-                        user_id, username, display_name, role, password_salt,
-                        password_hash, email, email_verified_at, created_at, updated_at
-                    ) VALUES (?, ?, ?, 'user', ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        user.user_id,
-                        user.username,
-                        user.display_name,
-                        row["password_salt"],
-                        row["password_hash"],
-                        clean_email,
-                        timestamp,
-                        timestamp,
-                        timestamp,
-                    ),
-                )
-            except sqlite3.IntegrityError as exc:
-                raise RegistrationError("This account cannot be created.") from exc
-            connection.execute(
-                "DELETE FROM web_pending_registrations WHERE email = ?", (clean_email,)
-            )
-            token, session = self._create_session(
-                connection,
-                user,
-                now=timestamp,
-                user_agent=user_agent,
-                remember=remember,
-            )
-            self._audit(connection, user.user_id, "account_verified", "bnitm_email")
-            return token, session
 
     def list_users(self) -> list[dict]:
         with self.connect() as connection:
@@ -806,59 +586,6 @@ class AuthStore:
         return token, AuthSession(user=user, csrf_token=csrf_token, expires_at=expires_at)
 
     @staticmethod
-    def _available_username(connection: sqlite3.Connection, base: str) -> str:
-        candidate = base
-        suffix = 1
-        while connection.execute(
-            "SELECT 1 FROM web_users WHERE username = ?", (candidate,)
-        ).fetchone():
-            suffix += 1
-            suffix_text = f"-{suffix}"
-            candidate = f"{base[: 32 - len(suffix_text)]}{suffix_text}"
-        return candidate
-
-    @staticmethod
-    def _registration_event(
-        connection: sqlite3.Connection,
-        email_hash: bytes,
-        source_hash: bytes,
-        occurred_at: int,
-        outcome: str,
-    ) -> None:
-        connection.execute(
-            """
-            INSERT INTO web_registration_events (
-                event_id, email_hash, source_hash, occurred_at, outcome
-            ) VALUES (?, ?, ?, ?, ?)
-            """,
-            (str(uuid.uuid4()), email_hash, source_hash, occurred_at, outcome),
-        )
-
-    @staticmethod
-    def _enforce_registration_rate_limit(
-        connection: sqlite3.Connection,
-        *,
-        email_hash: bytes,
-        source_hash: bytes,
-        now: int,
-    ) -> None:
-        cutoff = now - 60 * 60
-        email_count = connection.execute(
-            "SELECT COUNT(*) AS count FROM web_registration_events "
-            "WHERE email_hash = ? AND occurred_at > ?",
-            (email_hash, cutoff),
-        ).fetchone()
-        source_count = connection.execute(
-            "SELECT COUNT(*) AS count FROM web_registration_events "
-            "WHERE source_hash = ? AND occurred_at > ?",
-            (source_hash, cutoff),
-        ).fetchone()
-        if int(email_count["count"]) >= REGISTRATION_EMAIL_HOURLY_LIMIT:
-            raise RegistrationError("Too many registration attempts. Try again later.")
-        if int(source_count["count"]) >= REGISTRATION_SOURCE_HOURLY_LIMIT:
-            raise RegistrationError("Too many registration attempts. Try again later.")
-
-    @staticmethod
     def _audit(
         connection: sqlite3.Connection,
         user_id: str | None,
@@ -888,30 +615,6 @@ def normalize_username(username: str) -> str:
             "Account name must be 3-32 characters and use lowercase letters, numbers, dot, dash, or underscore."
         )
     return value
-
-
-def normalize_bnitm_email(email: str) -> str:
-    value = str(email or "").strip().lower()
-    if len(value) > 254 or value.count("@") != 1:
-        raise ValueError("Use a valid @bnitm.de email address.")
-    local, domain = value.rsplit("@", 1)
-    if domain != "bnitm.de" or not local or len(local) > 64:
-        raise ValueError("Registration requires an @bnitm.de email address.")
-    if not re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+", local):
-        raise ValueError("Use a valid @bnitm.de email address.")
-    if local.startswith(".") or local.endswith(".") or ".." in local:
-        raise ValueError("Use a valid @bnitm.de email address.")
-    return value
-
-
-def username_from_email(email: str) -> str:
-    local = normalize_bnitm_email(email).split("@", 1)[0]
-    value = re.sub(r"[^a-z0-9._-]+", "-", local).strip("._-")
-    if not value or not value[0].isalpha():
-        value = f"user-{value}" if value else "user"
-    if len(value) < 3:
-        value = f"{value}-user"
-    return value[:32].rstrip("._-")
 
 
 def normalize_display_name(display_name: str) -> str:

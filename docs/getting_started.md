@@ -99,29 +99,17 @@ Check the installation, corpus, Ollama server, and configured model with:
 Add `--test-call` to make one small generation request. Metadata search does
 not require Ollama.
 
-### Model profiles and recorded memory
+### Model memory
 
-The following are observed runs, not minimum hardware requirements. Both used
-Linux with NVIDIA GPU offload, `qwen3:32b` in Q4_K_M quantisation and a
-16,384-token context. The retained records do not identify the CPU or GPU
-model, so no specific hardware configuration is claimed as validated.
+Choose a model and context size using the [hardware guide](models.md#hardware-guide).
+Check memory pressure during a representative question, not just at startup.
+On GPU servers, monitor host RAM and GPU memory separately. On Apple Silicon,
+the model shares memory with the operating system and other applications.
 
-| Recorded run | Workload | Peak Ollama host RAM (RSS) | GPU allocation |
-| --- | --- | ---: | ---: |
-| 2026-08-28, E062 | One answer-model call | 1.81 GiB | 25.33 GiB (NVIDIA measurement) |
-| 2026-08-31, E064 | Five queued web jobs, one active at a time | 2.22 GiB | Not retained in this record |
-
-Exact measurements, units, model identity and source-file hashes are in
-[`model_memory_observations.json`](model_memory_observations.json). The low host
-RSS reflects GPU offload and must not be interpreted as total model memory or
-as a requirement for CPU-only or Apple unified-memory execution. The 48-GiB
-watchdog used during these runs was a stop threshold, not measured consumption.
-
-No comparable memory measurements are retained for the default `qwen3:30b`
-65,536-token profile or the balanced `qwen3:14b` profile. A smaller model or
-context is configurable, but suitability for a particular machine should be
-checked with `./originrag doctor --test-call` while observing both host and GPU
-memory. This is a setup check, not evidence of scientific answer quality.
+Use `ollama ps` to inspect the loaded model and CPU/GPU placement. Reduce the
+model or context size if memory pressure or swapping becomes high.
+`./originrag doctor --test-call` checks basic generation; it does not measure
+peak memory during a full answer or establish scientific answer quality.
 
 ## 3. Configure the local bibliography
 

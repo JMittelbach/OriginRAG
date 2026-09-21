@@ -75,8 +75,6 @@ unload other users' models.
 Answer quality varies between models. Check citations, extracted study details
 and handling of missing evidence before relying on a new configuration.
 `doctor --test-call` checks basic generation, not full-answer memory use.
-For measured examples, see the
-[recorded memory observations](getting_started.md#model-profiles-and-recorded-memory).
 
 ## Backend settings
 

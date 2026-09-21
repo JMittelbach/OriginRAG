@@ -20,9 +20,7 @@ from originrag.web_auth import (
     AuthenticationError,
     PasswordPolicyError,
     QuotaExceededError,
-    RegistrationError,
     hash_token,
-    normalize_bnitm_email,
     validate_password,
 )
 
@@ -282,90 +280,35 @@ def test_model_usage_has_no_daily_hard_limit(tmp_path) -> None:
     assert status.output_tokens_limit is None
 
 
-def test_bnitm_registration_verifies_mailbox_and_stores_only_hashes(tmp_path) -> None:
+def test_existing_email_accounts_and_sessions_survive_initialization(tmp_path) -> None:
     store = AuthStore(tmp_path / "auth.sqlite")
-    challenge = store.begin_registration(
-        "Alice.Example@BNITM.DE",
-        "quiet-lantern-river-orbit-47",
-        display_name="Alice Example",
-        source_key="127.0.0.1",
-        now=1_800_000_000,
-    )
+    password = "quiet-lantern-river-orbit-47"
+    user = store.create_user("alice.example", password)
+    token, _ = store.authenticate(user.username, password, remember=True)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE web_users SET email = ?, email_verified_at = ? WHERE user_id = ?",
+            ("alice@example.org", 1_800_000_000, user.user_id),
+        )
+        connection.execute("CREATE TABLE web_pending_registrations (email TEXT PRIMARY KEY)")
+        connection.execute("INSERT INTO web_pending_registrations VALUES ('pending@example.org')")
 
-    assert challenge is not None
-    assert challenge.email == "alice.example@bnitm.de"
-    assert len(challenge.code) == 6
-    with sqlite3.connect(store.db_path) as connection:
-        row = connection.execute(
-            "SELECT password_hash, code_hash FROM web_pending_registrations"
-        ).fetchone()
-    assert challenge.code.encode() not in bytes(row[1])
-    assert b"quiet-lantern-river-orbit-47" not in bytes(row[0])
-
-    token, session = store.complete_registration(
-        challenge.email,
-        challenge.code,
-        user_agent="test-browser",
-        remember=True,
-        now=1_800_000_010,
-    )
-
-    assert session.user.username == "alice.example"
-    assert session.user.role == "user"
-    assert session.expires_at - 1_800_000_010 >= 29 * 24 * 60 * 60
-    assert store.get_session(token, touch=False) is not None
-    store.authenticate("alice.example@bnitm.de", "quiet-lantern-river-orbit-47")
+    reopened = AuthStore(store.db_path)
+    assert reopened.get_session(token, touch=False).user == user
+    for login in (user.username, "alice@example.org"):
+        _, session = reopened.authenticate(login, password)
+        assert session.user == user
+    with reopened.connect() as connection:
+        assert connection.execute("SELECT email FROM web_pending_registrations").fetchone()[0] == "pending@example.org"
+        assert connection.execute("SELECT email_verified_at FROM web_users").fetchone()[0] == 1_800_000_000
 
 
-def test_registration_rejects_non_bnitm_domains_and_expired_or_reused_codes(tmp_path) -> None:
+def test_fresh_auth_store_uses_account_name_registration_only(tmp_path) -> None:
     store = AuthStore(tmp_path / "auth.sqlite")
-    with pytest.raises(ValueError, match="@bnitm.de"):
-        normalize_bnitm_email("person@example.org")
-
-    challenge = store.begin_registration(
-        "person@bnitm.de",
-        "violet-planet-canvas-forest-83",
-        display_name="Person",
-        source_key="127.0.0.1",
-        now=1_800_000_000,
-    )
-    assert challenge is not None
-    with pytest.raises(RegistrationError, match="expired"):
-        store.complete_registration(
-            challenge.email,
-            challenge.code,
-            now=challenge.expires_at + 1,
-        )
-
-
-def test_registration_code_attempts_and_resends_are_rate_limited(tmp_path) -> None:
-    store = AuthStore(tmp_path / "auth.sqlite")
-    challenge = store.begin_registration(
-        "person@bnitm.de",
-        "violet-planet-canvas-forest-83",
-        display_name="Person",
-        source_key="127.0.0.1",
-        now=1_800_000_000,
-    )
-    assert challenge is not None
-    with pytest.raises(RegistrationError, match="wait"):
-        store.begin_registration(
-            "person@bnitm.de",
-            "violet-planet-canvas-forest-83",
-            display_name="Person",
-            source_key="127.0.0.1",
-            now=1_800_000_010,
-        )
-    for offset in range(5):
-        with pytest.raises(RegistrationError, match="Invalid or expired"):
-            store.complete_registration(
-                challenge.email,
-                "000000" if challenge.code != "000000" else "999999",
-                now=1_800_000_020 + offset,
-            )
-    with pytest.raises(RegistrationError, match="Invalid or expired"):
-        store.complete_registration(
-            challenge.email,
-            challenge.code,
-            now=1_800_000_030,
-        )
+    user = store.create_user("researcher", "violet-planet-canvas-forest-83")
+    _, session = store.authenticate(user.username, "violet-planet-canvas-forest-83")
+    assert session.user == user
+    with store.connect() as connection:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert "web_pending_registrations" not in tables
+    assert "web_registration_events" not in tables

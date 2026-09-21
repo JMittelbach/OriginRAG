@@ -1334,7 +1334,7 @@ def test_login_page_exposes_direct_account_registration_and_password_metadata() 
     assert "/api/register/start" not in html
     assert "/api/register/verify" not in html
     assert "verification code" not in html.lower()
-    assert "BNITM email" not in html
+    assert 'type="email"' not in html
     assert 'id="passwordStrength"' in html
     assert 'id="passwordRequirements"' in html
     assert "At least 13 characters" in html
@@ -3608,7 +3608,7 @@ def test_anonymous_admin_review_log_excludes_account_and_session_identity(
                 }
             ],
             "session_dir": "outputs/users/secret-user/session",
-            "user": {"email": "person@bnitm.de"},
+            "user": {"email": "person@example.org"},
         },
         lock=threading.Lock(),
     )
@@ -3620,4 +3620,4 @@ def test_anonymous_admin_review_log_excludes_account_and_session_identity(
     assert event["question"] == "Which paper supports this claim?"
     assert event["elapsed_seconds"] == 12.345
     assert "secret-user" not in review_path.read_text(encoding="utf-8")
-    assert "person@bnitm.de" not in review_path.read_text(encoding="utf-8")
+    assert "person@example.org" not in review_path.read_text(encoding="utf-8")
