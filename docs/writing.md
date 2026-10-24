@@ -1,7 +1,7 @@
 # Your research workspace
 
 Start the web application with `./web`. In the full installation, the same top
-navigation connects all four areas. Standalone Quill or OriginRAG installations
+navigation connects the enabled areas. Standalone Quill or OriginRAG installations
 omit the suite switcher and retain their own Library, Bookshelf, **Appearance**,
 **Settings** and account controls.
 `/workspace` opens your preferred start page, chosen in **Settings**.
@@ -10,8 +10,115 @@ omit the suite switcher and retain their own Library, Bookshelf, **Appearance**,
 - **Bookshelf**: your saved papers, linked to the existing reader and private notes.
 - **Library**: search the shared corpus and create personal project collections.
 - **Quill**: edit a LaTeX project with its PDF preview alongside the source.
+- **Folio** (full installation): write formatted documents visually and exchange
+  common document content with Word through DOCX.
 
-## Write a manuscript
+## Write a formatted document with Folio
+
+Open **Folio → New document**, choose a starter, or import a DOCX or Folio JSON
+file. Use the ribbon to format text and paragraphs. Changes save automatically;
+wait for **Saved** before closing the page. Ctrl/Cmd+S saves immediately.
+
+To save a file on your computer, choose **File → Save as…** or press
+**Ctrl/Cmd+Shift+S**, enter a filename and choose **DOCX**, **HTML**, **text** or
+**JSON**. Autosave still saves the document in Origin. The local file is an
+exported copy, not a file that Folio keeps automatically in sync; use **Save as…**
+again to export later changes.
+
+Supporting desktop Chromium browsers can show a native save picker in a secure
+context, using the [File System Access API](https://developer.chrome.com/docs/capabilities/web-apis/file-system-access).
+Firefox, Safari and browsers without that API use a download instead. The
+browser's download preferences determine whether it asks for a destination or
+saves to its usual folder; Folio cannot force an operating-system picker.
+For PDF, choose **File → Print or save PDF** and select a PDF destination in the
+browser or system print dialog.
+
+JSON preserves the editor document for backup and recovery, not arbitrary Word
+features. Documents belong to the signed-in account, or the local workspace
+when no account is required. Their database is excluded from Git.
+
+Select an image to open **Picture**. Change its dimensions and description,
+lock or unlock the aspect ratio, reset its size, add a caption, or remove it.
+Wide images scale down to fit the available space. These controls resize the
+image; they do not crop it or turn it into a floating object.
+
+Place the cursor in a table to open **Table**. Insert or delete rows and columns,
+select cells, merge or split them, change cell shading, and toggle header rows
+or columns. Drag column boundaries to resize columns. Captions are ordinary
+editable paragraphs with manual numbering, not automatic Word caption fields.
+
+**Draw** opens a canvas with pens, a highlighter, an eraser, colour and thickness
+controls, and undo/redo. Use the pen presets to start quickly. Mouse, trackpad,
+pen and touch input are supported. Inserted sketches become embedded PNG
+pictures; their individual strokes are not editable afterwards.
+
+**Design** offers four document-wide formatting sets with previews. They format
+existing text and headings while retaining emphasis, links and notes. Undo
+restores the previous formatting. These are explicit formatting presets, not
+Word's inherited document themes. **Layout → Paragraph spacing** adjusts space
+before and after paragraphs, line spacing and indentation.
+
+**References** inserts footnotes and endnotes with separate automatic numbering.
+Click a note marker or its text to edit, change type or remove it. Notes contain
+plain text, up to 4,000 characters each and 500 notes per document. They appear
+after the document in the editor and browser printing. DOCX exports contain
+native footnotes and endnotes for Word to lay out in their usual positions.
+
+Apply heading styles, then choose **References → Table of contents** to insert
+linked contents at the start of the document. **Update table of contents**
+refreshes the entries after heading changes. **Insert cross-reference** inserts
+linked heading text. These are ordinary hyperlinks, not automatically updated
+Word fields: reinsert a cross-reference if its heading is renamed. Contents
+do not invent page numbers. **Insert → Symbol** provides common mathematical
+and Greek characters without treating them as HTML.
+
+**Review** provides document comments and browser spelling checks. Comments
+retain a quote from the selection, not an anchor that tracks subsequent edits.
+**View** provides the heading outline and zoom. The editing surface is continuous;
+page settings and explicit page breaks control the printed output. Pagination
+and font metrics can differ from Word, and depend on installed fonts and browser.
+
+If saving fails, keep the tab open. Retry **Save**, or use **File → Save a copy**
+after a conflict to create a separate document in Origin. **Download recovery JSON**
+preserves the current buffer even when the server cannot save it. A newer saved
+revision is never silently replaced.
+
+### Word compatibility
+
+Folio is an independent editor, not an implementation of every Word feature.
+The comparison below separates supported editing from features that require a
+different document or layout model. Microsoft also distinguishes its
+[desktop and web feature sets](https://support.microsoft.com/en-us/word/word-features-comparison-word-for-the-web-vs-desktop.).
+
+| Area | Folio support and boundaries |
+| --- | --- |
+| Text and paragraphs | Common character formatting, fonts, colours, headings, lists, alignment, before/after spacing and indentation. Arbitrary Word themes and custom style inheritance are not reproduced. |
+| Design | Four document-wide formatting presets with previews and undo. Word theme inheritance, watermarks and page borders are unsupported. Origin's Appearance setting changes the interface rather than the document. |
+| Drawing | Pen, highlighter, eraser, colour, thickness, undo/redo, and mouse/trackpad/touch input on a drawing canvas. Sketches are inserted as PNG pictures, not editable Word ink. |
+| Insert objects | Pictures, drawings, tables, links, dates, symbols and manual captions are supported. Shapes, SmartArt, charts and editable equations are unsupported. |
+| Images | Embedded PNG, JPEG and WebP, size, aspect ratio and descriptions. No floating text wrap, cropping, rotation, SVG/EMF editing or grouped drawing objects. |
+| Tables | Editable cells, shading, header cells, column widths and merged/nested tables. No formulas, Excel embedding or Word's complete table-style system. Marking a header does not guarantee repeated headers across browser-printed pages. |
+| Layout/pages | A4/Letter, orientation, margin presets and explicit page breaks. No section breaks, section-specific layouts, text columns, running headers/footers or dynamic page-number fields. |
+| References | Numbered plain-text footnotes/endnotes with native DOCX export, refreshable linked contents, heading cross-references and manual captions. No Word TOC/citation/cross-reference fields, page-numbered figure lists or index generation. Browser printing collects notes at the end. Quill's bibliography integration is separate. |
+| Review | Quoted document notes and browser spelling checks. No tracked changes, document comparison, grammar engine or revision-history browser. |
+| Collaboration | Private per-account documents and conflict detection. No shared document permissions or live coauthoring in Folio. |
+| Other Word features | No mail merge, macros, ActiveX/OLE objects, dictation or password-protected DOCX editing. |
+
+Importing creates a new Folio document and does not modify the source file.
+Keep the original DOCX, especially for complex manuscripts. Inspect import
+warnings: unsupported structures can be simplified or omitted. A successful
+import means that editable content was loaded, not that the original layout,
+all document parts or every Word feature survived. Externally edited DOCX files
+are parsed again rather than trusting stale Folio round-trip metadata.
+
+These distinctions matter particularly for Word's
+[anchored and wrapped pictures](https://support.microsoft.com/en-gb/word/wrap-text-and-move-pictures-in-word),
+[automatic captions](https://support.microsoft.com/en-gb/word/add-format-or-delete-captions-in-word)
+and [repeated table headings](https://support.microsoft.com/en-gb/word/repeat-table-header-on-subsequent-pages).
+The corresponding Folio controls should not be interpreted as full support for
+those mechanisms.
+
+## Write a LaTeX manuscript with Quill
 
 1. Open **Quill → New manuscript**, or import a LaTeX project ZIP.
 2. Edit the source. Changes save automatically; wait for **All changes saved**

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from originrag.analysis.answer_qc import assess_answer_quality
 from originrag.analysis.template_answers import (
     build_data_accessibility_answer,
@@ -9,6 +11,7 @@ from originrag.analysis.template_answers import (
     clean_evidence_text,
     evidence_contribution,
     question_requests_data_accessibility,
+    select_fallback_citation_chunks,
     truncate_at_word,
 )
 
@@ -871,23 +874,152 @@ def test_answer_fallback_emits_one_inline_source_marker_with_locator() -> None:
     assert "Macalinao" not in body
 
 
-def test_answer_fallback_uses_eight_distinct_clean_papers_for_broad_pack() -> None:
+@pytest.mark.parametrize("paper_count", [1, 4, 5, 8, 12, 17])
+def test_answer_fallback_retains_every_supplied_paper(paper_count: int) -> None:
     chunks = []
-    for index in range(12):
+    for index in range(paper_count):
         chunks.append(
             {
                 "evidence_id": f"E{index + 1:03d}",
                 "paper_id": f"P{index + 1:03d}",
                 "citation_label": f"[Author {index + 1}, 2020]",
-                "text": f"Clean finding {index + 1} relevant to malaria.",
-                "quality_flags": ["table_like"] if index == 0 else [],
+                "text": f"Caching reduced query latency in benchmark {index + 1}.",
+                "quality_flags": [],
             }
         )
 
-    answer = build_template_answer("Summarize the evidence.", {"chunks": chunks}, task="answer")
+    question = "Summarize the evidence on query latency."
+    pack = {"question": question, "chunks": chunks}
+    answer = build_template_answer(question, pack, task="answer")
+    qc = assess_answer_quality(answer, pack, task="answer")
 
-    assert "E009" in answer
-    assert "E001" not in answer
+    statements = answer.split("## Cautious inference", maxsplit=1)[0]
+    references = answer.split("## References", maxsplit=1)[1]
+    expected_ids = [chunk["evidence_id"] for chunk in chunks]
+    assert re.findall(r"\bE\d{3}\b", statements) == expected_ids
+    assert re.findall(r"\bE\d{3}\b", references) == expected_ids
+    assert qc["passed"] is True, qc
+
+
+def test_fallback_selection_preserves_clean_priority_and_deduplicates_evidence() -> None:
+    chunks = [
+        {"evidence_id": "E001", "paper_id": "P1", "quality_flags": ["table_like"]},
+        {"evidence_id": "E002", "paper_id": "P2"},
+        {"evidence_id": "E003", "paper_id": "P1"},
+        {"evidence_id": "E003", "paper_id": "P1"},
+        {"evidence_id": "E004", "paper_id": "P2"},
+        {"evidence_id": "E003", "paper_id": "DUPLICATE_METADATA"},
+        {"evidence_id": "E005", "paper_id": "P3", "quality_flags": ["figure_like"]},
+        {"evidence_id": "E006", "paper_id": "P4"},
+    ]
+
+    selected = select_fallback_citation_chunks(chunks)
+
+    assert [chunk["evidence_id"] for chunk in selected] == [
+        "E002", "E003", "E006", "E005"
+    ]
+    assert all(any(chunk is supplied for supplied in chunks) for chunk in selected)
+
+
+def test_fallback_selection_keeps_distinct_evidence_without_paper_ids() -> None:
+    chunks = [
+        {"evidence_id": "E001"},
+        {"evidence_id": "E002", "paper_id": None},
+        {"evidence_id": "E003", "paper_id": ""},
+        {"evidence_id": "E003", "paper_id": ""},
+        {"evidence_id": "E004", "paper_id": " "},
+        {"evidence_id": "E005", "paper_id": "E001"},
+    ]
+
+    selected = select_fallback_citation_chunks(chunks)
+
+    assert [chunk["evidence_id"] for chunk in selected] == [
+        "E001", "E002", "E003", "E004", "E005"
+    ]
+
+
+def test_fallback_skips_unciteable_chunks_without_inventing_source_ids() -> None:
+    chunks = [
+        {"paper_id": "P1", "text": "Untraceable caching claim."},
+        {"paper_id": "P1", "evidence_id": None},
+        {"paper_id": "P1", "evidence_id": " "},
+        {
+            "paper_id": "P1",
+            "evidence_id": "E001",
+            "citation_label": "[Author, 2020]",
+            "text": "Caching reduced query latency.",
+        },
+    ]
+
+    selected = select_fallback_citation_chunks(chunks)
+    answer = build_template_answer(
+        "Summarize the query latency evidence.", {"chunks": chunks}, task="answer"
+    )
+
+    assert selected == [chunks[-1]]
+    assert "Untraceable caching claim" not in answer
+    assert "None:" not in answer
+    assert "Evidence reports" not in answer
+    assert re.findall(r"\bE\d{3}\b", answer) == ["E001", "E001"]
+    assert select_fallback_citation_chunks(chunks[:-1]) == []
+    assert select_fallback_citation_chunks([]) == []
+
+
+def test_fallback_selection_preserves_direct_comparison_priority(monkeypatch) -> None:
+    chunks = [
+        {"evidence_id": "E001", "paper_id": "P1"},
+        {"evidence_id": "E002", "paper_id": "P2"},
+        {"evidence_id": "E003", "paper_id": "P1", "quality_flags": ["figure_like"]},
+        {"evidence_id": "E004", "paper_id": "P3"},
+    ]
+    monkeypatch.setattr(
+        "originrag.analysis.template_answers.eligible_direct_comparison_candidate_chunks",
+        lambda question, pack: [chunks[2]],
+    )
+
+    selected = select_fallback_citation_chunks(
+        chunks, question="How strong is the evidence on query latency?"
+    )
+
+    assert [chunk["evidence_id"] for chunk in selected] == ["E003", "E002", "E004"]
+
+
+def test_large_fallback_pack_keeps_named_anchor_and_support_contract() -> None:
+    chunks = [
+        {
+            "evidence_id": f"E{index:03d}",
+            "paper_id": f"P{index}",
+            "citation_label": "[Context, 2020]",
+            "text": "Query latency was measured in a separate benchmark.",
+        }
+        for index in range(1, 16)
+    ]
+    support = {
+        "evidence_id": "E101",
+        "paper_id": "CACHE2025",
+        "citation_label": "[Cache, 2025, Methods]",
+        "text": "Query latency was measured over repeated benchmark runs.",
+        "explicit_named_study_support": True,
+    }
+    anchor = {
+        "evidence_id": "E102",
+        "paper_id": "CACHE2025",
+        "citation_label": "[Cache, 2025, Results]",
+        "text": "Caching reduced median query latency.",
+        "explicit_named_study_anchor": True,
+    }
+    chunks.extend([support, anchor, dict(anchor), dict(support)])
+
+    answer = build_template_answer(
+        "What did Cache et al. (2025) report about query latency?",
+        {"chunks": chunks},
+        task="answer",
+    )
+
+    statements = answer.split("## Cautious inference", maxsplit=1)[0]
+    references = answer.split("## References", maxsplit=1)[1]
+    assert re.findall(r"\bE\d{3}\b", statements) == ["E102", "E101"]
+    assert re.findall(r"\bE\d{3}\b", references) == ["E102", "E101"]
 
 
 def test_evidence_strength_fallback_prioritizes_direct_comparison_results() -> None:

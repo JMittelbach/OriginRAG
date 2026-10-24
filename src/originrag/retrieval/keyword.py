@@ -4,7 +4,8 @@ import json
 import math
 import re
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
+from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
 
@@ -76,6 +77,12 @@ NO_METADATA_BOOST_SECTIONS = {
     "data_availability",
 }
 
+_NUMERIC_LITERAL = re.compile(
+    r"(?<![\w./+\-−])[+\-−]?"
+    r"(?:\d+\.\d+(?:[eE][+\-−]?\d+)?|\.\d+(?:[eE][+\-−]?\d+)?|\d+[eE][+\-−]?\d+)"
+    r"(?![\w/]|\.\d)"
+)
+
 
 def search_chunks(
     query: str,
@@ -113,12 +120,15 @@ def search_chunks(
     ``candidate_records`` supplies the same ``(source_file, line_number, chunk)`` records from a
     validated retrieval index. ``None`` retains JSONL loading; an empty tuple is a valid empty
     candidate set.
+
+    Imported active full texts are searchable regardless of acquisition-time topic policy.
+    Corpus eligibility, explicit user filters, and passage-quality filters still apply.
     """
     normalized_query = normalize_text(query)
     if not normalized_query:
         return []
 
-    query_terms = query_tokens(query)
+    query_terms = _scoring_query_tokens(query)
     if not query_terms:
         return []
 
@@ -157,8 +167,6 @@ def search_chunks(
 
         paper_meta = metadata.get(chunk_paper_id, {})
         if not include_inactive and _is_inactive_paper(paper_meta):
-            continue
-        if not include_inactive and _is_out_of_scope_paper(paper_meta, query=query):
             continue
         if require_doi and not str(paper_meta.get("doi") or "").strip():
             continue
@@ -269,11 +277,11 @@ def search_chunks_multi(
     include_sections: list[str] | None = None,
     include_inactive: bool = False,
 ) -> list[dict]:
-    """Search chunks once while scoring several retrieval queries."""
+    """Search active corpus chunks once, without applying acquisition-time topic policy."""
     query_plans = []
     for label, query in queries:
         normalized_query = normalize_text(query)
-        terms = query_tokens(query)
+        terms = _scoring_query_tokens(query)
         if not normalized_query or not terms:
             continue
         query_plans.append(
@@ -306,11 +314,6 @@ def search_chunks_multi(
 
         paper_meta = metadata.get(chunk_paper_id, {})
         if not include_inactive and _is_inactive_paper(paper_meta):
-            continue
-        if not include_inactive and _is_out_of_scope_paper(
-            paper_meta,
-            query=" ".join(str(plan["query"]) for plan in query_plans),
-        ):
             continue
         if require_doi and not str(paper_meta.get("doi") or "").strip():
             continue
@@ -347,7 +350,9 @@ def search_chunks_multi(
         best: dict | None = None
         hit_labels: list[str] = []
         for plan in query_plans:
-            raw_score = _score_normalized_text(plan["normalized_query"], plan["terms"], normalized_text)
+            raw_score = _score_normalized_text(
+                plan["normalized_query"], plan["terms"], normalized_text, raw_text=text
+            )
             metadata_score = _metadata_match_score(
                 plan["normalized_query"],
                 plan["terms"],
@@ -451,21 +456,34 @@ def cached_chunk_quality(text: str) -> dict:
     return classify_chunk_quality(text)
 
 
-def chunk_cache_token(chunks_dir: Path) -> tuple[tuple[str, int, int], ...]:
+def _chunk_file_identity(path: Path) -> tuple[int, int, int, int, int]:
+    stat = path.stat()
+    return (
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+        stat.st_size,
+    )
+
+
+def chunk_cache_token(chunks_dir: Path) -> tuple[tuple[str, tuple[int, int, int, int, int]], ...]:
     token = []
     for path in sorted(Path(chunks_dir).glob("*.jsonl")):
-        stat = path.stat()
-        token.append((path.name, stat.st_mtime_ns, stat.st_size))
+        token.append((path.name, _chunk_file_identity(path)))
     return tuple(token)
 
 
 @lru_cache(maxsize=4)
-def _cached_chunk_records(chunks_dir_text: str, cache_token: tuple[tuple[str, int, int], ...]) -> tuple[tuple[str, int, dict], ...]:
+def _cached_chunk_records(
+    chunks_dir_text: str,
+    cache_token: tuple[tuple[str, tuple[int, int, int, int, int]], ...],
+) -> tuple[tuple[str, int, dict], ...]:
     records: list[tuple[str, int, dict]] = []
     chunks_dir = Path(chunks_dir_text)
-    for filename, mtime_ns, size in cache_token:
+    for filename, identity in cache_token:
         records.extend(
-            _cached_chunk_file_records(str(chunks_dir / filename), mtime_ns, size)
+            _cached_chunk_file_records(str(chunks_dir / filename), identity)
         )
     return tuple(records)
 
@@ -491,10 +509,9 @@ def _records_from_chunk_files(
 ) -> tuple[tuple[str, int, dict], ...]:
     records: list[tuple[str, int, dict]] = []
     for chunk_file in chunk_files:
-        stat = chunk_file.stat()
         records.extend(
             _cached_chunk_file_records(
-                str(chunk_file), stat.st_mtime_ns, stat.st_size
+                str(chunk_file), _chunk_file_identity(chunk_file)
             )
         )
     return tuple(records)
@@ -503,10 +520,9 @@ def _records_from_chunk_files(
 @lru_cache(maxsize=4096)
 def _cached_chunk_file_records(
     chunk_file_text: str,
-    mtime_ns: int,
-    size: int,
+    identity: tuple[int, int, int, int, int],
 ) -> tuple[tuple[str, int, dict], ...]:
-    del mtime_ns, size
+    del identity
     chunk_file = Path(chunk_file_text)
     records: list[tuple[str, int, dict]] = []
     with chunk_file.open("r", encoding="utf-8") as handle:
@@ -519,28 +535,25 @@ def _cached_chunk_file_records(
 
 def normalize_text(value: str) -> str:
     value = (value or "").lower()
-    replacements = {
-        "α": "alpha",
-        "β": "beta",
-        "γ": "gamma",
-        "δ": "delta",
-        "–": "-",
-        "—": "-",
-        "\u00ad": "",
-        "\ufb01": "fi",
-        "\ufb02": "fl",
-    }
-    for source, target in replacements.items():
-        value = value.replace(source, target)
-
-
-
-
-    value = "".join(
-        character
-        for character in unicodedata.normalize("NFKD", value)
-        if not unicodedata.combining(character)
-    )
+    if not value.isascii():
+        replacements = {
+            "α": "alpha",
+            "β": "beta",
+            "γ": "gamma",
+            "δ": "delta",
+            "–": "-",
+            "—": "-",
+            "\u00ad": "",
+            "\ufb01": "fi",
+            "\ufb02": "fl",
+        }
+        for source, target in replacements.items():
+            value = value.replace(source, target)
+        value = "".join(
+            character
+            for character in unicodedata.normalize("NFKD", value)
+            if not unicodedata.combining(character)
+        )
     value = re.sub(r"[^a-z0-9]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
 
@@ -560,7 +573,10 @@ def count_normalized_occurrences(normalized_text: str, term: str) -> int:
 
 def contains_normalized_term(normalized_text: str, term: str) -> bool:
     """Return whether a normalized token or phrase occurs at word boundaries."""
-    return count_normalized_occurrences(normalized_text, term) > 0
+    normalized_term = normalize_text(term)
+    if not normalized_text or not normalized_term:
+        return False
+    return _normalized_term_pattern(normalized_term).search(normalized_text) is not None
 
 
 def _contains_any_normalized_term(normalized_text: str, terms: list[str]) -> bool:
@@ -585,6 +601,32 @@ def query_tokens(query: str) -> list[str]:
             expanded.append(term.replace("dblalpha", "dbla"))
     expanded.extend(contextual_query_expansions(normalized))
     return list(dict.fromkeys(expanded))
+
+
+def _scoring_query_tokens(query: str) -> list[str]:
+    """Keep numerical literals intact without changing identifier tokenization."""
+    literals = [match.group() for match in _NUMERIC_LITERAL.finditer(query)]
+    if not literals:
+        return query_tokens(query)
+    terms = query_tokens(_NUMERIC_LITERAL.sub(" ", query))
+    return list(dict.fromkeys([*terms, *literals]))
+
+
+@lru_cache(maxsize=1024)
+def _numeric_literal_key(value: str) -> tuple | str:
+    value = value.replace("−", "-")
+    try:
+        number = Decimal(value).as_tuple()
+    except InvalidOperation:
+        return value.lower()
+    digits = number.digits
+    exponent = number.exponent
+    if not any(digits):
+        return (0, (0,), 0)
+    while len(digits) > 1 and digits[-1] == 0:
+        digits = digits[:-1]
+        exponent += 1
+    return number.sign, digits, exponent
 
 
 def contextual_query_expansions(normalized_query: str) -> list[str]:
@@ -623,19 +665,39 @@ def contextual_query_expansions(normalized_query: str) -> list[str]:
 
 def _score_text(normalized_query: str, terms: list[str], text: str) -> float:
     normalized_text = normalize_text(text)
-    return _score_normalized_text(normalized_query, terms, normalized_text)
+    return _score_normalized_text(normalized_query, terms, normalized_text, raw_text=text)
 
 
-def _score_normalized_text(normalized_query: str, terms: list[str], normalized_text: str) -> float:
+def _score_normalized_text(
+    normalized_query: str, terms: list[str], normalized_text: str, *, raw_text: str = ""
+) -> float:
     if not normalized_text:
         return 0.0
 
-    phrase_count = min(count_normalized_occurrences(normalized_text, normalized_query), 3)
+    numeric_terms = {
+        term: _numeric_literal_key(term)
+        for term in terms
+        if _NUMERIC_LITERAL.fullmatch(term)
+    }
+    numeric_counts = (
+        Counter(_numeric_literal_key(match.group()) for match in _NUMERIC_LITERAL.finditer(raw_text))
+        if numeric_terms
+        else {}
+    )
+    numeric_phrase_matches = all(numeric_counts.get(key, 0) for key in numeric_terms.values())
+    phrase_count = (
+        min(count_normalized_occurrences(normalized_text, normalized_query), 3)
+        if numeric_phrase_matches else 0
+    )
     phrase_score = phrase_count * 18.0
     term_score = 0.0
     matched_terms = 0
     for term in terms:
-        count = count_normalized_occurrences(normalized_text, term)
+        count = (
+            numeric_counts.get(numeric_terms[term], 0)
+            if term in numeric_terms
+            else count_normalized_occurrences(normalized_text, term)
+        )
         if count <= 0:
             continue
         matched_terms += 1
@@ -671,7 +733,9 @@ def _metadata_match_score(
     title = normalize_text(str(metadata.get("title") or ""))
     if not title:
         return 0.0
-    title_score = _score_normalized_text(normalized_query, terms, title)
+    title_score = _score_normalized_text(
+        normalized_query, terms, title, raw_text=str(metadata.get("title") or "")
+    )
 
 
 

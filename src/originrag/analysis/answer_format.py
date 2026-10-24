@@ -72,7 +72,7 @@ def normalize_answer_format(answer: str | None, task: str) -> str | None:
         heading_text = match.group(2).strip().strip(":")
         key = _heading_key(heading_text)
         normalized_lines.append(headings.get(key, line))
-    normalized = "\n".join(normalized_lines).strip()
+    normalized = "\n".join(_deduplicate_adjacent_headings(normalized_lines, set(headings.values()))).strip()
     normalized = _normalize_evidence_id_width(normalized)
     normalized_task = (task or "answer").strip().lower()
     if normalized_task == "gaps":
@@ -80,6 +80,26 @@ def normalize_answer_format(answer: str | None, task: str) -> str | None:
     elif normalized_task == "answer":
         normalized = _fill_empty_cautious_inference(normalized)
     return normalized
+
+
+def _deduplicate_adjacent_headings(lines: list[str], headings: set[str]) -> list[str]:
+    result = []
+    last_nonblank = None
+    fence = None
+    for line in lines:
+        fence_match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if fence_match:
+            marker, trailing = fence_match.groups()
+            if fence is None:
+                fence = marker
+            elif marker[0] == fence[0] and len(marker) >= len(fence) and not trailing.strip():
+                fence = None
+        if fence is None and line in headings and line == last_nonblank:
+            continue
+        result.append(line)
+        if line.strip():
+            last_nonblank = line
+    return result
 
 
 def _normalize_evidence_id_width(answer: str) -> str:

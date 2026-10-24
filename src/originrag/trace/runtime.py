@@ -35,7 +35,7 @@ from originrag.trace.robust_lineage import (
     robust_evidence_flow,
 )
 from originrag.trace.schemas import EvidenceBlueprint, EvidenceLineageEdge, TraceCandidate
-from originrag.trace.selector import SelectorConfig
+from originrag.trace.selector import SelectorConfig, prompt_token_cost
 from originrag.utils.normalization import finite_float, is_finite_number, normalize_string_list
 
 
@@ -65,6 +65,8 @@ def run_trace_selection(
     token_budget: int | None = None,
     selector_algorithm: str = "lazy_greedy",
     question_id: str | None = None,
+    prompt_token_budget: int | None = None,
+    prompt_token_costs: dict[str, int] | None = None,
 ) -> dict:
     generated_id = safe_question_id(hashlib.sha256(question.encode("utf-8")).hexdigest()[:12])
     requested_id = safe_question_id(question_id) if question_id else None
@@ -101,6 +103,7 @@ def run_trace_selection(
         flow_anchor_papers=int(config_data.get("flow_anchor_papers", 3)),
         flow_minimum_papers=int(config_data.get("flow_minimum_papers", 14)),
         flow_reserve_relevance_fraction=float(config_data.get("flow_reserve_relevance_fraction", 0.80)),
+        prompt_token_budget=prompt_token_budget,
     )
     paper_ids = sorted(
         {
@@ -118,8 +121,18 @@ def run_trace_selection(
     dependence = dependence_lookup(edges)
     lineage_ids = assign_lineage_ids(paper_ids, trusted_edges)
     candidates, rejected_candidates = prepare_candidates(results, blueprint, lineage_ids)
+    if prompt_token_budget is not None or prompt_token_costs is not None:
+        _attach_prompt_token_costs(candidates, prompt_token_costs)
     selector_name = SELECTOR_ALIASES.get(selector, selector)
     selection = run_selector(selector_name, candidates, blueprint, dependence, selector_config)
+    if prompt_token_budget is not None:
+        selected_prompt_cost = prompt_token_cost(selection.selected_candidates)
+        if selected_prompt_cost > prompt_token_budget:
+            raise ValueError("Selected evidence exceeds the serialized prompt token budget")
+        selection.run_config.update({
+            "prompt_token_budget": prompt_token_budget,
+            "prompt_token_cost": selected_prompt_cost,
+        })
     certificate = build_certificate(
         question_id,
         selection.selected_candidates,
@@ -307,6 +320,27 @@ def certification_core_candidates(
         for candidate in selected_candidates
         if candidate.paper_id in core_papers
     ]
+
+
+def _attach_prompt_token_costs(
+    candidates: list[TraceCandidate],
+    costs: dict[str, int] | None,
+) -> None:
+    """Attach only validated caller-supplied costs, never retrieved claims."""
+    if not isinstance(costs, dict):
+        raise ValueError("prompt_token_costs must map every prepared chunk ID to its cost")
+    for chunk_id, cost in costs.items():
+        if not isinstance(chunk_id, str) or not chunk_id.strip():
+            raise ValueError("prompt_token_costs keys must be nonempty chunk IDs")
+        if isinstance(cost, bool) or not isinstance(cost, int) or cost <= 0:
+            raise ValueError("prompt_token_costs values must be positive integers")
+    missing = [candidate.chunk_id for candidate in candidates if candidate.chunk_id not in costs]
+    if missing:
+        raise ValueError(
+            "prompt_token_costs missing prepared chunk IDs: " + ", ".join(missing[:5])
+        )
+    for candidate in candidates:
+        candidate.metadata["_prompt_token_cost"] = costs[candidate.chunk_id]
 
 
 def prepare_candidates(

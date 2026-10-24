@@ -60,7 +60,7 @@ for (const a of document.querySelectorAll('nav a')) a.classList.toggle('active',
 function home() {
   let preferred;
   try { preferred = JSON.parse(localStorage.getItem('origin.workspace.settings.v1'))?.startPage; } catch {}
-  const allowed = ['/library', '/bookshelf', ...(appProfile.features.rag ? ['/chat'] : []), ...(appProfile.features.write ? ['/write'] : [])];
+  const allowed = ['/library', '/bookshelf', ...(appProfile.features.rag ? ['/chat'] : []), ...(appProfile.features.write ? ['/write'] : []), ...(appProfile.features.folio ? ['/folio'] : [])];
   location.replace(allowed.includes(preferred) ? preferred : appProfile.home);
 }
 

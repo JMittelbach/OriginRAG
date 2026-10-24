@@ -25,7 +25,7 @@ def test_reader_shared_navigation_matches_profile_and_links_work(reader_page, pr
     expect(page.locator('#applicationHeader')).to_have_count(int(profile != 'full'))
     expected_links = [('Bookshelf', '/bookshelf'), ('Library', '/library')]
     if profile == 'full':
-        expected_links = [('OriginRAG', '/chat'), *expected_links, ('Quill', '/write')]
+        expected_links = [('OriginRAG', '/chat'), *expected_links, ('Quill', '/write'), ('Folio', '/folio')]
     assert header.locator('nav a').evaluate_all(
         'links => links.map(link => [link.textContent, link.getAttribute("href")])'
     ) == [list(item) for item in expected_links]

@@ -320,7 +320,7 @@ def direct_evidence_text(answer_text: str) -> str:
 
 
 def citation_claim_blocks(text: str) -> list[str]:
-    """Split Markdown prose while retaining continuation lines for list items."""
+    """Keep list items and table rows separate for source-alignment checks."""
 
     blocks: list[str] = []
     current: list[str] = []
@@ -331,20 +331,80 @@ def citation_claim_blocks(text: str) -> list[str]:
             blocks.append(block)
         current.clear()
 
-    for raw_line in (text or "").splitlines():
-        line = raw_line.strip()
+    lines = [re.sub(r"^(?:\s*>\s*)+", "", line) for line in (text or "").splitlines()]
+    index = 0
+    while index < len(lines):
+        line = lines[index].strip()
+        if index + 1 < len(lines):
+            header = _markdown_table_cells(line)
+            separator = _markdown_table_cells(lines[index + 1].strip())
+            if (
+                header
+                and separator
+                and len(header) == len(separator)
+                and all(re.fullmatch(r":?-+:?", cell) for cell in separator)
+            ):
+                flush()
+                blocks.extend(cell for cell in header if re.search(r"\bE\d{3}\b", cell))
+                index += 2
+                while index < len(lines):
+                    cells = _markdown_table_cells(lines[index].strip())
+                    if not cells:
+                        break
+                    row = " ".join(cells).strip()
+                    if not re.search(r"\bE\d{3}\b", row):
+                        inherited_ids = sorted({
+                            evidence_id
+                            for column, cell in enumerate(cells)
+                            if cell and column < len(header)
+                            for evidence_id in re.findall(r"\bE\d{3}\b", header[column])
+                        })
+                        if inherited_ids:
+                            row += f" ({', '.join(inherited_ids)})"
+                    blocks.append(row)
+                    index += 1
+                continue
+        index += 1
         if not line:
             flush()
             continue
         if line.startswith("#"):
             flush()
             continue
-        if re.match(r"^[-*+]\s+", line):
+        if re.match(r"^(?:[-*+]|\d{1,9}[.)])\s+", line):
             flush()
-            line = re.sub(r"^[-*+]\s+", "", line)
+            line = re.sub(r"^(?:[-*+]|\d{1,9}[.)])\s+", "", line)
         current.append(line)
     flush()
     return blocks
+
+
+def _markdown_table_cells(line: str) -> list[str] | None:
+    line = re.sub(r"^(?:[-*+]|\d{1,9}[.)])\s+(?=\|)", "", line)
+    cells: list[str] = []
+    start = 0
+    code_marker = ""
+    for match in re.finditer(r"\\.|`+|\|", line):
+        token = match.group()
+        if token.startswith("\\"):
+            continue
+        if token.startswith("`"):
+            if token == code_marker:
+                code_marker = ""
+            elif not code_marker:
+                code_marker = token
+            continue
+        if not code_marker:
+            cells.append(line[start : match.start()].strip())
+            start = match.end()
+    if not cells:
+        return None
+    cells.append(line[start:].strip())
+    if not cells[0]:
+        cells.pop(0)
+    if cells and not cells[-1]:
+        cells.pop()
+    return cells or None
 
 
 def lexical_terms(text: str) -> set[str]:

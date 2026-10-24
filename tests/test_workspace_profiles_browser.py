@@ -28,7 +28,7 @@ def test_profile_navigation_and_shared_login(profile_server):
             page.locator('#guideSkip').click()
         header = page.locator('#globalNavigation' if profile == 'full' else '#applicationHeader')
         assert page.locator('#globalNavigation').count() == (1 if profile == 'full' else 0)
-        assert header.locator('nav a').count() == (4 if profile == 'full' else 2)
+        assert header.locator('nav a').count() == (5 if profile == 'full' else 2)
         if profile == 'write':
             playwright.expect(header.locator('.origin-brand')).to_have_text('Quill')
             assert header.get_by_role('link', name='OriginRAG', exact=True).count() == 0

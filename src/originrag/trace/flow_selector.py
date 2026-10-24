@@ -12,6 +12,7 @@ from originrag.trace.schemas import EvidenceBlueprint, EvidenceFlowResult, Trace
 
 class FlowSelectorConfig(Protocol):
     token_budget: int
+    prompt_token_budget: int | None
     max_chunks_per_paper: int
     max_publication_versions_per_family: int
     facet_coverage_threshold: float
@@ -50,6 +51,7 @@ def select_flow_evidence(
     remaining = list(candidates)
     decisions: list[dict] = []
     dependence = dependence or {}
+    prompt_budget = getattr(config, "prompt_token_budget", None)
     enforce_effective_independence = lineage_capacity_enabled
     lineage_capacity = (
         config.flow_lineage_capacity
@@ -70,6 +72,11 @@ def select_flow_evidence(
                     remaining,
                     blueprint,
                     config.token_budget,
+                ):
+                    continue
+                if prompt_budget is not None and not _repair_budget_safe_candidates(
+                    [candidate], selected, remaining, blueprint, config.token_budget,
+                    prompt_token_budget=prompt_budget,
                 ):
                     continue
                 before = flow_for(selected, blueprint, config, lineage_capacity)
@@ -95,17 +102,10 @@ def select_flow_evidence(
             reason = "budget_exhausted" if token_cost(selected) >= config.token_budget else "constraint_limited"
             return FlowSelection(selected, reason, current, decisions)
 
-        repair_safe = [
-            candidate
-            for candidate in valid
-            if preserves_repair_budget(
-                candidate,
-                selected,
-                remaining,
-                blueprint,
-                config.token_budget,
-            )
-        ]
+        repair_safe = _repair_budget_safe_candidates(
+            valid, selected, remaining, blueprint, config.token_budget,
+            prompt_token_budget=prompt_budget,
+        )
         if repair_safe:
             valid = repair_safe
 
@@ -393,6 +393,90 @@ def substantive_lineages(
     }
 
 
+def _repair_budget_safe_candidates(
+    candidates: list[TraceCandidate],
+    selected: list[TraceCandidate],
+    remaining: list[TraceCandidate],
+    blueprint: EvidenceBlueprint,
+    token_budget: int,
+    *,
+    prompt_token_budget: int | None = None,
+) -> list[TraceCandidate]:
+    """Batch the existing repair-budget rule without changing its decisions.
+
+    A facet still uncovered after a trial candidate cannot be supported by that
+    candidate or a value-equal duplicate. Its cheapest supporting alternative
+    therefore has the same cost before and after excluding the trial candidate.
+    Compute these minima once per round, retaining the original per-facet sum
+    and zero cost for facets without any supporting alternative. When enabled,
+    reserve serialized prompt costs independently using the same support flags.
+    """
+    if not candidates:
+        return []
+    remaining_budget = token_budget - token_cost(selected)
+    prompt_remaining_budget = None
+    if prompt_token_budget is not None:
+        from originrag.trace.selector import prompt_token_cost
+
+        prompt_remaining_budget = prompt_token_budget - prompt_token_cost(selected)
+    uncovered = [
+        facet
+        for facet in blueprint.required_facets
+        if facet.is_required
+        and not any(facet_contribution(item, facet) > 0.0 for item in selected)
+    ]
+    if not uncovered:
+        return [
+            item for item in candidates
+            if item.token_cost <= remaining_budget
+            and (prompt_remaining_budget is None
+                 or prompt_token_cost([item]) <= prompt_remaining_budget)
+        ]
+
+    support_by_identity: dict[int, tuple[bool, ...]] = {}
+    minimum_costs: list[int | None] = [None] * len(uncovered)
+    prompt_cost_by_identity: dict[int, int] = {}
+    minimum_prompt_costs: list[int | None] = [None] * len(uncovered)
+    for item in remaining:
+        support = tuple(facet_contribution(item, facet) > 0.0 for facet in uncovered)
+        support_by_identity[id(item)] = support
+        if prompt_remaining_budget is not None:
+            prompt_cost_by_identity[id(item)] = prompt_token_cost([item])
+        for index, supports_facet in enumerate(support):
+            minimum = minimum_costs[index]
+            if supports_facet and (minimum is None or item.token_cost < minimum):
+                minimum_costs[index] = item.token_cost
+            if supports_facet and prompt_remaining_budget is not None:
+                prompt_cost = prompt_cost_by_identity[id(item)]
+                minimum_prompt = minimum_prompt_costs[index]
+                if minimum_prompt is None or prompt_cost < minimum_prompt:
+                    minimum_prompt_costs[index] = prompt_cost
+    costs = [0 if minimum is None else minimum for minimum in minimum_costs]
+    prompt_costs = [0 if minimum is None else minimum for minimum in minimum_prompt_costs]
+
+    safe = []
+    for item in candidates:
+        support = support_by_identity.get(id(item))
+        if support is None:
+            support = tuple(facet_contribution(item, facet) > 0.0 for facet in uncovered)
+        required_budget = sum(
+            cost for cost, supports_facet in zip(costs, support) if not supports_facet
+        )
+        if required_budget > remaining_budget - item.token_cost:
+            continue
+        if prompt_remaining_budget is not None:
+            prompt_cost = prompt_cost_by_identity.get(id(item))
+            if prompt_cost is None:
+                prompt_cost = prompt_token_cost([item])
+            required_prompt_budget = sum(
+                cost for cost, supports_facet in zip(prompt_costs, support) if not supports_facet
+            )
+            if required_prompt_budget > prompt_remaining_budget - prompt_cost:
+                continue
+        safe.append(item)
+    return safe
+
+
 def preserves_repair_budget(
     candidate: TraceCandidate,
     selected: list[TraceCandidate],
@@ -464,6 +548,12 @@ def can_add_flow(
 ) -> bool:
     if token_cost(selected) + candidate.token_cost > config.token_budget:
         return False
+    prompt_budget = getattr(config, "prompt_token_budget", None)
+    if prompt_budget is not None:
+        from originrag.trace.selector import prompt_token_cost
+
+        if prompt_token_cost([*selected, candidate]) > prompt_budget:
+            return False
     if sum(item.paper_id == candidate.paper_id for item in selected) >= config.max_chunks_per_paper:
         return False
     family = candidate.publication_family_id

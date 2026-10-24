@@ -38,11 +38,25 @@ def test_profile_flags_and_parser(monkeypatch, profile, rag, write):
     assert web.parse_args([]).profile == profile
     assert web.parse_args(['--profile', 'full']).profile == 'full'
     assert parsed.public()['features']['reader']
+    assert parsed.public()['features']['folio'] is (profile == 'full')
+    for path in ('/folio', '/api/folio', '/api/folio/export'):
+        assert parsed.permits(path) is (profile == 'full')
 
 
 def test_invalid_profile_rejected():
     with pytest.raises(ValueError):
         app_profile('other')
+
+
+def test_folio_return_targets_stay_local_and_build_dependencies_are_not_served():
+    key = 'a' * 32
+    for target in ('/folio', '/folio?id=' + key, '/write?id=' + key):
+        assert web.safe_login_target(target) == target
+    for target in ('//example.com/folio', '/folio?next=https://example.com',
+                   '/folio?id=../alice', '/folio?id=' + key + '&owner=alice'):
+        assert web.safe_login_target(target) == '/'
+    for profile in ('full', 'rag', 'write'):
+        assert not app_profile(profile).permits('/assets/folio/build/package-lock.json')
 
 
 def test_write_cold_start_without_optional_dependencies_or_chat_state(tmp_path):

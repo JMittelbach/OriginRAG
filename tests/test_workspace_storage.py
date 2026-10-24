@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -41,3 +42,33 @@ def test_local_workspace_rejects_symlink_root(tmp_path, monkeypatch):
     monkeypatch.setenv('ORIGINRAG_WORKSPACE_STATE_DIR', str(link))
     with pytest.raises(OSError):
         WritingStore(tmp_path / 'owner')
+
+
+def test_folio_database_migration_is_explicit_and_preserves_private_state(tmp_path, monkeypatch):
+    from originrag.workspace_storage import workspace_database
+
+    monkeypatch.delenv('ORIGINRAG_WORKSPACE_STATE_DIR', raising=False)
+    source = tmp_path / 'shared'
+    owner = source / 'users' / 'alice'
+    owner.mkdir(parents=True)
+    original = owner / '.folio.sqlite3'
+    with sqlite3.connect(original) as connection:
+        connection.execute('CREATE TABLE sample (title TEXT)')
+        connection.execute('INSERT INTO sample VALUES (?)', ('Private document',))
+    local = tmp_path / 'local'
+    monkeypatch.setenv('ORIGINRAG_WORKSPACE_STATE_DIR', str(local))
+    with pytest.raises(OSError, match='Migrate'):
+        workspace_database(owner, '.folio.sqlite3')
+    script = Path(__file__).resolve().parents[1] / 'scripts/migrate_workspace_storage.py'
+    spec = importlib.util.spec_from_file_location('migration_folio', script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    result = module.migrate(source, local)
+    assert len(result) == 1 and result[0]['verified']
+    target = workspace_database(owner, '.folio.sqlite3')
+    assert target.is_relative_to(local)
+    assert target.stat().st_mode & 0o777 == 0o600
+    with sqlite3.connect(target) as connection:
+        assert connection.execute('SELECT title FROM sample').fetchall() == [('Private document',)]
+    assert original.is_file()
+    assert workspace_database(source / 'users' / 'bob', '.folio.sqlite3') != target

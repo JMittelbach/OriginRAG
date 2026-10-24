@@ -95,6 +95,17 @@ COMMON_TECHNICAL_WORDS = {
     "var",
 }
 
+SOURCE_SUPPORTED_TECHNICAL_TRANSLATIONS = (
+    (
+        {"einzelzellrnasequenzierungsdaten", "einzelzellrnasequenzierung"},
+        re.compile(
+            r"(?<!\w)(?:scRNA[\s‐‑‒–—-]*seq(?:uencing)?|"
+            r"single[\s‐‑‒–—-]+cell[\s‐‑‒–—-]+RNA[\s‐‑‒–—-]+seq(?:uencing)?)(?!\w)",
+            flags=re.IGNORECASE,
+        ),
+    ),
+)
+
 OVER_SPECIFIC_PHRASES = {
     "meta-analysis": [
         "meta-analysis",
@@ -2405,6 +2416,17 @@ def unsupported_technical_terms(answer: str, evidence_pack: dict, limit: int = 2
     support_text = f"{evidence_pack.get('question', '')} {evidence_text} {lineage_signal_text}"
     support_terms = {_normalize_term(term) for term in _technical_terms(support_text)}
     support_words = {_normalize_term(term) for term in re.findall(r"\b[A-Za-z][A-Za-z0-9αβγδκλ]+\b", support_text)}
+    source_wording = [
+        str(chunk.get(field) or "")
+        for chunk in evidence_pack.get("chunks", [])
+        for field in ("title", "text")
+    ]
+    translated_terms = {
+        term
+        for aliases, source_pattern in SOURCE_SUPPORTED_TECHNICAL_TRANSLATIONS
+        if any(source_pattern.search(text) for text in source_wording)
+        for term in aliases
+    }
     unsupported = []
     seen = set()
     for term in _technical_terms(_strip_markdown_headings(answer)):
@@ -2412,6 +2434,7 @@ def unsupported_technical_terms(answer: str, evidence_pack: dict, limit: int = 2
         if (
             normalized in seen
             or normalized in support_terms
+            or normalized in translated_terms
             or _plural_variant_supported(normalized, support_terms)
             or _compound_term_supported(term, support_words)
             or term in COMMON_TECHNICAL_WORDS
@@ -2438,6 +2461,11 @@ def _compound_term_supported(term: str, support_words: set[str]) -> bool:
     parts = [_normalize_term(part) for part in term.split("-") if part]
     if parts and all(part in support_words for part in parts):
         return True
+
+    if len(parts) > 1 and parts[-1] in {
+        "basiert", "basierte", "basierten", "basiertem", "basierter", "basiertes"
+    }:
+        return all(part in support_words for part in parts[:-1])
 
 
     generic_parts = {

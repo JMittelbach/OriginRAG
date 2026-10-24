@@ -21,6 +21,7 @@ class SelectorConfig:
     flow_anchor_papers: int = 3
     flow_minimum_papers: int = 14
     flow_reserve_relevance_fraction: float = 0.80
+    prompt_token_budget: int | None = None
 
     def __post_init__(self) -> None:
         integer_fields = {
@@ -31,6 +32,8 @@ class SelectorConfig:
             "flow_anchor_papers": self.flow_anchor_papers,
             "flow_minimum_papers": self.flow_minimum_papers,
         }
+        if self.prompt_token_budget is not None:
+            integer_fields["prompt_token_budget"] = self.prompt_token_budget
         for name, value in integer_fields.items():
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ValueError(f"{name} must be an integer")
@@ -49,6 +52,8 @@ class SelectorConfig:
                 raise ValueError(f"{name} must be finite")
         if self.token_budget <= 0:
             raise ValueError("token_budget must be greater than zero")
+        if self.prompt_token_budget is not None and self.prompt_token_budget <= 0:
+            raise ValueError("prompt_token_budget must be greater than zero")
         if self.max_chunks_per_paper <= 0:
             raise ValueError("max_chunks_per_paper must be greater than zero")
         if self.max_publication_versions_per_family <= 0:
@@ -129,6 +134,11 @@ def select_evidence(
         "algorithm": config.selector_algorithm,
         "utility_details": details,
     }
+    if config.prompt_token_budget is not None:
+        run_config.update({
+            "prompt_token_budget": config.prompt_token_budget,
+            "prompt_token_cost": prompt_token_cost(selected),
+        })
     if selector_name in {"trace_flow", "trace_flow_no_anchor", "trace_flow_unbounded", "trace_flow_relevance_reserve", "trace_flow_diverse_reserve"}:
         for index, row in enumerate(flow_selection.decision_trace, 1):
             row["step"] = index
@@ -311,6 +321,11 @@ def mmr(candidates: list[TraceCandidate], config: SelectorConfig, lambda_relevan
 def can_add(candidate: TraceCandidate, selected: list[TraceCandidate], config: SelectorConfig, *, enforce_family: bool = True) -> bool:
     if sum(item.token_cost for item in selected) + candidate.token_cost > config.token_budget:
         return False
+    if (
+        config.prompt_token_budget is not None
+        and prompt_token_cost([*selected, candidate]) > config.prompt_token_budget
+    ):
+        return False
     if sum(item.paper_id == candidate.paper_id for item in selected) >= config.max_chunks_per_paper:
         return False
     family = candidate.publication_family_id
@@ -354,10 +369,32 @@ def constraint_violations(candidates: list[TraceCandidate], config: SelectorConf
     violations = []
     if sum(candidate.token_cost for candidate in candidates) > config.token_budget:
         violations.append("token_budget_exceeded")
+    if (
+        config.prompt_token_budget is not None
+        and prompt_token_cost(candidates) > config.prompt_token_budget
+    ):
+        violations.append("prompt_token_budget_exceeded")
     counts = Counter(candidate.paper_id for candidate in candidates)
     if any(count > config.max_chunks_per_paper for count in counts.values()):
         violations.append("max_chunks_per_paper_exceeded")
     return violations
+
+
+def prompt_token_cost(candidates: list[TraceCandidate]) -> int:
+    """Sum caller-estimated serialized costs, without changing evidence costs.
+
+    The runtime sets this private metadata field only from a validated, trusted
+    cost mapping. Direct selector callers can omit it to use the original text
+    token cost. No serialized-budget accounting is consulted when its cap is
+    disabled.
+    """
+    total = 0
+    for candidate in candidates:
+        cost = candidate.metadata.get("_prompt_token_cost", candidate.token_cost)
+        if isinstance(cost, bool) or not isinstance(cost, int) or cost <= 0:
+            raise ValueError("candidate prompt token cost must be a positive integer")
+        total += cost
+    return total
 
 
 def validate_candidate_identity(candidates: list[TraceCandidate]) -> None:

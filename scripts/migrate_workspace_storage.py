@@ -1,4 +1,4 @@
-"""Copy Quill databases to local storage with the web service stopped."""
+"""Copy writing databases to local storage with the web service stopped."""
 import argparse
 import json
 from itertools import zip_longest
@@ -13,7 +13,8 @@ from originrag.workspace_storage import workspace_database
 def migrate(source, destination):
     source = Path(source).resolve()
     paths = [source / '.writing-collaboration.sqlite3', source / '.writing.sqlite3',
-             *sorted(source.glob('users/*/.writing.sqlite3'))]
+             source / '.folio.sqlite3', *sorted(source.glob('users/*/.writing.sqlite3')),
+             *sorted(source.glob('users/*/.folio.sqlite3'))]
     results = []
     for path in paths:
         if not path.exists():

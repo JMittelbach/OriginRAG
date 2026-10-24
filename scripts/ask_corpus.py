@@ -26,7 +26,16 @@ from originrag.analysis.answer_format import normalize_answer_format  # noqa: E4
 from originrag.analysis.question_understanding import understand_question, understanding_plan  # noqa: E402
 from originrag.analysis.corpus_inventory import extract_inventory  # noqa: E402
 from originrag.summaries.reading_card import summary_request, load_paper, create_card, card_markdown  # noqa: E402
-from originrag.analysis.answer_backends import generate_answer_with_backend  # noqa: E402
+from originrag.analysis.answer_backends import (  # noqa: E402
+    answer_num_ctx,
+    answer_num_predict,
+    generate_answer_with_backend,
+)
+from originrag.analysis.context_budget import (  # noqa: E402
+    AnswerContextBudget,
+    context_capacity,
+    estimate_prompt_tokens,
+)
 from originrag.analysis.answer_qc import (  # noqa: E402
     annotate_publication_family_relationships,
     assess_answer_quality,
@@ -50,8 +59,13 @@ from originrag.analysis.llm_backends import generate_answer  # noqa: E402
 from originrag.analysis.ollama_client import (  # noqa: E402
     answer_model as ollama_answer_model,
     call_ollama_generate,
+    valid_usage_counter,
 )
-from originrag.analysis.prompts import build_answer_repair_prompt, build_citation_answer_prompt  # noqa: E402
+from originrag.analysis.prompts import (  # noqa: E402
+    _format_evidence_text,
+    build_answer_repair_prompt,
+    build_citation_answer_prompt,
+)
 from originrag.analysis.template_answers import (  # noqa: E402
     build_data_accessibility_answer,
     build_marker_positive_state_answer,
@@ -125,6 +139,7 @@ PAPER_SEARCH_DETAIL_FIELDS = (
     "developmental_stage_adjustment",
 )
 PAPER_SEARCH_DETAIL_NOT_REPORTED = "not reported in supplied evidence"
+PAPER_SEARCH_DETAIL_NOT_ASSESSED = "not assessed: annotation unavailable because the context budget was exceeded"
 PAPER_REASON_BATCH_SIZE = 12
 PAPER_DETAIL_BATCH_SIZE = 4
 PAPER_DETAIL_RETRY_BATCH_SIZE = 2
@@ -133,6 +148,7 @@ PAPER_DETAIL_MAX_MODEL_CALLS = 8
 PAPER_DETAIL_MAX_TOTAL_SECONDS = 360
 PAPER_DETAIL_MODEL_STATUS = "model_extracted_unverified"
 PAPER_DETAIL_FALLBACK_STATUS = "not_reported_fallback"
+PAPER_DETAIL_UNAVAILABLE_STATUS = "not_assessed_context_budget"
 PAPER_DETAIL_DETERMINISTIC_STATUS = "deterministic_excerpt_supported"
 SOURCE_TYPE_FRONT_TEXT_MAX_CHARS = 24_000
 NAMED_STUDY_FULLTEXT_SUPPORT_MAX_CHARS = 2_500
@@ -426,7 +442,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trace-config", default="config/trace_rag.yaml")
     parser.add_argument("--trace-blueprint")
     parser.add_argument("--trace-lineage-graph")
-    parser.add_argument("--trace-token-budget", type=int, default=8000)
+    parser.add_argument(
+        "--trace-token-budget", type=int, default=None,
+        help="Evidence-text token ceiling. By default, adapt to the answer context (up to 8000).",
+    )
     parser.add_argument("--trace-selector-algorithm", choices=["lazy_greedy", "beam_search"], default="lazy_greedy")
     parser.add_argument("--show-trace-certificate", action="store_true")
     return parser.parse_args()
@@ -491,6 +510,8 @@ def run_question(
     user_question = answer_question
     retrieval_question = str(getattr(args, "retrieval_question", "") or args.question)
     task = str(getattr(args, "task", "answer") or "answer")
+    exclusive_report_doi = exclusive_single_report_doi(user_question) if task == "answer" else None
+    requested_report_scope = None
     understanding = {"status": "not_requested"}
     inventory_mode = False
     configured_model_backend = str(getattr(args, "configured_answer_backend", args.backend))
@@ -503,6 +524,9 @@ def run_question(
         understanding = understand_question(
             user_question, context=retrieval_question if retrieval_question != user_question else "",
             model=getattr(args, "planner_model", None) or getattr(args, "answer_model", None),
+            num_ctx=effective_model_context(
+                args, model=getattr(args, "planner_model", None),
+            ),
         )
         write_json(output_dir / "question_understanding.json", understanding)
         if understanding["status"] != "ready":
@@ -515,7 +539,11 @@ def run_question(
         retrieval_question = answer_question
         args.question = answer_question
         args.retrieval_question = retrieval_question
-        inventory_mode = understanding["intent"] == "corpus_inventory" and task in {"answer", "sources"}
+        inventory_mode = (
+            exclusive_report_doi is None
+            and understanding["intent"] == "corpus_inventory"
+            and task in {"answer", "sources"}
+        )
         if inventory_mode:
             task = args.task = "sources"
             args.evidence_selector = "current"
@@ -676,6 +704,7 @@ def run_question(
             results,
             chunks_dir=chunks_dir,
             papers_tsv=papers_tsv,
+            preserve_matching_passages=exclusive_report_doi is not None,
         )
         results = merge_explicit_named_study_anchors(
             answer_question,
@@ -694,6 +723,11 @@ def run_question(
 
 
 
+
+    if task == "answer" and exclusive_report_doi is not None:
+        results, requested_report_scope = retain_single_report_doi_candidates(
+            exclusive_report_doi, results, papers_tsv=papers_tsv,
+        )
 
     required_entity_groups = required_entity_anchor_groups(answer_question)
     intervention_source_request = (
@@ -733,20 +767,29 @@ def run_question(
         )
 
     trace_result = None
+    answer_context_budget = None
+    answer_context_selection = None
+    trace_token_budget = int(getattr(args, "trace_token_budget", None) or 8000)
     named_study_context_support: list[dict] = []
     named_study_context_reserved_tokens = 0
     if evidence_selector != "current":
         progress("Selecting evidence and auditing study origins")
-        trace_candidates = (
-            shortlist_answer_candidates(
-                results,
-                max_papers=12,
+        if task == "answer":
+            answer_context_budget = plan_answer_context(args, user_question)
+            trace_token_budget = answer_context_budget.evidence_token_budget
+            trace_candidates, answer_context_selection = budget_answer_candidates(
+                shortlist_answer_candidates(
+                    results,
+                    max_papers=max(1, len(results)),
+                    question=answer_question,
+                    max_chars_per_chunk=max_chars_per_chunk,
+                ),
                 question=answer_question,
                 max_chars_per_chunk=max_chars_per_chunk,
+                budget=answer_context_budget,
             )
-            if task == "answer"
-            else results
-        )
+        else:
+            trace_candidates = results
         trace_inputs = [
             freeze_prompt_visible_result(
                 answer_question,
@@ -766,13 +809,28 @@ def run_question(
         ) = reserve_named_study_prompt_context(
             answer_question,
             trace_inputs,
-            token_budget=int(getattr(args, "trace_token_budget", 8000) or 8000),
+            token_budget=trace_token_budget,
         )
         certifying_selection_token_budget = max(
             1,
-            int(getattr(args, "trace_token_budget", 8000) or 8000)
-            - named_study_context_reserved_tokens,
+            trace_token_budget - named_study_context_reserved_tokens,
         )
+        prompt_selection_options = {}
+        if answer_context_budget is not None:
+            prompt_costs = {
+                str(row["chunk_id"]): row["_answer_prompt_token_cost"]
+                for row in trace_candidates
+            }
+            support_prompt_cost = sum(
+                prompt_costs[str(row["chunk_id"])] for row in named_study_context_support
+            )
+            serialized_budget = answer_context_budget.prompt_evidence_capacity - support_prompt_cost
+            if serialized_budget <= 0:
+                raise ValueError("Named-report context exceeds the available answer context.")
+            prompt_selection_options = {
+                "prompt_token_budget": serialized_budget,
+                "prompt_token_costs": prompt_costs,
+            }
         trace_result = run_trace_selection(
             answer_question,
             getattr(args, "task_mode", "evidence_qa"),
@@ -784,6 +842,7 @@ def run_question(
             lineage_graph_path=(resolve_repo_path(args.trace_lineage_graph) if getattr(args, "trace_lineage_graph", None) else None),
             token_budget=certifying_selection_token_budget,
             selector_algorithm=str(getattr(args, "trace_selector_algorithm", "lazy_greedy")),
+            **prompt_selection_options,
         )
         evidence_results = merge_selected_named_study_context(
             trace_result["selected_results"],
@@ -929,6 +988,7 @@ def run_question(
                 "timeout": int(getattr(args, "answer_timeout", 120) or 120),
                 "document_context": paper_search_lineage_context,
                 "requested_fields": paper_search_detail_fields,
+                "num_ctx": effective_model_context(args),
             }
             if paper_search_detail_fields:
                 paper_search_results, reason_meta = (
@@ -980,8 +1040,8 @@ def run_question(
                 deterministic_detail_count
             )
             reason_meta["fallback_detail_record_count"] = sum(
-                PAPER_DETAIL_FALLBACK_STATUS
-                in set((paper.get("question_field_statuses") or {}).values())
+                bool({PAPER_DETAIL_FALLBACK_STATUS, PAPER_DETAIL_UNAVAILABLE_STATUS}
+                     & set((paper.get("question_field_statuses") or {}).values()))
                 for paper in paper_search_results
             )
     else:
@@ -1085,6 +1145,8 @@ def run_question(
     pack["normalized_question"] = answer_question
     pack["question"] = user_question
     pack["question_understanding"] = understanding
+    if requested_report_scope is not None:
+        pack["requested_report_scope"] = requested_report_scope
     if inventory_mode:
         progress("Checking named examples against the retrieved papers")
         pack["corpus_inventory"] = extract_inventory(
@@ -1098,6 +1160,18 @@ def run_question(
     pack["retrieval_queries"] = [query.__dict__ for query in retrieval_queries]
     if trace_result is not None:
         pack["answer_candidate_shortlist_count"] = len(trace_candidates)
+    if answer_context_budget is not None:
+        pack["answer_context_budget"] = {
+            **answer_context_budget.summary(),
+            "selection": answer_context_selection,
+            "selected_paper_count": pack["n_unique_papers"],
+            "selected_chunk_count": pack["n_chunks"],
+            "selected_evidence_estimated_tokens": sum(
+                estimate_tokens(str(chunk.get("text") or ""))
+                for chunk in pack.get("chunks", [])
+            ),
+            "token_counts_are_estimates": True,
+        }
     if paper_search is not None:
         pack["paper_search"] = paper_search
         pack["paper_search_sources"] = [
@@ -1136,13 +1210,10 @@ def run_question(
         pack["named_study_prompt_context"] = {
             "support_chunk_count": named_context_chunk_count,
             "reserved_token_cost": named_study_context_reserved_tokens,
-            "configured_total_token_budget": int(
-                getattr(args, "trace_token_budget", 8000) or 8000
-            ),
+            "configured_total_token_budget": trace_token_budget,
             "certifying_selection_token_budget": max(
                 1,
-                int(getattr(args, "trace_token_budget", 8000) or 8000)
-                - named_study_context_reserved_tokens,
+                trace_token_budget - named_study_context_reserved_tokens,
             ),
             "certificate_effect": "excluded",
             "scope": "same_report_prompt_context",
@@ -1206,6 +1277,12 @@ def run_question(
         task=args.task,
         profile_instruction=profile_instruction,
     )
+    if answer_context_budget is not None:
+        pack["answer_context_budget"].update({
+            "rendered_prompt_estimated_tokens": estimate_prompt_tokens(prompt),
+            "rendered_prompt_fits": answer_context_budget.fits_prompt(prompt),
+        })
+        answer_context_budget.require_prompt_fit(prompt)
 
     retrieved_path = output_dir / "retrieved_chunks.tsv"
     pack_json_path = output_dir / "evidence_pack.json"
@@ -1306,8 +1383,14 @@ def run_question(
     )
     final_rejected_path = grounding_rejected_path or qc_rejected_path
     final_withheld_answer_path = None
+    answer_withheld_reason = None
     final_partial_answer_path = final_answer_path if provisional_synthesis else None
-    if trace_result is not None and final_answer_path is None and not evidence_is_sufficient:
+    if qc_rejected_path is not None:
+        withheld_answer_path.write_text(build_qc_withheld_answer(answer_qc) + "\n", encoding="utf-8")
+        final_withheld_answer_path = withheld_answer_path
+        answer_withheld_reason = "answer_quality_check"
+    elif (trace_result is not None and final_answer_path is None
+          and not evidence_is_sufficient and not provisional_synthesis):
         bounded_answer = build_trace_withheld_answer(pack) + "\n"
         if trace_publication_family_edges(pack):
             partial_answer_path.write_text(bounded_answer, encoding="utf-8")
@@ -1316,9 +1399,7 @@ def run_question(
         else:
             withheld_answer_path.write_text(bounded_answer, encoding="utf-8")
             final_withheld_answer_path = withheld_answer_path
-    elif qc_rejected_path is not None:
-        withheld_answer_path.write_text(build_qc_withheld_answer(answer_qc) + "\n", encoding="utf-8")
-        final_withheld_answer_path = withheld_answer_path
+            answer_withheld_reason = "lineage_certificate"
     write_json(answer_qc_path, answer_qc)
     write_json(attempts_path, answer_attempts)
     answer_usage = aggregate_answer_usage(answer_attempts)
@@ -1332,6 +1413,7 @@ def run_question(
         "question": user_question,
         "normalized_question": answer_question,
         "question_understanding": understanding,
+        **({"requested_report_scope": requested_report_scope} if requested_report_scope is not None else {}),
         "corpus_inventory": inventory_mode,
         "retrieval_question": retrieval_question,
         "retrieval_queries": [query.__dict__ for query in retrieval_queries],
@@ -1498,6 +1580,7 @@ def run_question(
         "max_chars_per_chunk": max_chars_per_chunk,
         "repair_attempts_requested": max(0, int(args.repair_attempts or 0)),
         "repair_attempts_used": sum(1 for attempt in answer_attempts if attempt.get("kind") == "repair"),
+        "repair_stop_reason": answer_backend_meta.get("repair_stop_reason"),
         "template_fallback_enabled": not args.no_template_fallback,
         "template_fallback_used": any(
             attempt.get("kind") == "template_fallback" for attempt in answer_attempts
@@ -1507,7 +1590,8 @@ def run_question(
         "answer_grounding_passed": None if grounding_report is None else grounding_report.get("passed"),
         "answer_rejected_by_grounding": grounding_rejected_path is not None,
         "answer_rejected_by_qc": qc_rejected_path is not None,
-        "answer_withheld_by_lineage_certificate": final_withheld_answer_path is not None,
+        "answer_withheld_by_lineage_certificate": answer_withheld_reason == "lineage_certificate",
+        "answer_withheld_reason": answer_withheld_reason,
         "answer_partial_by_lineage_certificate": final_partial_answer_path is not None,
         "provisional_synthesis_authorized": provisional_synthesis,
         "category": args.category,
@@ -1531,7 +1615,9 @@ def run_question(
         "evidence_pack_grade_reasons": evidence_grade.get("reasons", []),
         "evidence_selector": evidence_selector,
         "trace_selector_algorithm": getattr(args, "trace_selector_algorithm", None),
-        "trace_token_budget": getattr(args, "trace_token_budget", None),
+        "trace_token_budget": trace_token_budget,
+        "trace_token_budget_requested": getattr(args, "trace_token_budget", None),
+        "answer_context_budget": pack.get("answer_context_budget"),
         "trace_certificate_grade": None if trace_result is None else trace_result["certificate"].evidence_sufficiency,
         "trace_allowed_claim_strength": None if trace_result is None else trace_result["certificate"].allowed_claim_strength,
         "trace_robust_lineage_status": (
@@ -2797,6 +2883,7 @@ def explain_paper_search_matches(
     timeout: int = 120,
     document_context: dict[str, list[dict]] | None = None,
     requested_fields: tuple[str, ...] | None = None,
+    num_ctx: int | None = None,
     generator=call_ollama_generate,
 ) -> tuple[list[dict], dict]:
     """Add question-specific reasons without allowing the model to rerank papers."""
@@ -2823,24 +2910,55 @@ def explain_paper_search_matches(
         if requested_fields
         else min(3600, max(600, len(candidates) * output_tokens_per_paper))
     )
+    context_window = effective_model_context(model=model) if num_ctx is None else num_ctx
+    if type(context_window) is not int or context_window < 1:
+        raise ValueError("source annotation context must be a positive integer")
+    prompt_tokens = estimate_prompt_tokens(prompt)
+    if prompt_tokens + output_token_budget + 1024 > context_window:
+        unavailable = ensure_paper_detail_completeness(fallback, requested_fields)
+        for paper in unavailable:
+            for field in requested_fields:
+                if paper["question_field_statuses"].get(field) not in {
+                    PAPER_DETAIL_MODEL_STATUS, PAPER_DETAIL_DETERMINISTIC_STATUS,
+                }:
+                    paper["question_fields"][field] = PAPER_SEARCH_DETAIL_NOT_ASSESSED
+                    paper["question_field_statuses"][field] = PAPER_DETAIL_UNAVAILABLE_STATUS
+        return ensure_paper_detail_completeness(unavailable, requested_fields), {
+            "attempted": False,
+            "used": False,
+            "model": model,
+            "error": (
+                "source_annotation_context_budget: "
+                f"{prompt_tokens} estimated prompt tokens + {output_token_budget} output "
+                f"tokens + 1024 safety tokens exceed {context_window} context tokens. "
+                "Paper matches retained; annotation unavailable, not evidence absent."
+            ),
+            "prompt_eval_count": 0,
+            "eval_count": 0,
+            "load_duration": 0,
+            "total_duration": 0,
+        }
     result = generator(
         prompt,
         model=model,
         temperature=0.0,
         timeout=timeout,
         num_predict=output_token_budget,
+        num_ctx=context_window,
         format=paper_reason_schema(candidates, requested_fields=requested_fields),
     )
-    usage = getattr(result, "metadata", None) or {}
+    usage = getattr(result, "metadata", None)
+    usage = usage if isinstance(usage, dict) else {}
     meta = {
         "attempted": True,
         "used": False,
         "model": result.model,
         "error": result.error,
-        "prompt_eval_count": int(usage.get("prompt_eval_count") or 0),
-        "eval_count": int(usage.get("eval_count") or 0),
-        "load_duration": int(usage.get("load_duration") or 0),
-        "total_duration": int(usage.get("total_duration") or 0),
+        **{
+            key: usage[key]
+            for key in ("prompt_eval_count", "eval_count", "load_duration", "total_duration")
+            if valid_usage_counter(usage.get(key))
+        },
     }
     if not result.text:
         return ensure_paper_detail_completeness(fallback, requested_fields), meta
@@ -2947,6 +3065,7 @@ def explain_paper_search_matches_in_batches(
     max_retry_calls: int = PAPER_DETAIL_MAX_RETRY_CALLS,
     max_model_calls: int = PAPER_DETAIL_MAX_MODEL_CALLS,
     max_total_seconds: int = PAPER_DETAIL_MAX_TOTAL_SECONDS,
+    num_ctx: int | None = None,
     generator=call_ollama_generate,
 ) -> tuple[list[dict], dict]:
     """Extract requested fields within hard call/time bounds and otherwise mark them absent."""
@@ -2983,9 +3102,10 @@ def explain_paper_search_matches_in_batches(
             ),
             document_context=document_context,
             requested_fields=requested_fields,
+            num_ctx=num_ctx,
             generator=generator,
         )
-        model_calls += 1
+        model_calls += bool(metadata.get("attempted"))
         complete_records = sum(
             paper_details_are_resolved(record, requested_fields)
             for record in batch
@@ -3004,6 +3124,7 @@ def explain_paper_search_matches_in_batches(
         batch_metadata.append(metadata)
 
     retry_calls = 0
+    retry_attempts = 0
     missing = [
         paper
         for paper in explained
@@ -3012,7 +3133,7 @@ def explain_paper_search_matches_in_batches(
     for start in range(0, len(missing), retry_batch_size):
         elapsed = time.monotonic() - started
         if (
-            retry_calls >= max_retry_calls
+            retry_attempts >= max_retry_calls
             or model_calls >= max_model_calls
             or elapsed >= max_total_seconds
         ):
@@ -3030,10 +3151,12 @@ def explain_paper_search_matches_in_batches(
             ),
             document_context=document_context,
             requested_fields=requested_fields,
+            num_ctx=num_ctx,
             generator=generator,
         )
-        retry_calls += 1
-        model_calls += 1
+        retry_attempts += 1
+        retry_calls += bool(metadata.get("attempted"))
+        model_calls += bool(metadata.get("attempted"))
         complete_records = sum(
             paper_details_are_resolved(record, requested_fields)
             for record in retried
@@ -3076,14 +3199,18 @@ def explain_paper_search_matches_in_batches(
         for record in explained
     )
     fallback_detail_count = sum(
-        PAPER_DETAIL_FALLBACK_STATUS
-        in set((record.get("question_field_statuses") or {}).values())
+        bool({PAPER_DETAIL_FALLBACK_STATUS, PAPER_DETAIL_UNAVAILABLE_STATUS}
+             & set((record.get("question_field_statuses") or {}).values()))
+        for record in explained
+    )
+    unassessed_detail_count = sum(
+        PAPER_DETAIL_UNAVAILABLE_STATUS in set((record.get("question_field_statuses") or {}).values())
         for record in explained
     )
     if resolved_count != len(explained):
         elapsed = time.monotonic() - started
         budget_exhausted = budget_exhausted or (
-            retry_calls >= max_retry_calls
+            retry_attempts >= max_retry_calls
             or model_calls >= max_model_calls
             or elapsed >= max_total_seconds
         )
@@ -3105,6 +3232,8 @@ def explain_paper_search_matches_in_batches(
             "model_extracted_record_count": model_extracted_count,
             "deterministic_detail_record_count": deterministic_detail_count,
             "fallback_detail_record_count": fallback_detail_count,
+            **({"unassessed_detail_record_count": unassessed_detail_count}
+               if unassessed_detail_count else {}),
             "detail_complete_record_count": detail_complete_count,
             "complete": resolved_count == len(explained),
             "detail_complete": detail_complete_count == len(explained),
@@ -3125,7 +3254,11 @@ def explain_paper_search_matches_in_batches(
         else (
             "incomplete_match_explanations: "
             f"{resolved_count}/{len(explained)} records; "
-            "remaining requested fields use explicit not-reported fallback"
+            + (
+                "some requested fields were not assessed because the context budget was exceeded"
+                if unassessed_detail_count
+                else "remaining requested fields use explicit not-reported fallback"
+            )
         )
     )
     return explained, aggregated
@@ -3246,6 +3379,7 @@ def ensure_paper_detail_completeness(
                 if status not in {
                     PAPER_DETAIL_MODEL_STATUS,
                     PAPER_DETAIL_FALLBACK_STATUS,
+                    PAPER_DETAIL_UNAVAILABLE_STATUS,
                     PAPER_DETAIL_DETERMINISTIC_STATUS,
                 }:
                     status = (
@@ -3268,7 +3402,11 @@ def ensure_paper_detail_completeness(
                 else (
                     PAPER_DETAIL_DETERMINISTIC_STATUS
                     if unique_statuses == {PAPER_DETAIL_DETERMINISTIC_STATUS}
-                    else "mixed_extraction"
+                    else (
+                        PAPER_DETAIL_UNAVAILABLE_STATUS
+                        if unique_statuses == {PAPER_DETAIL_UNAVAILABLE_STATUS}
+                        else "mixed_extraction"
+                    )
                 )
             )
         )
@@ -4387,6 +4525,19 @@ def retain_entity_anchored_evidence(
     gene or protein. Filtering before evidence selection prevents shared words
     such as ``signature`` or ``annotation`` from displacing exact entity hits.
     """
+    def carries_required_anchors(visible: dict) -> bool:
+        raw_searchable = "\n".join(
+            str(visible.get(field) or "") for field in ("title", "text")
+        )
+        searchable = normalize_text(raw_searchable)
+        return all(
+            any(
+                contains_entity_anchor_alias(raw_searchable, searchable, alias)
+                for alias in group
+            )
+            for group in anchor_groups
+        )
+
     retained = []
     for candidate in candidates:
         copy = dict(candidate)
@@ -4427,23 +4578,23 @@ def retain_entity_anchored_evidence(
             retained.append(copy)
             continue
         copy["required_entity_anchors_verified"] = True
+        if question and max_chars_per_chunk is not None and anchor_only_evidence_window:
+            question_visible = freeze_prompt_visible_result(
+                question,
+                {**copy, "anchor_only_evidence_window": False},
+                max_chars_per_chunk,
+            )
+            question_visible["anchor_only_evidence_window"] = True
+            if carries_required_anchors(question_visible):
+                retained.append(question_visible)
+                continue
         visible = (
             freeze_prompt_visible_result(question, copy, max_chars_per_chunk)
             if question and max_chars_per_chunk is not None
             else copy
         )
-        raw_searchable = "\n".join(
-            str(visible.get(field) or "") for field in ("title", "text")
-        )
-        searchable = normalize_text(raw_searchable)
-        if all(
-            any(
-                contains_entity_anchor_alias(raw_searchable, searchable, alias)
-                for alias in group
-            )
-            for group in anchor_groups
-        ):
-            retained.append(copy)
+        if carries_required_anchors(visible):
+            retained.append(visible)
     return retained
 
 
@@ -4977,6 +5128,111 @@ def retrieval_result_key(result: dict) -> str:
     return f"{source_file}:{line_number}" if source_file and line_number else ""
 
 
+def effective_model_context(
+    args: argparse.Namespace | None = None, *, model: str | None = None,
+) -> int:
+    from originrag.analysis.answer_backends import base_url_for_backend, model_for_backend
+    from originrag.analysis.ollama_client import runner_num_ctx
+    from originrag.model_runtime import COLIBRI_MODELS, CURRENT_RUNTIME
+
+    context_window = answer_num_ctx()
+    runtime = CURRENT_RUNTIME.get()
+    if runtime and runtime.get("provider") == "colibri":
+        spec = COLIBRI_MODELS.get(runtime.get("model"), {})
+        context_window = int(spec.get("context") or 4096)
+    else:
+        backend = str(
+            getattr(args, "configured_answer_backend", None)
+            or getattr(args, "backend", "qwen") or "qwen"
+        )
+        model = (runtime or {}).get("model") or model or getattr(args, "answer_model", None) or model_for_backend(backend)
+        base_url = (runtime or {}).get("base_url") or base_url_for_backend(backend)
+        context_window = runner_num_ctx(context_window, model=model, base_url=base_url)
+    return context_window
+
+
+def plan_answer_context(args: argparse.Namespace, question: str) -> AnswerContextBudget:
+    context_window = effective_model_context(args)
+    base_pack = {"chunks": [], "conversation_context": getattr(args, "conversation_context", None)}
+    base_prompt = build_citation_answer_prompt(
+        question, base_pack, task="answer",
+        profile_instruction=str(getattr(args, "profile_instruction", "") or ""),
+    )
+    output_tokens = answer_num_predict()
+    return context_capacity(
+        context_window_tokens=context_window,
+        output_tokens=output_tokens,
+        base_prompt=base_prompt,
+        requested_evidence_tokens=getattr(args, "trace_token_budget", None),
+        repair_reserve_tokens=(output_tokens if getattr(args, "repair_attempts", 0) else 0),
+    )
+
+
+def budget_answer_candidates(
+    candidates: list[dict],
+    *,
+    question: str,
+    max_chars_per_chunk: int,
+    budget: AnswerContextBudget,
+    max_candidates: int = 100,
+    exploration_multiplier: int = 3,
+) -> tuple[list[dict], dict]:
+    if type(max_candidates) is not int or max_candidates < 1:
+        raise ValueError("max_candidates must be a positive integer")
+    if type(exploration_multiplier) is not int or not 1 <= exploration_multiplier <= 10:
+        raise ValueError("exploration_multiplier must be an integer between 1 and 10")
+    exploration_text_budget = budget.evidence_token_budget * exploration_multiplier
+    exploration_prompt_budget = budget.prompt_evidence_capacity * exploration_multiplier
+    primary = [row for row in candidates if not row.get("explicit_named_study_support")]
+    support = [row for row in candidates if row.get("explicit_named_study_support")]
+    selected: list[dict] = []
+    seen: set[str] = set()
+    text_tokens = prompt_tokens = 0
+    omitted = Counter()
+    for row in [*primary, *support]:
+        key = str(row.get("chunk_id") or "").strip()
+        if not key or not str(row.get("paper_id") or "").strip() or key in seen:
+            omitted["duplicate_or_missing_identity"] += 1
+            continue
+        seen.add(key)
+        frozen = freeze_prompt_visible_result(question, row, max_chars_per_chunk)
+        frozen = {**frozen, "chunk_id": key, "paper_id": str(row["paper_id"]).strip()}
+        if not str(frozen.get("text") or "").strip():
+            omitted["empty_text"] += 1
+            continue
+        if len(selected) >= max_candidates:
+            omitted["candidate_safety_limit"] += 1
+            continue
+        one_pack = build_evidence_pack(question, [frozen], max_chunks=1,
+                                       max_chars_per_chunk=max_chars_per_chunk)
+        text_cost = estimate_tokens(str(frozen["text"]))
+        prompt_cost = estimate_prompt_tokens(_format_evidence_text(one_pack)) + 32
+        if text_tokens + text_cost > exploration_text_budget:
+            omitted["evidence_budget"] += 1
+            continue
+        if prompt_tokens + prompt_cost > exploration_prompt_budget:
+            omitted["prompt_budget"] += 1
+            continue
+        selected.append({**frozen, "_answer_prompt_token_cost": prompt_cost})
+        text_tokens += text_cost
+        prompt_tokens += prompt_cost
+    return selected, {
+        "strategy": "ranked_distinct_papers_with_context_budget",
+        "candidate_count": len(candidates),
+        "candidate_paper_count": len({row.get("paper_id") for row in candidates if row.get("paper_id")}),
+        "shortlist_count": len(selected),
+        "shortlist_paper_count": len({row.get("paper_id") for row in selected if row.get("paper_id")}),
+        "evidence_estimated_tokens": text_tokens,
+        "serialized_evidence_estimated_tokens": prompt_tokens,
+        "exploration_multiplier": exploration_multiplier,
+        "exploration_evidence_token_budget": exploration_text_budget,
+        "exploration_prompt_token_budget": exploration_prompt_budget,
+        "candidate_safety_limit": max_candidates,
+        "omitted_by_reason": dict(omitted),
+        "complete_candidate_pool_included": not omitted,
+    }
+
+
 def shortlist_answer_candidates(
     results: list[dict],
     *,
@@ -5505,8 +5761,25 @@ def prompt_visible_answer_quality(
             for term in question_terms
         )
 
+    def inquiry_without_reported_result(sentence: str) -> bool:
+        inquiry = re.search(
+            r"\b(?:aim(?:s|ed)?|intend(?:s|ed)?|plan(?:s|ned)?|seek|seeks|sought)\s+to\b|"
+            r"\b(?:evaluat(?:e|es|ed|ing)|assess(?:es|ed|ing)?|investigat(?:e|es|ed|ing)|"
+            r"test(?:s|ed|ing)?|determin(?:e|es|ed|ing))\s+(?:whether|if|how)\b",
+            sentence, flags=re.IGNORECASE,
+        )
+        if not inquiry:
+            return False
+        return not re.search(
+            r"\b(?:and|but)\s+(?:we\s+)?(?:found|observed|measured|showed|"
+            r"demonstrated|identified|reported)\b",
+            sentence[inquiry.end():], flags=re.IGNORECASE,
+        )
+
     directional_result_hits = 0
     for index, sentence in enumerate(sentences):
+        if inquiry_without_reported_result(sentence):
+            continue
         if not ANSWER_DIRECTION_PATTERN.search(sentence):
             continue
         explicit_current_result = any(
@@ -5532,6 +5805,8 @@ def prompt_visible_answer_quality(
         )
     current_result_hits = 0
     for index, sentence in enumerate(sentences):
+        if inquiry_without_reported_result(sentence):
+            continue
         if not any(
             re.search(pattern, sentence, flags=re.IGNORECASE)
             for pattern in ANSWER_CURRENT_RESULT_PATTERNS
@@ -5557,6 +5832,8 @@ def prompt_visible_answer_quality(
         current_result_hits = max(current_result_hits, term_hits(sentence))
     relation_hits = 0
     for index, sentence in enumerate(sentences):
+        if inquiry_without_reported_result(sentence):
+            continue
         if not ANSWER_RELATION_PATTERN.search(sentence):
             continue
         explicit_current_result = any(
@@ -5608,6 +5885,7 @@ def merge_explicit_doi_anchors(
     *,
     chunks_dir: Path,
     papers_tsv: Path,
+    preserve_matching_passages: bool = False,
 ) -> list[dict]:
     """Keep every explicitly named local DOI in the prompt-visible candidate set."""
 
@@ -5642,6 +5920,12 @@ def merge_explicit_doi_anchors(
             }
         )
     anchored_ids = {str(row.get("paper_id") or "") for row in anchors}
+    if preserve_matching_passages:
+        anchored_chunks = {str(row.get("chunk_id") or "") for row in anchors}
+        return anchors + [
+            row for row in results
+            if str(row.get("chunk_id") or "") not in anchored_chunks
+        ]
     return anchors + [
         row for row in results if str(row.get("paper_id") or "") not in anchored_ids
     ]
@@ -6026,6 +6310,65 @@ def extract_explicit_dois(text: str) -> set[str]:
     return {normalize_doi_text(match) for match in matches if normalize_doi_text(match)}
 
 
+def exclusive_single_report_doi(question: str) -> str | None:
+    """Recognize explicit single-report instructions, never infer them from a DOI alone."""
+    requested = extract_explicit_dois(question)
+    if len(requested) != 1:
+        return None
+    normalized = normalize_text(question.casefold())
+    if re.search(
+        r"\b(?:compare|contrast|versus|vs|vergleiche|vergleichen|vergleich|gegenuber)\b|"
+        r"\b(?:not|nicht) (?:only|exclusively|solely|nur|ausschliesslich)\b|"
+        r"\b(?:not|dont|nicht) (?:limit|restrict|confine|beschrank\w*)\b|"
+        r"\b(?:other|additional|related|independent|weitere|anderen|andere|zusatzliche) "
+        r"(?:papers?|reports?|studies|articles?|literature|studien|artikel|berichte)\b",
+        normalized,
+    ):
+        return None
+    explicit_only = re.search(
+        r"\b(?:describe|discuss|explain|analyse|analyze|use|review|consider) "
+        r"(?:this|that|the|one) (?:single )?(?:paper|report|study|article) only\b|"
+        r"\b(?:describe|discuss|explain|analyse|analyze|use|review|consider) "
+        r"(?:only|exclusively|solely) (?:this|that|the|one) (?:single )?"
+        r"(?:paper|report|study|article)\b|"
+        r"\b(?:beschreibe|analysiere|verwende|nutze|erlautere|bitte) "
+        r"(?:nur|ausschliesslich) (?:dieses|diesen|diese|das|den|die) "
+        r"(?:(?:einzelne[nmsr]?|eine[nmsr]?) )?(?:paper|bericht|artikel|studie)\b",
+        normalized,
+    )
+    return next(iter(requested)) if explicit_only else None
+
+
+def retain_single_report_doi_candidates(
+    doi: str, results: list[dict], *, papers_tsv: Path,
+) -> tuple[list[dict], dict]:
+    """Apply report identity from captured metadata without changing evidence requirements."""
+    metadata = load_paper_metadata(papers_tsv)
+    matching_ids = {
+        paper_id for paper_id, paper in metadata.items()
+        if normalize_doi_text(str(paper.get("doi") or "")) == doi
+    }
+    if not matching_ids:
+        raise ValueError(
+            f"Requested single-report DOI {doi} is not present in the local catalogue. "
+            "No other reports were substituted."
+        )
+    selected = [row for row in results if str(row.get("paper_id") or "") in matching_ids]
+    if not selected:
+        raise ValueError(
+            f"Requested single-report DOI {doi} has no available retrieved local passages. "
+            "No other reports were substituted."
+        )
+    return selected, {
+        "kind": "exclusive_single_report_doi",
+        "doi": doi,
+        "paper_ids": sorted(matching_ids),
+        "candidate_count_before_scope": len(results),
+        "candidate_count_after_scope": len(selected),
+        "scope_only_not_evidence_sufficiency": True,
+    }
+
+
 def paper_search_record_matches_requested_doi(
     paper: dict,
     requested_dois: set[str],
@@ -6214,6 +6557,17 @@ def generate_with_qc_repair(
             qc_report=answer_qc,
             profile_instruction=profile_instruction,
         )
+        context_metadata = evidence_pack.get("answer_context_budget")
+        if context_metadata:
+            repair_fits = (
+                estimate_prompt_tokens(repair_prompt)
+                + context_metadata["output_reserve_tokens"]
+                + context_metadata["safety_margin_tokens"]
+                <= context_metadata["context_window_tokens"]
+            )
+            if not repair_fits:
+                answer_backend_meta["repair_stop_reason"] = "context_budget"
+                break
         repair_prompt_path = output_dir / f"answer_repair_prompt_{repair_index}.md"
         repair_prompt_path.write_text(repair_prompt, encoding="utf-8")
         if backend in {"ollama", "qwen", "deepseek"}:
@@ -6257,6 +6611,11 @@ def generate_with_qc_repair(
             break
         llm_result = repaired_result
         answer_qc = repaired_qc
+        if (not answer_qc.get("passed")
+                and llm_result.answer == previous_result.answer
+                and answer_qc == previous_qc):
+            answer_backend_meta["repair_stop_reason"] = "unchanged_answer"
+            break
     fallback_allowed = use_template_fallback and (evidence_is_sufficient or force_answer)
     if "repository_identifier_omitted" in answer_qc.get("warnings", []):
         deterministic_answer = build_data_accessibility_answer(
@@ -6296,6 +6655,8 @@ def generate_with_qc_repair(
             task,
             evidence_pack=evidence_pack,
         )
+        answer_backend_meta["backend_used"] = "template"
+        answer_backend_meta["template_fallback_used"] = True
         answer_qc = assess_answer_quality(llm_result.answer, evidence_pack, task=task)
         attempts.append(
             write_answer_attempt(
@@ -6411,10 +6772,22 @@ def label_secondary_citation_roles(
         r"reanalysis|protocol|commentary|synthesi[sz](?:es|ed|ing)?)\b",
         flags=re.IGNORECASE,
     )
+    abbreviation_pattern = re.compile(
+        r"\b(?:et\s+al|e\.g|i\.e|figs?|eqs?|refs?|dr|mr|mrs|ms|prof|vs|cf|no|vol|pp|[a-z])\.",
+        flags=re.IGNORECASE,
+    )
     body, separator, references = answer.partition("## References")
     output_lines = []
     for line in body.splitlines(keepends=True):
-        pieces = re.split(r"(?<!et al\.)(?<=[.!?])(\s+)", line)
+        protected_stops = {match.end() for match in abbreviation_pattern.finditer(line)}
+        pieces = []
+        start = 0
+        for boundary in re.finditer(r"(?<=[.!?])\s+", line):
+            if boundary.start() in protected_stops:
+                continue
+            pieces.extend((line[start:boundary.start()], boundary.group(0)))
+            start = boundary.end()
+        pieces.append(line[start:])
         for index in range(0, len(pieces), 2):
             claim = pieces[index]
             evidence_ids = re.findall(r"\bE\d{3}\b", claim)

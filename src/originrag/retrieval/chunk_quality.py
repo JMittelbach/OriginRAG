@@ -52,6 +52,18 @@ METHODS_TERMS = [
     "sample collection",
 ]
 
+_REFERENCE_NUMBER_ONLY = re.compile(r"^(?:\d{1,3}[.)]|\[\d{1,3}\])$")
+_REFERENCE_AUTHOR_START = re.compile(
+    r"^[A-ZÀ-ÖØ-Þ][^\W\d_]+(?:[-'’][^\W\d_]+)*,?\s+"
+    r"[A-Z](?:\.[A-Z])*[A-Z]{0,3}(?:\.|(?=[,;\s]|$))"
+)
+_REFERENCE_YEAR_VOLUME = re.compile(
+    r"\b(?:18|19|20)\d{2}\s*[;,]\s*\d{1,4}"
+    r"(?:\s*\([^()\n]{1,24}\))?\s*[:,]\s*[a-z]?\d+",
+    re.IGNORECASE,
+)
+_REFERENCE_LINK_MARKER = re.compile(r"\[(?:crossref|pubmed)\]", re.IGNORECASE)
+
 
 def classify_chunk_quality(text: str) -> ChunkQuality:
     stripped = (text or "").strip()
@@ -141,6 +153,21 @@ def _is_reference_like(lower: str, lines: list[str]) -> bool:
     return (
         doi_count >= 4
         or numbered_reference_lines >= 5
+        or _has_wrapped_bibliography_entries(lower, lines)
+    )
+
+
+def _has_wrapped_bibliography_entries(lower: str, lines: list[str]) -> bool:
+    author_entries = sum(
+        1 for index, line in enumerate(lines[:-1])
+        if _REFERENCE_NUMBER_ONLY.fullmatch(line)
+        and _REFERENCE_AUTHOR_START.match(lines[index + 1])
+    )
+    if author_entries < 3:
+        return False
+    return (
+        len(_REFERENCE_YEAR_VOLUME.findall(lower)) >= 2
+        or len(_REFERENCE_LINK_MARKER.findall(lower)) >= 3
     )
 
 

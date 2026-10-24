@@ -28,15 +28,25 @@ class AppProfile:
         return self.name != 'rag'
 
     @property
+    def folio(self):
+        return self.name == 'full'
+
+    @property
     def home(self):
         return '/write' if self.name == 'write' else '/chat'
 
     def public(self):
         return {'profile': self.name, 'home': self.home,
-                'features': {'rag': self.rag, 'write': self.write, 'library': True, 'shelf': True, 'reader': True}}
+                'features': {'rag': self.rag, 'write': self.write, 'folio': self.folio,
+                             'library': True, 'shelf': True, 'reader': True}}
 
     def permits(self, path):
-        if not self.rag and path in CHAT_ROUTES:
+        if path.startswith(('/assets/folio/build/', '/assets/folio/editor-build/')):
+            return False
+        if not self.folio and (path == '/folio' or path == '/api/folio'
+                               or path.startswith(('/api/folio/', '/assets/folio/'))):
+            return False
+        if not self.rag and path in CHAT_ROUTES | {'/api/models'}:
             return False
         if not self.write and (path == '/write' or path == '/api/writing/export'):
             return False

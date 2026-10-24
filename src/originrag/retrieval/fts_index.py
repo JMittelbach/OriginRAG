@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import threading
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
@@ -47,6 +48,11 @@ QUESTION_NOISE = {
     "information",
     "theses",
     "whatever",
+}
+SHORT_QUESTION_NOISE = {
+    "ab", "am", "at", "be", "da", "de", "do", "du", "er", "es",
+    "he", "if", "im", "it", "ja", "me", "my", "no", "ob", "so",
+    "um", "up", "us", "vs", "we", "wo", "zu",
 }
 
 
@@ -908,10 +914,8 @@ def load_index_candidate_records(
                 batch,
             ):
                 expected_paper_counts[str(paper_id)] = int(count)
-        returned_paper_counts = {
-            paper_id: sum(row[3] == paper_id for row in rows.values())
-            for paper_id in paper_ids
-        }
+        paper_counts = Counter(row[3] for row in rows.values())
+        returned_paper_counts = {paper_id: paper_counts[paper_id] for paper_id in paper_ids}
         if returned_paper_counts != expected_paper_counts:
             raise RetrievalIndexError(
                 "Candidate record store paper coverage disagrees with the FTS index"
@@ -1527,7 +1531,16 @@ def build_fts_query(query: str) -> str:
     base_terms = [
         term
         for term in query_tokens(query)
-        if len(term) >= 3 and term not in QUESTION_NOISE
+        if term not in QUESTION_NOISE
+        and (
+            len(term) >= 3
+            or (
+                len(term) == 2
+                and term.isalpha()
+                and term not in COMMON_TERMS
+                and term not in SHORT_QUESTION_NOISE
+            )
+        )
     ]
     terms = [term for term in base_terms if term not in COMMON_TERMS] or base_terms
     unique_terms = list(dict.fromkeys(terms))[:24]

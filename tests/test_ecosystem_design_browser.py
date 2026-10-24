@@ -110,7 +110,7 @@ def test_ecosystem_navigation_theme_focus_and_layout(design_page, theme, viewpor
         expect(page.locator(ready).first).to_be_visible()
         expect(page.locator('html')).to_have_attribute('data-theme', theme)
         expect(page.locator('html')).to_have_attribute('data-background', 'city-cat')
-        expect(page.locator('#globalNavigation nav a')).to_have_text(['OriginRAG', 'Bookshelf', 'Library', 'Quill'])
+        expect(page.locator('#globalNavigation nav a')).to_have_text(['OriginRAG', 'Bookshelf', 'Library', 'Quill', 'Folio'])
         current_fonts = page.locator('#globalNavigation nav a').evaluate_all('links => links.map(link => getComputedStyle(link).fontSize)')
         if navigation_fonts is None:
             navigation_fonts = current_fonts

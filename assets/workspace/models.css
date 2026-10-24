@@ -1,0 +1,18 @@
+.model-dialog { width:min(760px,calc(100vw - 32px)); max-height:85vh; overflow:auto; }
+.model-heading,.model-controls,.model-footer,.model-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+.model-heading { justify-content:space-between; }
+.model-heading h2 { margin:0; }
+.model-heading p,#modelAccess { opacity:.75; }
+.model-controls { margin:18px 0; }
+.model-controls label { display:flex; gap:8px; align-items:center; }
+.model-row { border-top:1px solid var(--border,#42515b); padding:16px 0; }
+.model-row-info { flex:1; min-width:200px; }
+.model-row-info strong { display:block; overflow-wrap:anywhere; }
+.model-row-info small { display:block; margin-top:6px; opacity:.8; }
+.model-row-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.model-footer { border-top:1px solid var(--border,#42515b); padding:16px 0; }
+#modelJob { padding:12px; border:1px solid var(--border,#42515b); border-radius:10px; }
+#modelProgress { width:100%; margin-bottom:8px; }
+#modelError { color:var(--danger,#ed8b83); }
+#modelWarning { color:var(--warning,#d3ad6e); }
+.model-dialog [hidden] { display:none !important; }

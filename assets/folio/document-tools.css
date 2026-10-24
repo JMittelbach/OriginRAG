@@ -1,0 +1,30 @@
+#folioApp .folio-quick-access{display:flex;gap:2px;align-items:center;flex-shrink:0}
+#folioApp .folio-quick-access button{padding:4px 5px}
+#folioApp .folio-pen-gallery{display:flex;gap:3px;background:var(--folio-chrome-2);border:1px solid var(--folio-chrome-border);border-radius:5px;padding:2px 6px}
+#folioApp .folio-pen-preset{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:66px;padding:0 6px;background:none;border:1px solid transparent;border-radius:3px;cursor:pointer;color:var(--folio-chrome-ink)}
+#folioApp .folio-pen-preset:hover{background:var(--folio-chrome-hover);border-color:var(--folio-chrome-border)}
+#folioApp .folio-pen-preset svg{height:55px;width:36px;color:var(--pen-colour);filter:drop-shadow(0 1px 1px #ffffff50)}
+#folioApp .folio-pen-preset svg path{fill:var(--pen-colour);stroke:var(--folio-chrome-ink)}
+#folioApp .folio-pen-preset span{font-size:9px}
+#folioApp .folio-design-gallery{display:flex;gap:8px}
+#folioApp .folio-design-style{display:flex;flex-direction:column;align-items:center;gap:5px;padding:0 0 3px;flex-shrink:0;border:1px solid var(--folio-chrome-border);border-radius:3px;background:var(--folio-chrome-2);color:var(--folio-chrome-ink);cursor:pointer}
+#folioApp .folio-design-style:hover{border-color:#7c9dc2;box-shadow:0 0 0 1px #7c9dc2}
+#folioApp .folio-design-sample{display:flex;flex-direction:column;align-items:flex-start;background:#fff;color:#202020;font-family:var(--sample-font);width:110px;height:64px;padding:7px;overflow:hidden;text-align:left;gap:3px}
+#folioApp .folio-design-sample strong{font-size:16px;line-height:1;color:var(--sample-color)}
+#folioApp .folio-design-sample b{font-size:8px;line-height:1;color:var(--sample-color)}
+#folioApp .folio-design-sample :is(span,i){font-size:5px;line-height:1.2}
+#folioApp .folio-design-name{font-size:10px}
+.folio-paragraph-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.folio-symbol-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:5px;margin:12px 0}
+.folio-symbol-grid button{font-size:20px;min-height:38px;background:#fff;border:1px solid #c6d0db;border-radius:4px;color:#223149;cursor:pointer}
+.folio-symbol-grid button:hover{background:#e8f0fc}
+#folioNotes{margin-top:48px;border-top:1px solid #bbb;padding-top:12px;color:#202020;font-family:Arial,sans-serif;font-size:10pt}
+#folioNotes h2{font-size:11pt;margin:12px 0 8px}
+#folioNotes ol{padding-left:24px;margin:0}
+#folioNotes li{padding-left:4px;margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+#folioNotes .folio-note-text{color:inherit;text-align:left;font:inherit;background:none;border:0;padding:0;cursor:pointer}
+#folioNotes .folio-note-text:hover{text-decoration:underline;text-decoration-color:#7893b0}
+#folioPaper [data-folio-note-id]{color:#365e94;cursor:pointer}
+.folio-dialog .folio-note-input{min-height:150px;resize:vertical}
+@media(max-width:600px){#folioApp .folio-quick-access{display:none}.folio-paragraph-grid{grid-template-columns:1fr}.folio-symbol-grid{grid-template-columns:repeat(6,1fr)}}
+@media print{#folioNotes{break-before:auto}#folioNotes li{break-inside:avoid}#folioNotes .folio-note-text{display:inline!important;box-shadow:none!important;border:0!important;background:none!important;text-decoration:none!important;color:#000!important}}

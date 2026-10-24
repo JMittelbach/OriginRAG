@@ -1140,13 +1140,12 @@ def select_fallback_citation_chunks(
     question: str = "",
     evidence_pack: dict | None = None,
 ) -> list[dict]:
-    """Prefer one clean excerpt per paper and match the broad-answer QC floor."""
+    """Represent the supplied papers with one citeable excerpt per paper.
 
-
-
-
-
-
+    Retrieval already bounds the evidence pack; a QC minimum is not a source
+    budget. Keep direct-comparison and clean-excerpt priority without imposing
+    another paper-count cap on the generic fallback.
+    """
     named_chunks = [
         chunk for chunk in chunks if chunk.get("explicit_named_study_anchor")
     ] + [
@@ -1170,10 +1169,9 @@ def select_fallback_citation_chunks(
             selected_named.append(chunk)
         return selected_named
 
-    unique_papers = {str(chunk.get("paper_id") or "") for chunk in chunks if chunk.get("paper_id")}
-    target = 8 if len(unique_papers) >= 12 else 4 if len(unique_papers) >= 5 else min(6, len(unique_papers))
     selected: list[dict] = []
-    seen_papers: set[str] = set()
+    seen_papers: set[tuple[str, str]] = set()
+    seen_evidence: set[str] = set()
     clean = [chunk for chunk in chunks if not chunk.get("quality_flags")]
     prioritized: list[dict] = []
     if explicit_evidence_strength_question(question):
@@ -1188,13 +1186,16 @@ def select_fallback_citation_chunks(
         chunk for chunk in chunks if chunk.get("quality_flags")
     ]
     for chunk in ordered:
-        paper_id = str(chunk.get("paper_id") or chunk.get("evidence_id") or "")
-        if paper_id in seen_papers:
+        evidence_id = str(chunk.get("evidence_id") or "").strip()
+        if not evidence_id or evidence_id in seen_evidence:
+            continue
+        paper_id = str(chunk.get("paper_id") or "").strip()
+        paper_key = ("paper", paper_id) if paper_id else ("evidence", evidence_id)
+        if paper_key in seen_papers:
             continue
         selected.append(chunk)
-        seen_papers.add(paper_id)
-        if len(selected) >= target:
-            break
+        seen_papers.add(paper_key)
+        seen_evidence.add(evidence_id)
     return selected
 
 

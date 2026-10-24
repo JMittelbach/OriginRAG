@@ -1563,10 +1563,6 @@ def test_paper_search_explanations_are_question_specific_and_keep_ranking() -> N
         "used": True,
         "model": "qwen-test",
         "error": None,
-        "prompt_eval_count": 0,
-        "eval_count": 0,
-        "load_duration": 0,
-        "total_duration": 0,
     }
 
 
@@ -4236,6 +4232,73 @@ def test_failed_final_qc_quarantines_draft(tmp_path: Path) -> None:
     assert rejected_path.read_text(encoding="utf-8") == "Unsafe draft\n"
 
 
+@pytest.mark.parametrize("failure", ["quality", "grounding", "model", "lineage"])
+def test_failed_answer_disposition_reports_the_actual_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tyear\tdoi\nP1\tNumerical calibration methods\t2024\t10.1000/example\n",
+                      encoding="utf-8")
+    (chunks / "P1.jsonl").write_text(json.dumps({
+        "chunk_id": "C1", "paper_id": "P1", "section": "results",
+        "text": "The numerical calibration method estimates measurement uncertainty. " * 12,
+    }) + "\n", encoding="utf-8")
+    args = make_args("What numerical calibration methods are described?", str(chunks), str(papers), "qwen")
+    args.evidence_selector = "trace_flow"
+    args.allow_provisional_synthesis = failure != "lineage"
+    grade = ask_corpus.grade_evidence_pack
+
+    def usable_retrieval(pack):
+        report = grade(pack)
+        report["grade"] = "usable"
+        return report
+
+    monkeypatch.setattr(ask_corpus, "grade_evidence_pack", usable_retrieval)
+    draft = "The method makes an unsupported claim [[cite:E999]]."
+    generation_calls = []
+
+    def generated(**kwargs):
+        generation_calls.append(kwargs)
+        return (
+            ask_corpus.LLMResult(backend="qwen", answer=None if failure in {"model", "lineage"} else draft,
+                                error="model_timeout" if failure == "model" else None),
+            {"passed": False if failure == "quality" else None if failure in {"model", "lineage"} else True,
+             "warnings": ["unsupported_concrete_terms"] if failure == "quality" else []},
+            [],
+            {"backend_requested": "qwen", "backend_used": "qwen", "model": "test",
+             "call_performed": failure != "lineage", "blocked": failure == "lineage"},
+        )
+
+    monkeypatch.setattr(ask_corpus, "generate_with_qc_repair", generated)
+    result = ask_corpus.run_question(args, tmp_path / "run")
+    config = json.loads((tmp_path / "run" / "run_config.json").read_text())
+
+    assert config["evidence_sufficient_for_answer"] is False
+    assert config["provisional_synthesis_authorized"] is (failure != "lineage")
+    assert generation_calls[0]["evidence_is_sufficient"] is (failure != "lineage")
+    assert result["answer_path"] is None
+    assert config["answer_withheld_by_lineage_certificate"] is (failure == "lineage")
+    if failure == "quality":
+        assert config["answer_rejected_by_qc"] is True
+        assert config["answer_withheld_reason"] == "answer_quality_check"
+        message = result["withheld_answer_path"].read_text()
+        assert "quality check failed" in message
+        assert "unsupported_concrete_terms" in message
+        assert "independent origins unresolved" not in message
+        assert result["rejected_answer_path"].read_text().strip() == draft
+    elif failure == "lineage":
+        assert config["answer_withheld_reason"] == "lineage_certificate"
+        assert result["withheld_answer_path"] is not None
+        assert config["answer_rejected_by_qc"] is False
+    else:
+        assert result["withheld_answer_path"] is None
+        assert config["answer_withheld_reason"] is None
+        if failure == "grounding":
+            assert config["answer_rejected_by_grounding"] is True
+
+
 def test_aggregate_answer_usage_counts_all_model_attempts() -> None:
     aggregate = ask_corpus.aggregate_answer_usage(
         [
@@ -4380,6 +4443,109 @@ def test_translated_question_reaches_unchanged_trace_selector(tmp_path, monkeypa
     with pytest.raises(ReachedTrace):
         ask_corpus.run_question(args, tmp_path / "run")
     assert args.question == original
+
+
+def test_prepared_inventory_cleanup_and_identifier_budget_reach_actual_retrieval(
+    tmp_path, monkeypatch,
+):
+    from originrag.analysis import question_understanding
+    from originrag.analysis.ollama_client import OllamaResult
+
+    original = "Welche Methoden für SAMPLE123 stehen im Korpus?"
+    normalized = "Which methods for SAMPLE123 occur in the corpus?"
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    title = "Numerical measurements for SAMPLE123"
+    text = "Numerical calibration methods were used for SAMPLE123 measurements. " * 12
+    (chunks / "P1.jsonl").write_text(json.dumps({
+        "paper_id": "P1", "chunk_id": "C1", "section": "methods", "text": text,
+    }) + "\n", encoding="utf-8")
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tyear\tdoi\nP1\t" + title + "\t2024\t10.1000/example\n",
+                      encoding="utf-8")
+    args = make_args(original, str(chunks), str(papers), "none")
+    args.configured_answer_backend = "qwen"
+    args.understand_question = True
+    payload = {"normalized_question": normalized, "intent": "corpus_inventory",
+               "language": "de", "unclear": False,
+               "search_queries": ["in the corpus", "measurement calibration", "SAMPLE123 measurements"]}
+    calls = []
+
+    def prepare_reply(prompt, **kwargs):
+        calls.append(prompt)
+        return OllamaResult(text=json.dumps(payload), model="synthetic", base_url="http://unused",
+                            call_performed=True, error=None)
+
+    monkeypatch.setattr(question_understanding, "call_ollama_generate", prepare_reply)
+    monkeypatch.setattr(ask_corpus, "max_retrieval_queries", lambda *a: 1)
+    monkeypatch.setattr(ask_corpus, "extract_inventory", lambda *a, **k: {
+        "scope": "retrieved_reports_only", "status": "verified_mentions", "items": []})
+    emitted_queries = []
+    retrieve = ask_corpus.retrieve_chunks_for_queries
+
+    def capture_retrieval(**kwargs):
+        emitted_queries.extend(query.query for query in kwargs["retrieval_queries"])
+        return retrieve(**kwargs)
+
+    monkeypatch.setattr(ask_corpus, "retrieve_chunks_for_queries", capture_retrieval)
+    result = ask_corpus.run_question(args, tmp_path / "run")
+
+    assert len(calls) == 1
+    assert emitted_queries == ["SAMPLE123 measurements"]
+    assert result["pack"]["question_understanding"]["search_queries"] == [
+        "measurement calibration", "SAMPLE123 measurements"]
+    assert {row["paper_id"] for row in result["results"]} == {"P1"}
+    assert [query["query"] for query in result["pack"]["retrieval_queries"]] == emitted_queries
+    saved_plan = json.loads(result["query_plan_path"].read_text())
+    assert saved_plan["query_plan_source"] == question_understanding.UNDERSTANDING_VERSION
+    assert "search_queries_reordered_to_preserve_identifiers" in saved_plan["warnings"]
+    saved_config = json.loads((tmp_path / "run" / "run_config.json").read_text())
+    assert saved_config["answer_call_performed"] is False
+
+
+@pytest.mark.parametrize("question,normalized,queries,error", [
+    ("Which methods occur in the corpus?", "Which methods occur in the corpus?",
+     ["in the corpus"], "invalid_query_plan"),
+    ("Welche Studien verwenden mindestens 10 Messungen?",
+     "Which studies use at most 10 measurements?",
+     ["studies 10 measurements"], "normalization_changed_numeric_comparison"),
+    ("Welche Methoden benötigen weder Simulationen noch Sensoren?",
+     "Which methods need simulations and sensors?",
+     ["methods simulations sensors"], "normalization_lost_negation"),
+])
+def test_invalid_preparation_fails_before_retrieval_or_evidence_decision(
+    tmp_path, monkeypatch, question, normalized, queries, error,
+):
+    from originrag.analysis import question_understanding
+    from originrag.analysis.ollama_client import OllamaResult
+
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tdoi\n", encoding="utf-8")
+    args = make_args(question, str(chunks), str(papers), "none")
+    args.configured_answer_backend = "qwen"
+    args.understand_question = True
+    payload = {"normalized_question": normalized, "intent": "corpus_inventory",
+               "language": "en", "unclear": False, "search_queries": queries}
+    monkeypatch.setattr(question_understanding, "call_ollama_generate", lambda *a, **k: OllamaResult(
+        text=json.dumps(payload), model="synthetic", base_url="http://unused",
+        call_performed=True, error=None))
+    monkeypatch.setattr(ask_corpus, "retrieve_chunks_for_queries", lambda *a, **k: pytest.fail(
+        "An invalid prepared query must not reach retrieval"))
+    monkeypatch.setattr(ask_corpus, "grade_evidence_pack", lambda *a, **k: pytest.fail(
+        "A preparation error is not a missing-evidence decision"))
+
+    with pytest.raises(ValueError, match="search question could not be prepared reliably"):
+        ask_corpus.run_question(args, tmp_path / "run")
+
+    saved = json.loads((tmp_path / "run" / "question_understanding.json").read_text())
+    assert saved["status"] == "needs_clarification"
+    assert saved["error"] == error
+    assert "evidence_sufficient" not in saved
+    assert not (tmp_path / "run" / "query_plan.json").exists()
+    assert not (tmp_path / "run" / "answer_withheld.md").exists()
+    assert not (tmp_path / "run" / "run_config.json").exists()
 
 
 def make_args(question: str, chunks_dir: str, papers: str, backend: str) -> SimpleNamespace:

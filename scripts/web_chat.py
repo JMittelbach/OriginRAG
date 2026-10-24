@@ -40,12 +40,14 @@ from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_questi
 from originrag.analysis.faithfulness import citation_claim_blocks, direct_evidence_text  # noqa: E402
 from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
 from originrag.web_local_access import local_browser_request  # noqa: E402
+from originrag.model_runtime import manager_for, model_download_allowed, model_manage_allowed  # noqa: E402
 from originrag.library_topics import assign_library_topics  # noqa: E402
 from originrag.personal_shelf import PersonalShelf  # noqa: E402
 from originrag.reading_history import ReadingHistory, reading_query  # noqa: E402
 from originrag.reader_notes import ReaderNotes, NoteConflict, document_key, notebook_paper_key, validate_notebook  # noqa: E402
 from originrag.web_reader import HTML as READER_HTML  # noqa: E402
 from originrag.web_workspace import HTML as WORKSPACE_HTML, PAGES as WORKSPACE_PAGES, handle_writing  # noqa: E402
+from originrag.web_folio import HTML as FOLIO_HTML, handle_folio  # noqa: E402
 from originrag.writing_collaboration import WritingCollaboration  # noqa: E402
 from originrag.provenance.library import (  # noqa: E402
     LibraryStatusResolver,
@@ -204,7 +206,7 @@ class WebChatSettings:
 
 
 
-    trace_token_budget: int = 2000
+    trace_token_budget: int | None = None
 
 
 class WebChatApp:
@@ -307,11 +309,17 @@ class WebChatApp:
                 target_session,
                 infer_session_title(clean_message, resolved_task),
             )
-            result = ask_corpus.run_question(
-                turn_args,
-                turn_dir,
-                progress_callback=progress_callback,
-            )
+            with manager_for(REPO_ROOT).session() as model_selection:
+                if model_selection:
+                    turn_args.answer_model = model_selection["model"]
+                    turn_args.planner_model = model_selection["model"]
+                result = ask_corpus.run_question(
+                    turn_args,
+                    turn_dir,
+                    progress_callback=progress_callback,
+                )
+                if model_selection:
+                    result["model_runtime"] = model_selection
             commit_answer()
             resolved_task = result.get("resolved_task", resolved_task)
             retrieval_question = result.get("retrieval_question", retrieval_question)
@@ -623,6 +631,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.open:
         webbrowser.open(url)
+    import signal
+    def stop_web_service(*_):
+        raise KeyboardInterrupt
+    old_termination_handler = signal.signal(signal.SIGTERM, stop_web_service)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -631,7 +643,9 @@ def main(argv: list[str] | None = None) -> int:
         if handler.turn_job_manager:
             handler.turn_job_manager.shutdown()
         handler.paper_import_manager.shutdown()
+        manager_for(REPO_ROOT).close()
         server.server_close()
+        signal.signal(signal.SIGTERM, old_termination_handler)
     return 0
 
 
@@ -643,7 +657,7 @@ def environment_flag(name: str, *, default: bool) -> bool:
 
 
 def safe_login_target(value):
-    return value if isinstance(value, str) and re.fullmatch(r'/write\?id=[0-9a-f]{32}', value) else '/'
+    return value if isinstance(value, str) and re.fullmatch(r'/(?:write\?id=[0-9a-f]{32}|folio(?:\?id=[0-9a-f]{32})?)', value) else '/'
 
 
 @dataclass
@@ -1723,6 +1737,19 @@ def build_handler(
             if not context:
                 return
             current_app, user, _ = context
+            if parsed.path == "/api/models":
+                local = not auth_store and local_browser_request(
+                    self.server.server_address, self.client_address, self.headers)
+                if not user and not local:
+                    self.respond_json({"error": "Use a local browser or sign in."}, status=HTTPStatus.FORBIDDEN)
+                    return
+                can_manage = bool(local or model_manage_allowed(user))
+                snapshot = manager_for(REPO_ROOT).snapshot(can_manage)
+                snapshot["can_use"] = bool(local or user)
+                snapshot["can_download"] = bool(local or model_download_allowed(user))
+                snapshot["local_token"] = local_import_token if local else ""
+                self.respond_json(snapshot)
+                return
             owner_key = user.user_id if user else "anonymous"
             if turn_jobs is not None and not isinstance(current_app, WorkspaceApp):
                 turn_jobs.recover_persisted(owner_key, current_app)
@@ -1738,6 +1765,15 @@ def build_handler(
                 return
             if parsed.path in {"/", "/chat"}:
                 self.respond_text(navigation_for_profile(INDEX_HTML, runtime_profile), content_type="text/html; charset=utf-8")
+                return
+            if parsed.path in {'/folio', '/api/folio', '/api/folio/export'}:
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({'error': 'Use the local browser or sign in to open your documents.'}, status=HTTPStatus.FORBIDDEN)
+                    return
+                if parsed.path == '/folio':
+                    self.respond_text(navigation_for_profile(FOLIO_HTML, runtime_profile), content_type='text/html; charset=utf-8')
+                else:
+                    handle_folio(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir)
                 return
             if parsed.path in WORKSPACE_PAGES or parsed.path in {"/api/writing", "/api/writing/export", "/api/writing/bibliography"} | collaboration_routes:
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
@@ -2003,6 +2039,34 @@ def build_handler(
                 turn_jobs.recover_persisted(owner_key, current_app)
             if auth_store and not self.valid_csrf(session_token):
                 self.respond_json({"error": "invalid CSRF token"}, status=HTTPStatus.FORBIDDEN)
+                return
+            if parsed.path == "/api/models":
+                local = not auth_store and local_browser_request(
+                    self.server.server_address, self.client_address, self.headers)
+                supplied = str(self.headers.get("X-OriginRAG-Local-Token") or "")
+                try:
+                    payload = self.read_json_body()
+                    action = payload.get("action") if isinstance(payload, dict) else None
+                    permitted_user = (
+                        model_download_allowed(user) if action in {"download", "cancel"}
+                        else bool(user) if action in {"select", "default", "benchmark"}
+                        else model_manage_allowed(user)
+                    )
+                    if not ((auth_store and permitted_user) or
+                            (local and supplied and hmac.compare_digest(supplied, local_import_token))):
+                        self.respond_json({"error": "Your account is not allowed to perform this model operation."},
+                                          status=HTTPStatus.FORBIDDEN)
+                        return
+                    manager_for(REPO_ROOT).change(payload)
+                    self.respond_json({"accepted": True}, status=HTTPStatus.ACCEPTED)
+                except (ValueError, OSError) as exc:
+                    self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if parsed.path == '/api/folio':
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({'error': 'Use the local browser or sign in to edit documents.'}, status=HTTPStatus.FORBIDDEN)
+                    return
+                handle_folio(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, post=True)
                 return
             if parsed.path == "/api/writing" or parsed.path in collaboration_routes:
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
@@ -2505,7 +2569,7 @@ def build_handler(
 
         def read_json_body(self, *, reject_duplicate_fields: bool = False) -> dict:
             length = int(self.headers.get("Content-Length") or "0")
-            limit = 36_000_000 if urlparse(self.path).path == "/api/writing" else 1_000_000
+            limit = {'/api/writing': 36_000_000, '/api/folio': 12_000_000}.get(urlparse(self.path).path, 1_000_000)
             if length < 0 or length > limit:
                 raise ValueError("Request body is too large.")
             raw = self.rfile.read(length).decode("utf-8")
@@ -2554,6 +2618,10 @@ def build_handler(
                 self.respond_json(
                     {"error": "asset path must stay inside assets/"}, status=HTTPStatus.BAD_REQUEST
                 )
+                return
+            canonical_route = '/assets/' + asset_path.relative_to((REPO_ROOT / 'assets').resolve()).as_posix()
+            if not runtime_profile.permits(canonical_route):
+                self.respond_json({'error': 'not found'}, status=HTTPStatus.NOT_FOUND)
                 return
             if not asset_path.exists() or not asset_path.is_file():
                 self.respond_json({"error": "asset not found"}, status=HTTPStatus.NOT_FOUND)
@@ -2653,7 +2721,7 @@ def build_handler(
 
         def send_security_headers(self) -> None:
             self.send_header("Cache-Control", "no-store")
-            if urlparse(self.path).path in WORKSPACE_PAGES | {"/reader"} or urlparse(self.path).path.startswith("/assets/vendor/pdfjs/"):
+            if urlparse(self.path).path in WORKSPACE_PAGES | {"/reader", "/folio"} or urlparse(self.path).path.startswith("/assets/vendor/pdfjs/"):
                 policy = f"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval' 'sha256-{APPEARANCE_SCRIPT_HASH}'; worker-src 'self'; font-src 'self' blob: data:; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
             else:
                 policy = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
@@ -3981,25 +4049,15 @@ def public_question_field_provenance(
             "model_extracted_unverified"
             if raw_status in {"qwen_grounded", "model_extracted_unverified"}
             else (
-                "deterministic_excerpt_supported"
-                if raw_status == "deterministic_excerpt_supported"
+                raw_status
+                if raw_status in {
+                    "deterministic_excerpt_supported", "not_assessed_context_budget",
+                }
                 else "not_reported_fallback"
             )
         )
     unique_statuses = set(statuses.values())
-    overall = (
-        "model_extracted_unverified"
-        if unique_statuses == {"model_extracted_unverified"}
-        else (
-            "not_reported_fallback"
-            if unique_statuses == {"not_reported_fallback"}
-            else (
-                "deterministic_excerpt_supported"
-                if unique_statuses == {"deterministic_excerpt_supported"}
-                else "mixed_extraction"
-            )
-        )
-    )
+    overall = next(iter(unique_statuses)) if len(unique_statuses) == 1 else "mixed_extraction"
     return fields, statuses, overall
 
 
@@ -4983,7 +5041,7 @@ LOGIN_HTML = r"""<!doctype html>
       .forEach((element) => element.addEventListener("input", updatePasswordStrength));
 
     const returnTargets = new URLSearchParams(window.location.search).getAll("next");
-    const loginTarget = returnTargets.length === 1 && /^\/write\?id=[0-9a-f]{32}$/.test(returnTargets[0]) ? returnTargets[0] : "/";
+    const loginTarget = returnTargets.length === 1 && /^\/(?:write\?id=[0-9a-f]{32}|folio(?:\?id=[0-9a-f]{32})?)$/.test(returnTargets[0]) ? returnTargets[0] : "/";
     document.getElementById("loginForm").addEventListener("submit", async (event) => {
       event.preventDefault();
       const message = document.getElementById("loginMessage");
@@ -7946,13 +8004,18 @@ INDEX_HTML = r"""<!doctype html>
         label.className = "paper-detail-label";
         label.textContent = fieldLabels[name];
         const value = document.createElement("span");
-        const text = fields[name] || "not reported in supplied evidence";
+        const notAssessed = fieldStatuses[name] === "not_assessed_context_budget";
+        const text = fields[name] || (notAssessed
+          ? "Not assessed because the annotation context budget was exceeded"
+          : "not reported in supplied evidence");
         value.className = `paper-detail-value${text === "not reported in supplied evidence" ? " not-reported" : ""}`;
         value.textContent = text;
         value.title = fieldStatuses[name] === "model_extracted_unverified"
           ? "Model-extracted from supplied excerpts; not independently verified"
           : fieldStatuses[name] === "deterministic_excerpt_supported"
             ? "Deterministically supported by an explicit statement in the supplied excerpt"
+            : notAssessed
+              ? "Not assessed because the annotation context budget was exceeded"
             : "Not extracted from the supplied excerpts";
         row.append(label, value);
         grid.appendChild(row);
@@ -7964,8 +8027,10 @@ INDEX_HTML = r"""<!doctype html>
         ? "Model-extracted from retrieved excerpts; verify against the full paper."
         : source.question_fields_status === "deterministic_excerpt_supported"
           ? "Requested fields are supported by explicit statements in the retrieved excerpts."
+        : source.question_fields_status === "not_assessed_context_budget"
+          ? "Annotation was not assessed because its context budget was exceeded. This does not establish that the paper omits these details."
         : source.question_fields_status === "mixed_extraction"
-          ? "Fields have mixed provenance; unresolved fields are marked not reported."
+          ? "Fields have mixed provenance; check each field for its assessment status."
           : "Extraction was incomplete; every unresolved field is marked not reported.";
       cell.appendChild(note);
       return cell;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from originrag.model_runtime import CURRENT_RUNTIME
 
 from originrag.analysis.llm_backends import LLMResult
 from originrag.analysis.ollama_client import (
@@ -8,6 +9,7 @@ from originrag.analysis.ollama_client import (
     answer_model,
     call_ollama_generate,
     env_value,
+    valid_usage_counter,
 )
 
 
@@ -65,7 +67,8 @@ def generate_answer_with_backend(
             model=model,
             call_performed=False,
         )
-    resolved_model = model or model_for_backend(requested)
+    runtime = CURRENT_RUNTIME.get()
+    resolved_model = runtime["model"] if runtime else model or model_for_backend(requested)
     if not evidence_is_sufficient and not force_answer:
         return AnswerBackendResult(
             llm_result=LLMResult(
@@ -102,13 +105,13 @@ def generate_answer_with_backend(
     )
     return AnswerBackendResult(
         llm_result=LLMResult(
-            backend=requested,
+            backend=runtime["provider"] if runtime else requested,
             answer=result.text,
             error=result.error,
             usage=ollama_usage(result.metadata),
         ),
         backend_requested=requested,
-        backend_used=requested,
+        backend_used=runtime["provider"] if runtime else requested,
         model=result.model,
         call_performed=result.call_performed,
     )
@@ -129,10 +132,10 @@ def required_answer_prefix(prompt: str, model: str) -> str | None:
 
 
 def ollama_usage(metadata: dict | None) -> dict[str, int] | None:
-    if not metadata:
+    if not isinstance(metadata, dict) or not metadata:
         return None
     usage = {
-        key: int(metadata[key])
+        key: metadata[key]
         for key in (
             "prompt_eval_count",
             "eval_count",
@@ -141,7 +144,7 @@ def ollama_usage(metadata: dict | None) -> dict[str, int] | None:
             "load_duration",
             "total_duration",
         )
-        if metadata.get(key) is not None
+        if valid_usage_counter(metadata.get(key))
     }
     return usage or None
 

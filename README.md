@@ -10,7 +10,8 @@ support they provide, including when their relationships are uncertain.
 
 - **Search and browse** by title, author or DOI without a language model.
 - **Find new papers** on any topic, optionally restrict by journal, and add open-access PDFs to your library.
-- **Chat with your papers** using a local model through Ollama.
+- **Chat with your papers** using a local model through Ollama, with optional
+  experimental Colibri support.
 - **Inspect the evidence:** follow citations, read source passages and review
   possible study overlap.
 
@@ -31,6 +32,9 @@ a few practical tools around the corpus:
   side. It can connect a manuscript to a Library collection and insert its
   references. Quill is useful for writing, but it is separate from the
   OriginRAG evidence workflow and does not require a language model.
+- **Folio (full installation):** a visual document editor with a ribbon,
+  text formatting, tables, images, comments and DOCX import/export. Write
+  directly on the page without LaTeX or a language model.
 
 ## Install
 
@@ -53,7 +57,7 @@ Choose the modules you need:
 
 | Profile | Included |
 | --- | --- |
-| `full` | OriginRAG plus the optional Quill writing workspace |
+| `full` | OriginRAG, Quill and the Folio document editor |
 | `rag` | OriginRAG |
 | `write` | Quill writing workspace, without OriginRAG or a language model |
 
@@ -74,7 +78,11 @@ For a virtual environment, see [Getting started](docs/getting_started.md#1-insta
 Generated answers additionally need [Ollama](https://ollama.com/), a compatible
 text model (Qwen by default) and legally obtained PDFs. Check the
 [model and memory guidance](docs/models.md)
-before choosing a model. Use a source checkout for the complete application;
+before choosing a model. In the web app, **Settings → Models & runtimes** lets
+you see installed models, download supported models and measure their speed.
+On a shared server, administrators control model selection; hosts can grant
+download access to specific accounts.
+Use a source checkout for the complete application;
 the Python wheel alone does not include the launchers or corpus.
 
 ## Try it
@@ -181,13 +189,25 @@ See the [first-answer walkthrough](docs/web_chat.md#first-answer-walkthrough)
 and [corpus guide](docs/getting_started.md#4-import-and-index-pdfs) for filing,
 paper discovery and open-access downloads.
 
-## Optional writing workspace
+## Writing tools
 
 If Quill is enabled, open it from the application switcher or at `/write`.
 It provides a compact LaTeX editor with a PDF preview, autosave, templates and
 ZIP import/export. A manuscript can use a private Library collection for its
 bibliography. PDF compilation requires an isolated TeX setup; editing and export
 work without it. See [the writing guide](docs/writing.md) for details.
+
+In the full installation, **Folio** opens from the same switcher or at `/folio`.
+Documents autosave to your local workspace, or to your own account when the
+server requires sign-in. **File → Save as…** exports DOCX, HTML, text or JSON to
+your computer; **Print or save PDF** provides PDF output.
+Folio is a separate editor, not Microsoft Word: DOCX conversion supports the
+editor's formatting but does not preserve every Word feature or exact page
+layout. Keep the original when importing complex documents. Live co-editing
+and tracked changes are not included; conflicting saves do not silently
+overwrite a newer version.
+See [Folio's editing guide and Word compatibility](docs/writing.md#write-a-formatted-document-with-folio)
+for picture/table controls, recovery and supported document features.
 
 ## Understand the evidence
 

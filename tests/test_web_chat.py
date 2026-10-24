@@ -56,6 +56,73 @@ from web_chat import (  # noqa: E402
 from originrag.web_auth import AuthStore  # noqa: E402
 
 
+@pytest.fixture
+def synthetic_library_resources(tmp_path: Path):
+    """Build a real, neutral library without relying on any local user corpus."""
+    library_dir = tmp_path / "synthetic_library"
+    bib_dir = library_dir / "bib"
+    chunks_dir = library_dir / "chunks"
+    bib_dir.mkdir(parents=True)
+    chunks_dir.mkdir()
+    registry_path = library_dir / "paper_registry.tsv"
+    papers_path = library_dir / "papers.tsv"
+    registry_path.write_text(
+        "paper_id\tauthor\tyear\ttitle\tjournal\tdoi\tlocal_pdf_relpath\tcategory\tbib_key\n"
+        "CATALOG001\tBenchmarkAuthor\t2025\tDatabase query latency benchmark\t"
+        "Synthetic Computing Journal\t10.1000/catalogue-test\tbenchmark.pdf\tcomputing\t"
+        "BenchmarkAuthor2025DatabaseLatency\n",
+        encoding="utf-8",
+    )
+    papers_path.write_text(
+        "paper_id\ttitle\tyear\tdoi\tdomain\n"
+        "CATALOG001\tDatabase query latency benchmark\t2025\t"
+        "10.1000/catalogue-test\tcomputing\n",
+        encoding="utf-8",
+    )
+    (bib_dir / "benchmark.pdf").write_bytes(b"%PDF-1.7\n")
+    (chunks_dir / "CATALOG001.jsonl").write_text(
+        json.dumps({
+            "paper_id": "CATALOG001",
+            "chunk_id": "CATALOG001_C1",
+            "section": "results",
+            "text": "The synthetic database benchmark measured query latency.",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    resolver = web_chat.LibraryStatusResolver(
+        registry_path=registry_path, bib_dir=bib_dir, chunks_dir=chunks_dir,
+    )
+    catalogue = library_catalog(
+        str(registry_path), str(papers_path), str(bib_dir), str(chunks_dir),
+    )
+    return resolver, catalogue
+
+
+@pytest.fixture(autouse=True)
+def isolated_default_library_resolver(synthetic_library_resources, monkeypatch: pytest.MonkeyPatch):
+    """Isolate source formatting and design lookup while allowing explicit resolvers."""
+    resolver, _ = synthetic_library_resources
+    monkeypatch.setattr(web_chat, "default_library_resolver", lambda: resolver)
+    metadata = {row["paper_id"]: dict(row) for row in resolver.records}
+    monkeypatch.setattr(web_chat, "paper_metadata_by_id", lambda: metadata)
+    monkeypatch.setattr(
+        web_chat,
+        "paper_design_context",
+        lambda paper_id: (
+            "The synthetic database benchmark measured query latency."
+            if paper_id == "CATALOG001" else ""
+        ),
+    )
+
+
+@pytest.fixture
+def synthetic_library(synthetic_library_resources, monkeypatch: pytest.MonkeyPatch):
+    """Route HTTP catalogue defaults only for tests opting into this fixture."""
+    _, catalogue = synthetic_library_resources
+    monkeypatch.setattr(web_chat, "library_catalog", lambda: catalogue)
+    return catalogue
+
+
 @pytest.mark.parametrize('failure', [BrokenPipeError, ConnectionResetError])
 @pytest.mark.parametrize('during_headers', [False, True])
 def test_disconnected_json_response_does_not_report_a_storage_failure(tmp_path, failure, during_headers):
@@ -350,7 +417,7 @@ def test_turn_job_queue_is_global_fifo_but_job_details_are_owner_isolated(
 
 
 def test_same_chat_queued_followup_loads_completed_predecessor_context(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_library
 ) -> None:
     app = WebChatApp(WebChatSettings(), out_dir=str(tmp_path / "sessions"))
     retrieval_questions: list[str] = []
@@ -376,14 +443,14 @@ def test_same_chat_queued_followup_loads_completed_predecessor_context(
             owner_key="alice",
             app=app,
             session_dir=app.session_dir,
-            message="Which var genes associate with severe malaria?",
+            message="Which database benchmarks report query latency?",
             settings_update={},
         )
         second = manager.enqueue(
             owner_key="alice",
             app=app,
             session_dir=app.session_dir,
-            message="What about developmental-stage adjustment in those studies?",
+            message="What about workload adjustment in those studies?",
             settings_update={},
         )
         first_status = manager.wait_for_terminal(first["job_id"], timeout=3)
@@ -394,20 +461,20 @@ def test_same_chat_queued_followup_loads_completed_predecessor_context(
         manager.shutdown()
 
     assert len(retrieval_questions) == 2
-    assert retrieval_questions[0] == "Which var genes associate with severe malaria?"
-    assert "Previous user question: Which var genes associate with severe malaria?" in retrieval_questions[1]
+    assert retrieval_questions[0] == "Which database benchmarks report query latency?"
+    assert "Previous user question: Which database benchmarks report query latency?" in retrieval_questions[1]
 
 
 def test_auto_routed_source_followup_reads_saved_task_context(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_library
 ) -> None:
     app = WebChatApp(WebChatSettings(), out_dir=str(tmp_path / "sessions"))
     web_chat.append_session_line(
         app.session_dir,
         "\n".join(
             [
-                "## Turn: Find primary papers about EPCR-binding PfEMP1.",
-                "Retrieval question: Find primary papers about EPCR-binding PfEMP1.",
+                "## Turn: Find primary papers about database query latency.",
+                "Retrieval question: Find primary papers about database query latency.",
                 "Task: sources",
                 "Sources:",
                 "",
@@ -844,7 +911,7 @@ def test_authenticated_turn_settings_keep_server_owned_paths_and_policy() -> Non
     assert merged.planner_backend == "rule_based"
     assert merged.answer_model is None
     assert merged.retriever == "bm25"
-    assert merged.trace_token_budget == 2000
+    assert merged.trace_token_budget is None
     assert merged.repair_attempts == 1
     assert merged.template_fallback is True
     assert merged.preset == "pro"
@@ -860,7 +927,9 @@ def test_authenticated_turn_settings_require_an_object() -> None:
         authenticated_turn_settings([("chunks_dir", "/tmp/attacker")])
 
 
-def test_authenticated_server_isolates_users_and_requires_csrf(tmp_path: Path) -> None:
+def test_authenticated_server_isolates_users_and_requires_csrf(
+    tmp_path: Path, synthetic_library,
+) -> None:
     auth_store = AuthStore(tmp_path / "auth.sqlite")
     alice = auth_store.create_user("alice", "quiet-lantern-river-orbit-47")
     bob = auth_store.create_user("bob", "violet-planet-canvas-forest-83")
@@ -898,13 +967,14 @@ def test_authenticated_server_isolates_users_and_requires_csrf(tmp_path: Path) -
         status, _, raw, _ = http_request(
             port,
             "GET",
-            "/api/library?query=Shabani&offset=0&limit=5",
+            "/api/library?query=BenchmarkAuthor&offset=0&limit=5",
             headers=alice_headers,
         )
         assert status == 200
         library_page = json.loads(raw)
-        assert library_page["total"] >= 1
+        assert library_page["total"] == 1
         assert len(library_page["items"]) <= 5
+        assert library_page["items"][0]["paper_id"] == "CATALOG001"
         assert all("local_pdf_relpath" not in item for item in library_page["items"])
 
         status, _, raw, _ = http_request(
@@ -912,8 +982,8 @@ def test_authenticated_server_isolates_users_and_requires_csrf(tmp_path: Path) -
         )
         assert status == 200
         library_stats = json.loads(raw)
-        assert library_stats["total"] >= library_stats["searchable"]
-        assert library_stats["categories"]
+        assert library_stats["total"] == library_stats["searchable"] == 1
+        assert library_stats["categories"] == [{"category": "computing", "count": 1}]
 
         no_csrf = {"Cookie": alice_headers["Cookie"]}
         status, _, _, _ = http_request(port, "POST", "/api/reset", headers=no_csrf)
@@ -1047,7 +1117,7 @@ def test_authenticated_chat_payload_cannot_override_server_settings(
     assert effective.backend == "template"
     assert effective.planner_backend == "rule_based"
     assert effective.answer_model is None
-    assert effective.trace_token_budget == 2000
+    assert effective.trace_token_budget is None
     assert effective.repair_attempts == 1
     assert effective.template_fallback is True
     assert effective.preset == "pro"
@@ -2017,7 +2087,7 @@ def test_build_ask_args_uses_fast_deterministic_planner_for_normal_answers() -> 
 
     assert args.planner_backend == "rule_based"
     assert args.retriever == "bm25"
-    assert args.trace_token_budget == 2000
+    assert args.trace_token_budget is None
     assert args.repair_attempts == 2
 
 
@@ -3204,12 +3274,12 @@ def test_format_public_sources_keeps_reference_identifiers() -> None:
     sources = format_public_sources(
         [
             {
-                "paper_id": "MAL_VAR_0003",
-                "author": "Ndugwa",
-                "year": "2026",
-                "title": "Expression of specific var gene subtypes",
-                "journal": "eLife",
-                "doi": "10.7554/eLife.110810.1",
+                "paper_id": "CATALOG001",
+                "author": "BenchmarkAuthor",
+                "year": "2025",
+                "title": "Database query latency benchmark",
+                "journal": "Synthetic Computing Journal",
+                "doi": "10.1000/catalogue-test",
                 "pmid": "123",
                 "pmcid": "PMC123",
             }
@@ -3218,20 +3288,20 @@ def test_format_public_sources_keeps_reference_identifiers() -> None:
 
     assert len(sources) == 1
     source = sources[0]
-    assert source["paper_id"] == "MAL_VAR_0003"
-    assert source["author"] == "Ndugwa"
-    assert source["year"] == "2026"
-    assert source["doi"] == "10.7554/eLife.110810.1"
+    assert source["paper_id"] == "CATALOG001"
+    assert source["author"] == "BenchmarkAuthor"
+    assert source["year"] == "2025"
+    assert source["doi"] == "10.1000/catalogue-test"
     assert source["pmid"] == "123"
     assert source["pmcid"] == "PMC123"
-    assert source["url"] == "https://doi.org/10.7554/eLife.110810.1"
-    assert source["title"] == "Expression of specific var gene subtypes"
-    assert source["journal"] == "eLife"
+    assert source["url"] == "https://doi.org/10.1000/catalogue-test"
+    assert source["title"] == "Database query latency benchmark"
+    assert source["journal"] == "Synthetic Computing Journal"
     assert source["source_role"] == "answer_evidence"
     assert source["source_type"]["label"]
     assert source["evidence_ids"] == []
     assert source["library_status"]["display"]
-    assert source["bib_key"] == "Ndugwa2026ExpressionSpecific"
+    assert source["bib_key"] == "BenchmarkAuthor2025DatabaseLatency"
 
 
 def test_format_public_sources_preserves_publication_family_audit_fields() -> None:
@@ -3330,6 +3400,50 @@ def test_format_public_sources_preserves_deterministic_excerpt_provenance() -> N
     assert sources[0]["question_fields_status"] == (
         "deterministic_excerpt_supported"
     )
+
+
+@pytest.mark.parametrize("explicit_field_status", [False, True])
+def test_public_question_fields_preserve_unassessed_context_budget_status(
+    explicit_field_status: bool,
+) -> None:
+    value = "not assessed: annotation unavailable because the context budget was exceeded"
+    source = {
+        "question_fields": {"assay": value},
+        "question_fields_status": "not_assessed_context_budget",
+    }
+    if explicit_field_status:
+        source["question_field_statuses"] = {"assay": "not_assessed_context_budget"}
+
+    fields, statuses, overall = web_chat.public_question_field_provenance(source)
+
+    assert fields == {"assay": value}
+    assert statuses == {"assay": "not_assessed_context_budget"}
+    assert overall == "not_assessed_context_budget"
+
+
+def test_public_question_fields_keep_mixed_assessed_and_unassessed_provenance() -> None:
+    value = "not assessed: annotation unavailable because the context budget was exceeded"
+    fields, statuses, overall = web_chat.public_question_field_provenance({
+        "question_fields": {"assay": value, "cohort": "Repeated software benchmark runs"},
+        "question_field_statuses": {
+            "assay": "not_assessed_context_budget",
+            "cohort": "model_extracted_unverified",
+        },
+    })
+
+    assert fields["assay"] == value
+    assert statuses == {
+        "assay": "not_assessed_context_budget", "cohort": "model_extracted_unverified",
+    }
+    assert overall == "mixed_extraction"
+
+
+def test_unassessed_detail_display_does_not_claim_absent_evidence() -> None:
+    html = web_chat.INDEX_HTML
+    assert 'fieldStatuses[name] === "not_assessed_context_budget"' in html
+    assert "Not assessed because the annotation context budget was exceeded" in html
+    assert "This does not establish that the paper omits these details." in html
+    assert "Fields have mixed provenance; check each field for its assessment status." in html
 
 
 def test_format_public_sources_returns_more_than_three_unique_sources() -> None:

@@ -28,10 +28,11 @@ jobs:
       - name: Install browser test environment
         run: |
           python -m pip install -e '.[dev]' playwright
-          python -m playwright install --with-deps chromium
+          python -m playwright install --with-deps chromium firefox
       - name: Exercise user workflows and recovery
         run: |
           python -m pytest -q \
+            tests/test_web_models.py \
             tests/test_web_onboarding_browser.py \
             tests/test_workspace_recovery_browser.py \
             tests/test_ecosystem_design_browser.py \
@@ -45,9 +46,30 @@ jobs:
             tests/test_reader_reading_status_browser.py \
             tests/test_workspace_profiles_browser.py \
             tests/test_workspace_navigation.py \
+            tests/test_folio_http.py \
+            tests/test_folio_engine.py \
+            tests/test_folio_browser.py \
+            tests/test_folio_schema_edges.py \
+            tests/test_folio_ui_edges.py \
+            tests/test_folio_save_file_browser.py \
+            tests/test_folio_layout_edges.py \
+            tests/test_folio_notes.py \
+            tests/test_folio_notes_engine.py \
+            tests/test_folio_drawing_browser.py \
+            tests/test_folio_word_ribbon_browser.py \
+            tests/test_folio_document_tools_browser.py \
             tests/test_writing.py \
             tests/test_writing_collaboration_browser.py \
             tests/test_writing_references_browser.py
+      - name: Verify Folio in Firefox
+        env:
+          ORIGINRAG_TEST_BROWSER: firefox
+        run: >-
+          python -m pytest -q tests/test_folio_browser.py tests/test_folio_ui_edges.py
+          tests/test_folio_save_file_browser.py tests/test_folio_notes_engine.py
+          tests/test_folio_drawing_browser.py tests/test_folio_word_ribbon_browser.py
+          tests/test_folio_document_tools_browser.py
+          tests/test_web_models.py
 
   python:
     name: Python 3.11, tests, CLI, and distributions

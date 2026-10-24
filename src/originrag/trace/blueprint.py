@@ -196,9 +196,9 @@ def matched_immune_state_aliases(question: str) -> list[str]:
         return t_cell_aliases
     if any(
         contains_token_phrase(question, alias)
-        for alias in ("immune state", "immune-cell", "single-cell")
+        for alias in ("immune state", "immune-cell")
     ):
-        return ["immune state", "immune-cell", "single-cell"]
+        return ["immune state", "immune-cell"]
     return []
 
 
@@ -473,7 +473,7 @@ def matched_cellular_aliases(question: str) -> list[str]:
                 "lymphocyte",
             }:
                 aliases.append(f"{term}s")
-    if contains_any(question, ("state", "states")):
+    if aliases and re.search(r"\bstates?\b", question, flags=re.IGNORECASE):
         aliases.extend(["cell state", "cell states", "subcluster"])
     return list(dict.fromkeys(aliases))
 

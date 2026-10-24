@@ -28,7 +28,10 @@ class LLMResult:
 
 
 def generate_answer(prompt: str, backend: str = "none") -> LLMResult:
+    from originrag.analysis.ollama_client import escape_model_control_tokens
+
     _ensure_local_env_loaded()
+    prompt = escape_model_control_tokens(prompt)
     backend_key = (backend or "none").strip().lower()
     if backend_key == "none":
         return LLMResult(backend="none", answer=None)
@@ -148,6 +151,17 @@ def _call_queue(prompt: str) -> LLMResult:
 
 
 def _call_ollama_generate(prompt: str, backend: str, base_url: str, model: str) -> LLMResult:
+    from originrag.analysis.ollama_client import escape_model_control_tokens, runner_num_ctx
+    from originrag.model_runtime import CURRENT_RUNTIME
+
+    prompt = escape_model_control_tokens(prompt)
+    if CURRENT_RUNTIME.get():
+        from originrag.analysis.ollama_client import generate_text
+        result = generate_text(prompt, model=model, base_url=base_url,
+                               timeout=_llm_timeout_seconds(), num_ctx=_llm_num_ctx(),
+                               num_predict=_llm_num_predict())
+        return LLMResult(backend=CURRENT_RUNTIME.get()["provider"], answer=result.text,
+                         error=result.error)
     timeout_seconds = _llm_timeout_seconds()
     if _force_cli():
         return _call_ollama_cli(
@@ -162,7 +176,7 @@ def _call_ollama_generate(prompt: str, backend: str, base_url: str, model: str) 
         "stream": False,
         "options": {
             "temperature": 0.2,
-            "num_ctx": _llm_num_ctx(),
+            "num_ctx": runner_num_ctx(_llm_num_ctx(), model=model, base_url=base_url),
             "num_predict": _llm_num_predict(),
         },
     }

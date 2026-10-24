@@ -66,6 +66,7 @@ dev = [
     "rapidfuzz",
     "pytest",
     "ruff",
+    "python-docx>=1.2,<2",
 ]
 
 [tool.setuptools.packages.find]

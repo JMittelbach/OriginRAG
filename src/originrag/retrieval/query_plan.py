@@ -509,13 +509,35 @@ def named_antibody_anchor_groups(question: str) -> list[tuple[str, ...]]:
     return groups
 
 
+def _analysis_tool_alternative_spans(question: str) -> list[tuple[int, int]]:
+    name = r"[A-Za-z][A-Za-z0-9-]{1,20}"
+    pattern = (
+        rf"\banaly[sz]ed\s+(?:with|using)\s+(?:either\s+)?"
+        rf"(?P<tools>{name}(?:\s+or\s+{name})+)\b"
+    )
+    spans = []
+    for match in re.finditer(pattern, question, flags=re.IGNORECASE):
+        if re.match(
+            r"\s+(?:as\s+)?(?:(?:a|an|the)\s+)?"
+            r"(?:(?:biological|genetic|molecular|cellular|candidate|known|"
+            r"monoclonal|polyclonal)\s+){0,2}"
+            r"(?:genes?|proteins?|markers?|antibod(?:y|ies)|cells?|expression)\b",
+            question[match.end():],
+            flags=re.IGNORECASE,
+        ):
+            continue
+        spans.append(match.span("tools"))
+    return spans
+
+
 def required_entity_anchor_groups(question: str) -> list[tuple[str, ...]]:
     """Return explicit high-specificity entities that retrieved evidence must carry.
 
     This is deliberately conservative. A digit-bearing biomedical token is
     treated as required only when the question also asks about genes, proteins,
     expression, or signatures. Known aliases keep exact-symbol filtering from
-    discarding passages that use a spelled-out name instead.
+    discarding passages that use a spelled-out name instead. Explicit analysis
+    tool alternatives are not inferred to be entities from their spelling alone.
     """
     current = current_question_from_context(question)
     normalized = normalize_text(current)
@@ -611,10 +633,19 @@ def required_entity_anchor_groups(question: str) -> list[tuple[str, ...]]:
         for aliases in NAMED_DISEASE_CONTEXTS.values()
         for alias in aliases
     }
-    for token in re.findall(r"\b[A-Za-z][A-Za-z0-9-]{1,20}\b", current):
+    tool_alternative_spans = _analysis_tool_alternative_spans(current)
+    for match in re.finditer(r"\b[A-Za-z][A-Za-z0-9-]{1,20}\b", current):
+        token = match.group(0)
         entity_token = strip_entity_state_suffix(token)
         has_state_suffix = entity_token != token
         has_symbolic_state = token in symbolic_state_tokens
+        if (
+            not has_state_suffix
+            and not has_symbolic_state
+            and any(start <= match.start() and match.end() <= end
+                    for start, end in tool_alternative_spans)
+        ):
+            continue
         if not (
             has_entity_language
             or has_symbol_lookup_language

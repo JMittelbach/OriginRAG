@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
 from originrag.analysis.answer_qc import (
     annotate_publication_family_relationships,
     assess_answer_quality,
     normalize_inline_evidence_labels,
+    unsupported_technical_terms,
 )
 
 
@@ -456,6 +459,98 @@ def test_answer_qc_allows_supported_entity_with_generic_hyphen_modifier() -> Non
     qc = assess_answer_quality(answer, pack, task="answer")
 
     assert "possible_unsupported_terms" not in qc["warnings"]
+
+
+@pytest.mark.parametrize("source_wording", [
+    "single-cell RNA sequencing",
+    "single cell RNA-seq",
+    "scRNA-seq",
+    "scRNAseq",
+    "single‑cell RNA sequencing",
+])
+def test_german_single_cell_rna_translation_requires_source_wording(source_wording: str) -> None:
+    pack = {
+        "question": "What is AnnData?",
+        "chunks": [{
+            "evidence_id": "E001",
+            "text": f"AnnData stores annotated {source_wording} data.",
+        }],
+    }
+    answer = """## Evidence-backed statements
+AnnData speichert annotierte Einzelzell-RNA-Sequenzierungsdaten (E001).
+
+## Cautious inference
+Keine weitere Schlussfolgerung ist erforderlich.
+
+## Limitations / uncertainty
+Der vorliegende Ausschnitt ist begrenzt.
+
+## Missing evidence
+Weitere Messungen fehlen.
+
+## References
+- E001.
+"""
+
+    qc = assess_answer_quality(answer, pack, task="answer")
+
+    assert qc["passed"] is True
+    assert qc["possible_unsupported_terms"] == []
+
+
+@pytest.mark.parametrize("source_wording", [
+    "single-cell DNA sequencing",
+    "single-cell ATAC-seq",
+    "RNA sequencing",
+    "RNA data from bulk measurements",
+    "single-cell sequencing",
+    "annotated matrices",
+])
+def test_german_rna_translation_is_not_licensed_by_other_source_modalities(source_wording: str) -> None:
+    pack = {
+        "question": "What is scRNA-seq?",
+        "chunks": [{"text": f"AnnData stores {source_wording} data."}],
+    }
+
+    terms = unsupported_technical_terms(
+        "AnnData speichert Einzelzell-RNA-Sequenzierungsdaten.", pack,
+    )
+
+    assert "Einzelzell-RNA-Sequenzierungsdaten" in terms
+
+
+@pytest.mark.parametrize("unknown", [
+    "InventedGene999",
+    "PhantomTool42",
+    "Einzelzell-RNA-FantasieSeq99",
+    "Einzelzell-DNA-Sequenzierungsdaten",
+])
+def test_source_supported_translation_does_not_exempt_other_technical_terms(unknown: str) -> None:
+    pack = {"chunks": [{"text": "AnnData stores annotated scRNA-seq data."}]}
+
+    terms = unsupported_technical_terms(
+        f"AnnData speichert Einzelzell-RNA-Sequenzierungsdaten mit {unknown}.", pack,
+    )
+
+    assert "Einzelzell-RNA-Sequenzierungsdaten" not in terms
+    assert unknown in terms
+
+
+def test_source_title_can_support_an_exact_technical_translation() -> None:
+    pack = {"chunks": [{"title": "Single-cell RNA sequencing", "text": "Methods overview."}]}
+
+    assert unsupported_technical_terms("Einzelzell-RNA-Sequenzierung", pack) == []
+
+
+def test_translation_support_is_not_assembled_from_different_source_fields() -> None:
+    pack = {"chunks": [
+        {"title": "Single-cell", "text": "RNA sequencing"},
+        {"title": "single-cell", "text": "DNA sequencing"},
+    ]}
+
+    assert unsupported_technical_terms("Einzelzell-RNA-Sequenzierungsdaten", pack) == [
+        "Einzelzell-RNA-Sequenzierungsdaten",
+    ]
 
 
 def test_answer_qc_flags_over_specific_trial_design_not_in_evidence() -> None:

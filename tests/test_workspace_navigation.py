@@ -69,7 +69,7 @@ def test_corpus_drag_navigation_and_double_delete(workspace_server):
         page.keyboard.press('Escape')
         page.goto(base + '/chat')
         page.locator('#guideSkip').click()
-        assert page.locator('#globalNavigation nav a').count() == 4
+        assert page.locator('#globalNavigation nav a').count() == 5
         assert page.locator('a[href="/workspace"]').count() == 0
         assert page.locator('#appearanceButton').count() == 1
         page.set_viewport_size({'width': 390, 'height': 844})

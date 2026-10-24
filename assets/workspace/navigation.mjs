@@ -1,5 +1,6 @@
 import {requestJSON} from './request.mjs';
 import {getAppProfile} from './profile.mjs';
+import {openModels} from './models.mjs';
 
 const $ = id => document.getElementById(id);
 const navigation = $('globalNavigation') || $('applicationHeader');
@@ -21,6 +22,7 @@ async function loadProfile() {
   $('globalAccountDetails').textContent = 'Loading account…';
   try {
     const profile = await getAppProfile();
+    $('globalModels').hidden = !profile.features.rag;
     for (const item of navigation.querySelectorAll('[data-feature]')) item.hidden = !profile.features[item.dataset.feature];
     for (const item of startPage.querySelectorAll('[data-feature]')) item.disabled = !profile.features[item.dataset.feature];
     document.querySelector('.origin-brand').href = profile.home;
@@ -45,6 +47,7 @@ for (const item of navigation.querySelectorAll('nav a')) {
   if (item.pathname === location.pathname || (location.pathname === '/' && item.pathname === '/chat')) item.setAttribute('aria-current', 'page');
 }
 $('globalSettings').onclick = () => $('globalSettingsDialog').showModal();
+$('globalModels').onclick = openModels;
 $('globalAccount').onclick = () => $('globalAccountDialog').showModal();
 $('globalAccountRetry').onclick = loadProfile;
 $('globalReduceMotion').checked = Boolean(settings.reduceMotion);

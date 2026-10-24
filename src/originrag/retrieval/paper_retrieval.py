@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from originrag.provenance.library import normalize_doi
@@ -45,6 +46,15 @@ DOI_QUERY_PATTERN = re.compile(
 )
 
 
+@dataclass(frozen=True)
+class _PaperQueryFeatures:
+    normalized_query: str
+    dois: frozenset[str]
+    pmids: frozenset[str]
+    pmcids: frozenset[str]
+    bib_keys: frozenset[str]
+
+
 def search_papers(
     query: str,
     papers_tsv: Path,
@@ -57,6 +67,7 @@ def search_papers(
     rows = read_metadata_rows(Path(papers_tsv))
     tokens = query_tokens(query)
     boosts = infer_query_category_boosts(query)
+    query_features = _prepare_query_features(query)
     results = []
     for row in rows:
         if category and category not in normalize_text(
@@ -68,9 +79,9 @@ def search_papers(
             local_pdf_root=local_pdf_root,
             chunks_dir=chunks_dir,
         )
-        score, rationale = score_paper(
+        score, rationale = _score_paper_prepared(
             row,
-            query,
+            query_features,
             tokens,
             boosts,
             task_mode,
@@ -127,20 +138,26 @@ def score_paper(
     task_mode: str,
     local_fulltext_available: bool | None = None,
 ) -> tuple[float, list[str]]:
-    normalized_query = normalize_text(query)
-    explicit_query_dois = {
+    return _score_paper_prepared(
+        row, _prepare_query_features(query), tokens, category_boosts, task_mode,
+        local_fulltext_available=local_fulltext_available,
+    )
+
+
+def _prepare_query_features(query: str) -> _PaperQueryFeatures:
+    explicit_query_dois = frozenset(
         doi
         for match in DOI_QUERY_PATTERN.finditer(query or "")
         if (doi := normalize_doi(match.group(0).rstrip(".:;!?")))
-    }
-    explicit_query_pmids = set(
+    )
+    explicit_query_pmids = frozenset(
         re.findall(r"\bpmid\s*[:#]?\s*(\d+)\b", query or "", flags=re.IGNORECASE)
     )
-    explicit_query_pmcids = {
+    explicit_query_pmcids = frozenset(
         value.upper()
         for value in re.findall(r"\b(PMC\d+)\b", query or "", flags=re.IGNORECASE)
-    }
-    explicit_query_bib_keys = {
+    )
+    explicit_query_bib_keys = frozenset(
         normalize_text(value)
         for value in re.findall(
             r"\b(?:bib(?:liography)?\s*key|citation\s*key|paper\s*id)"
@@ -148,7 +165,22 @@ def score_paper(
             query or "",
             flags=re.IGNORECASE,
         )
-    }
+    )
+    return _PaperQueryFeatures(
+        normalize_text(query), explicit_query_dois, explicit_query_pmids,
+        explicit_query_pmcids, explicit_query_bib_keys,
+    )
+
+
+def _score_paper_prepared(
+    row: dict[str, str],
+    query_features: _PaperQueryFeatures,
+    tokens: list[str],
+    category_boosts: dict[str, float],
+    task_mode: str,
+    local_fulltext_available: bool | None = None,
+) -> tuple[float, list[str]]:
+    normalized_query = query_features.normalized_query
     title = normalize_text(row.get("title", ""))
     metadata_text = normalize_text(
         " ".join(
@@ -188,13 +220,13 @@ def score_paper(
     ]:
         identifier = str(row.get(field, "") or "").strip()
         if field == "doi":
-            exact_match = normalize_doi(identifier) in explicit_query_dois
+            exact_match = normalize_doi(identifier) in query_features.dois
         elif field == "pmid":
-            exact_match = identifier in explicit_query_pmids
+            exact_match = identifier in query_features.pmids
         elif field == "pmcid":
-            exact_match = identifier.upper() in explicit_query_pmcids
+            exact_match = identifier.upper() in query_features.pmcids
         else:
-            exact_match = normalize_text(identifier) in explicit_query_bib_keys
+            exact_match = normalize_text(identifier) in query_features.bib_keys
         if exact_match:
             score += 60.0
             rationale.append(f"exact {label} match")
