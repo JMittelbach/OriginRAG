@@ -72,18 +72,23 @@ export async function openReferences(ctx) {
   const layout = element('div', undefined, 'references-layout');
   const sidebar = element('aside', undefined, 'references-sidebar');
   const libraryLabel = element('label', 'Personal library'); const library = element('select'); library.id = 'referencesLibrary';
-  libraryLabel.append(library); sidebar.append(libraryLabel, element('p', 'Only your account can see these collections. Linking does not change your manuscript.', 'references-muted'));
+  libraryLabel.append(library); sidebar.append(libraryLabel, element('p', 'Collections are private. Linking a library keeps its references in your manuscript bibliography.', 'references-muted'));
   const createForm = element('form', undefined, 'references-create');
   const newName = input('referencesNewName', 'Name your library'); newName.maxLength = 120; newName.required = true;
   newName.setAttribute('aria-label', 'New personal library name');
   const create = element('button', '+ New personal library'); create.id = 'referencesCreate'; create.type = 'submit';
   createForm.append(newName, create); sidebar.append(createForm);
-  const targetLabel = element('label', 'Bibliography file'); const filename = input('referencesFilename', 'references.bib'); filename.value = 'references.bib';
+  const targetLabel = element('label', 'Bibliography file'); const filename = input('referencesFilename', 'references.bib'); filename.value = ctx.getProject().bibliography_target || 'references.bib';
   targetLabel.append(filename); sidebar.append(targetLabel);
   const connectLabel = element('label', undefined, 'references-check');
   const connect = input('referencesConnect', '', 'checkbox'); connect.checked = true;
   connectLabel.append(connect, element('span', 'Connect to the main document if it has no bibliography yet')); sidebar.append(connectLabel);
-  sidebar.append(element('p', 'Existing entries and citations are kept. Changes are applied only after your confirmation.', 'references-muted'));
+  const autoLabel = element('label', undefined, 'references-check');
+  const automatic = input('referencesAutomatic', '', 'checkbox'); automatic.checked = ctx.getProject().bibliography_auto !== false;
+  autoLabel.append(automatic, element('span', 'Keep bibliography synced automatically')); sidebar.append(autoLabel);
+  const settings = element('button', 'Save sync settings'); settings.type = 'button'; settings.id = 'referencesSyncSettings'; sidebar.append(settings);
+  const syncStatus = element('p', '', 'references-muted'); syncStatus.id = 'referencesSyncStatus'; syncStatus.setAttribute('role', 'status'); sidebar.append(syncStatus);
+  sidebar.append(element('p', 'Automatic sync adds new papers and refreshes unedited generated entries. Manual changes and removed papers’ existing entries are kept.', 'references-muted'));
   const previewButton = element('button', 'Preview bibliography sync', 'primary'); previewButton.id = 'referencesPreview'; previewButton.type = 'button'; sidebar.append(previewButton);
   const main = element('section', undefined, 'references-main');
   const tabs = element('div', undefined, 'references-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Paper source');
@@ -132,6 +137,8 @@ export async function openReferences(ctx) {
     library.replaceChildren(new Option('Choose a personal library…', ''));
     for (const item of collections) library.append(new Option(item.name, item.id));
     library.value = ctx.getProject().collection || ''; updateAvailability();
+    const status = ctx.getProject().bibliography_status;
+    syncStatus.textContent = status?.message || (automatic.checked ? 'Automatic sync is enabled for the linked library.' : 'Manual bibliography mode.');
   }
   async function fetchReferences() {
     refs = library.value ? await ctx.api('/api/writing?collection_refs=' + encodeURIComponent(library.value)) : null;
@@ -154,7 +161,8 @@ export async function openReferences(ctx) {
     await preview();
     if (closed || !plan) return;
     const exists = hasCitation(ctx.getProject(), plan.filename, key) && !plan.added.some(ref => ref.key === key);
-    if (exists && bibliographyConnected(ctx.getProject(), plan.filename)) await insert(key);
+    if (exists && (bibliographyConnected(ctx.getProject(), plan.filename)
+        || (ctx.getProject().bibliography_auto !== false && Boolean(plan.document_change)))) await insert(key);
   }
   function canConnect() {
     return plan && (bibliographyConnected(ctx.getProject(), plan.filename) || Boolean(plan.document_change));
@@ -164,7 +172,9 @@ export async function openReferences(ctx) {
     const selected = library.value;
     const current = await ctx.api('/api/writing?collection_refs=' + encodeURIComponent(selected));
     await ctx.api('/api/writing', {action: 'collection_paper', id: selected, revision: current.revision, paper_id: paper.paper_id, remove});
+    await ctx.acceptProject(await ctx.api('/api/writing?id=' + encodeURIComponent(ctx.getProject().id)));
     invalidate(); await fetchReferences(); await loadResults();
+    showLibraries();
   }
   function actionButton(label, action, className) {
     const button = element('button', label, className); button.type = 'button'; button.onclick = () => run(action); return button;
@@ -264,6 +274,13 @@ export async function openReferences(ctx) {
     });
   };
   for (const field of [filename, connect]) field.addEventListener('input', invalidate);
+  settings.onclick = () => run(async () => {
+    await ctx.save();
+    const project = ctx.getProject();
+    const updated = await ctx.api('/api/writing', {action: 'configure_bibliography', id: project.id, revision: project.revision,
+      enabled: automatic.checked, filename: filename.value.trim() || 'references.bib'});
+    await ctx.acceptProject(updated); invalidate(); showLibraries(); await fetchReferences(); await loadResults();
+  });
   previewButton.onclick = () => run(async () => { pendingKey = ''; await preview(); });
   personalTab.onclick = () => { if (!busy) setTab('library'); };
   corpusTab.onclick = () => { if (!busy) setTab('corpus'); };

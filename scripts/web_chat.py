@@ -1547,19 +1547,33 @@ def search_library_catalog(
     *,
     offset: int = 0,
     limit: int = 40,
+    scope: str = "",
     catalogue: tuple[dict[str, object], ...] | None = None,
 ) -> dict[str, object]:
     """Search author/title metadata deterministically and paginate the result."""
     clean_query = _catalog_text(query).casefold()
     query_tokens = clean_query.split()
     source = catalogue if catalogue is not None else library_catalog()
+    clean_scope = _catalog_text(scope).casefold()
+    if clean_scope in {"p_falciparum", "falciparum", "plasmodium_falciparum"}:
+        source = tuple(item for item in source if item.get("falciparum_scope"))
+    elif clean_scope.startswith("pf:"):
+        topic_key = clean_scope[3:]
+        source = tuple(
+            item
+            for item in source
+            if str(item.get("falciparum_topic") or "").casefold() == topic_key
+        )
 
     def score(item: dict[str, object]) -> tuple[int, str, str]:
         title = str(item.get("title") or "").casefold()
         author = str(item.get("author") or "").casefold()
         other = " ".join(
             str(item.get(field) or "").casefold()
-            for field in ("journal", "year", "doi", "paper_id", "category", "collection", "topic", "topic_label")
+            for field in (
+                "journal", "year", "doi", "paper_id", "category", "collection", "topic",
+                "topic_label", "falciparum_topic", "falciparum_topic_label",
+            )
         )
         rank = 0
         if clean_query == title or clean_query == author:
@@ -1596,6 +1610,8 @@ def search_library_catalog(
                         "collection",
                         "topic",
                         "topic_label",
+                        "falciparum_topic",
+                        "falciparum_topic_label",
                     )
                 )
                 for token in query_tokens
@@ -1631,6 +1647,11 @@ def library_catalog_stats(
     topic_counts = Counter((item["topic"], item["topic_label"]) for item in assigned)
     groups = [{"group": key, "label": label, "count": count}
               for (key, label), count in sorted(topic_counts.items(), key=lambda pair: (-pair[1], pair[0]))]
+    falciparum_topics = Counter(
+        (item["falciparum_topic"], item["falciparum_topic_label"])
+        for item in assigned
+        if item.get("falciparum_scope")
+    )
     return {
         "total": len(source),
         "searchable": sum(bool(item.get("searchable")) for item in source),
@@ -1643,6 +1664,13 @@ def library_catalog_stats(
             )
         ],
         "groups": groups,
+        "falciparum_scope_count": sum(falciparum_topics.values()),
+        "falciparum_topics": [
+            {"topic": key, "label": label, "count": count}
+            for (key, label), count in sorted(
+                falciparum_topics.items(), key=lambda item: (-item[1], item[0][1])
+            )
+        ],
     }
 
 
@@ -1899,6 +1927,7 @@ def build_handler(
                         (params.get("query") or [""])[0],
                         offset=offset,
                         limit=limit,
+                        scope=(params.get("scope") or [""])[0],
                     )
                 )
                 return
@@ -3037,6 +3066,7 @@ def serialize_turn_result(
             assurance=assurance,
             evidence_grade=evidence_grade,
             grounding_rejected=bool(result.get("rejected_answer_path")),
+            quality_warnings=qc.get("warnings") or [],
             backend_error=str(getattr(llm_result, "error", "") or ""),
             pack=pack,
         )
@@ -3629,15 +3659,30 @@ def build_public_abstention(
     assurance: dict,
     evidence_grade: dict,
     grounding_rejected: bool,
+    quality_warnings: list[str] | None = None,
     backend_error: str = "",
     pack: dict | None = None,
 ) -> str:
     """Explain a fail-closed result instead of returning an empty chat bubble."""
     if grounding_rejected:
+        warnings = set(quality_warnings or [])
+        format_warnings = {
+            "missing_required_sections", "empty_required_sections", "unbalanced_delimiters",
+            "incomplete_prose_section", "incomplete_key_sources",
+        }
+        if warnings and warnings <= format_warnings:
+            reason = (
+                "The draft contained incomplete or malformed text and could not be "
+                "presented reliably. This does not mean that matching papers are missing. "
+            )
+        elif warnings:
+            reason = "A draft answer was generated but failed answer validation. "
+        else:
+            reason = "A draft answer was generated but failed the citation check. "
         return (
             "## Answer withheld\n\n"
-            "A draft answer was generated but failed the citation check. "
-            "The retrieved evidence remains available below, but OriginRAG did not "
+            + reason
+            + "The retrieved evidence remains available below, but OriginRAG did not "
             "present the draft as a supported scientific answer."
         )
     if assurance.get("audit_run"):
@@ -6521,6 +6566,14 @@ INDEX_HTML = r"""<!doctype html>
       background: #071117;
       padding: 0 13px;
     }
+    .library-scope {
+      min-height: 38px;
+      border-color: var(--line-strong);
+      background: #071117;
+      color: var(--soft);
+      padding: 0 11px;
+      font: inherit;
+    }
     .library-results {
       min-height: 0;
       overflow-y: auto;
@@ -6786,6 +6839,11 @@ INDEX_HTML = r"""<!doctype html>
       </div>
       <label class="sr-only" for="librarySearch">Search the bibliography</label>
       <input class="library-search" id="librarySearch" type="search" placeholder="Search author, title, journal, year, or DOI…" autocomplete="off" />
+      <label class="sr-only" for="libraryScope">Filter library by subject</label>
+      <select class="library-scope" id="libraryScope">
+        <option value="">All papers</option>
+        <option value="p_falciparum">Plasmodium falciparum</option>
+      </select>
       <div class="library-results" id="libraryResults" tabindex="0" aria-live="polite"></div>
       <div class="library-browser-footer">
         <span id="libraryResultCount">Loading library…</span>
@@ -6875,6 +6933,7 @@ INDEX_HTML = r"""<!doctype html>
     const libraryBrowserBackdrop = document.getElementById("libraryBrowserBackdrop");
     const libraryBrowserClose = document.getElementById("libraryBrowserClose");
     const librarySearch = document.getElementById("librarySearch");
+    const libraryScope = document.getElementById("libraryScope");
     const libraryResults = document.getElementById("libraryResults");
     const libraryResultCount = document.getElementById("libraryResultCount");
     const libraryLoadMore = document.getElementById("libraryLoadMore");
@@ -7302,7 +7361,7 @@ INDEX_HTML = r"""<!doctype html>
       const warnings = document.createElement("div");
       warnings.className = "answer-warnings";
       const messages = [];
-      if (data.answer_state === "withheld") messages.push("Answer withheld — the evidence check did not support an answer.");
+      if (data.answer_state === "withheld") messages.push("Answer withheld — see the explanation above.");
       else if (data.answer_state === "provisional" && assuranceStatus(data.assurance || {}).label !== "Study overlap needs review") {
         messages.push("Provisional answer — study overlap still needs review.");
       }
@@ -8909,7 +8968,7 @@ INDEX_HTML = r"""<!doctype html>
       metadata.textContent = [paper.author, paper.year, paper.journal].filter(Boolean).join(" · ") || "Bibliographic details unavailable";
       const category = document.createElement("span");
       category.className = "library-paper-category";
-      category.textContent = paper.topic_label || libraryCategoryLabel(paper.category || paper.collection);
+      category.textContent = paper.falciparum_topic_label || paper.topic_label || libraryCategoryLabel(paper.category || paper.collection);
       const links = document.createElement("div");
       links.className = "library-paper-links";
       if (paper.doi_url) {
@@ -8977,6 +9036,26 @@ INDEX_HTML = r"""<!doctype html>
         libraryStatsTotal.textContent = total.toLocaleString();
         libraryStatsDonutTotal.textContent = total.toLocaleString();
         libraryStatsCoverage.textContent = `${searchable.toLocaleString()} searchable · ${localPdf.toLocaleString()} local PDFs`;
+        const selectedScope = libraryScope.value;
+        libraryScope.replaceChildren();
+        const allOption = document.createElement("option");
+        allOption.value = "";
+        allOption.textContent = "All papers";
+        libraryScope.appendChild(allOption);
+        const pfCount = Number(data.falciparum_scope_count || 0);
+        const pfOption = document.createElement("option");
+        pfOption.value = "p_falciparum";
+        pfOption.textContent = `Plasmodium falciparum (${pfCount.toLocaleString()})`;
+        libraryScope.appendChild(pfOption);
+        for (const item of data.falciparum_topics || []) {
+          const option = document.createElement("option");
+          option.value = `pf:${item.topic}`;
+          option.textContent = `${item.label} (${Number(item.count || 0).toLocaleString()})`;
+          libraryScope.appendChild(option);
+        }
+        if ([...libraryScope.options].some((option) => option.value === selectedScope)) {
+          libraryScope.value = selectedScope;
+        }
         const colors = ["#46cfc1", "#7aa2f7", "#f2c879", "#ef8a80", "#b18ceb", "#ed91c4", "#95bf70", "#df9f61", "#7da6b5", "#657681"];
         const groups = (data.groups || []).filter((item) => Number(item.count || 0) > 0);
         let position = 0;
@@ -9032,6 +9111,7 @@ INDEX_HTML = r"""<!doctype html>
       try {
         const params = new URLSearchParams({
           query: librarySearch.value.trim(),
+          scope: libraryScope.value,
           offset: String(reset ? 0 : libraryOffset),
           limit: "40"
         });
@@ -9248,6 +9328,10 @@ INDEX_HTML = r"""<!doctype html>
         libraryResults.scrollTop = 0;
         loadLibraryPage(true);
       }, 140);
+    });
+    libraryScope.addEventListener("change", () => {
+      libraryResults.scrollTop = 0;
+      loadLibraryPage(true);
     });
     libraryLoadMore.addEventListener("click", () => loadLibraryPage(false));
     libraryResults.addEventListener("scroll", () => {

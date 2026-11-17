@@ -13,6 +13,7 @@ LICENCE_HASH = '3d262cdf34dafa6955f703c634a8c238ec44109bc8dd6ef34fb7aa54809f7e66
 PLOS_STYLE_HASH = '8470ef5e547189a61d8eef2cfd7a65fbb84b77b881ccb42ed6815da86a04c490'
 TEMPLATES = (
     {'id': 'article', 'name': 'Research article', 'journals': [], 'description': 'A clean, lightweight manuscript with the standard article class.', 'licence': 'MIT', 'source': 'https://github.com/JMittelbach/OriginRAG', 'main': 'main.tex', 'publisher': 'Quill', 'layout': 'Single column'},
+    {'id': 'thesis', 'name': 'Bachelor / Master thesis', 'journals': [], 'description': 'A neutral KOMA-Script thesis with a restrained title page, fine running headers, author-year references and separate chapters. No university branding; edit metadata.tex to personalise it.', 'licence': 'MIT starter and Quill style; standard TeX packages retain their own licences', 'source': 'https://github.com/JMittelbach/OriginRAG', 'main': 'main.tex', 'publisher': 'Quill', 'layout': 'A4 · KOMA-Script · author–year'},
     {'id': 'bioinformatics', 'name': 'Bioinformatics', 'journals': ['Bioinformatics'], 'description': 'Official OUP class with a concise Quill starter and structured abstract.', 'licence': 'LPPL-1.3-or-later + MIT starter', 'source': 'https://academic.oup.com/bioinformatics/pages/author-guidelines', 'main': 'main.tex', 'publisher': 'Oxford University Press', 'layout': 'Two columns'},
     {'id': 'g3', 'name': 'G3 · OUP authoring', 'journals': ['G3: Genes, Genomes, Genetics'], 'description': 'The generic OUP class offered by G3, with a Quill starter. Not the separate GSA template.', 'licence': 'LPPL-1.3-or-later + MIT starter', 'source': 'https://academic.oup.com/g3journal/pages/author-guidelines', 'main': 'main.tex', 'publisher': 'Oxford University Press', 'layout': 'Two columns'},
     *({'id': identifier, 'name': name, 'journals': [name],
@@ -49,7 +50,13 @@ def template_files(template_id):
         'references.bib': '',
         'Quill-LICENSE.txt': (ASSETS.parents[1] / 'LICENSE').read_text(encoding='utf-8'),
     }
-    if is_plos:
+    if template_id == 'thesis':
+        for path in sorted((ASSETS / 'thesis').rglob('*')):
+            if not path.is_file() or path.suffix not in {'.tex', '.sty'}:
+                continue
+            files[path.relative_to(ASSETS / 'thesis').as_posix()] = path.read_text(encoding='utf-8')
+        files['Template-source.txt'] = 'Quill thesis starter and quillthesis.sty (MIT), independently implemented with standard KOMA-Script. No university class, logos, signatures or personal thesis content are distributed. Standard TeX packages retain their respective licences. This is a general-purpose starting point, not an approved university format. Check your institution’s regulations, declarations and citation requirements. Edit metadata.tex to choose Bachelor or Master and your degree; institutional details and second supervisor are optional.\n'
+    elif is_plos:
         summary = '' if template_id == 'plos-one' else '\\section*{Author summary}\nExplain the study and its significance for readers outside the field.\n'
         files['main.tex'] = files['main.tex'].replace('@@AUTHOR_SUMMARY@@', summary)
         files['plos2025.bst'] = _verified(ASSETS / 'vendor/plos2025.bst', PLOS_STYLE_HASH).decode('utf-8')

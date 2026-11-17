@@ -299,7 +299,7 @@ def grade_evidence_pack(
     expected_terms = expected_terms or []
     preferred_sections = preferred_sections or EVIDENCE_SECTIONS
     question = str(pack.get("question") or "") if question is None else question
-    question_terms = question_relevance_terms(question)
+    question_terms = question_relevance_terms(question, include_short_identifiers=True)
 
     if not chunks:
         return {
@@ -715,7 +715,9 @@ def bounded_direct_report_evidence(
     """Identify clean prompt-visible passages fit only for a bounded paper report."""
 
     chunks = list(pack.get("chunks") or [])
-    terms = question_terms or question_relevance_terms(str(pack.get("question") or ""))
+    terms = question_terms or question_relevance_terms(
+        str(pack.get("question") or ""), include_short_identifiers=True
+    )
     raw_question = str(pack.get("question") or "")
     named_references = named_report_references(raw_question)
     named_comparison = len(named_references) >= 2
@@ -1100,7 +1102,9 @@ def expected_term_hits(expected_terms: list[str], chunks: list[dict]) -> list[st
     return hits
 
 
-def question_relevance_terms(question: str) -> list[str]:
+def question_relevance_terms(
+    question: str, *, include_short_identifiers: bool = False
+) -> list[str]:
     """Extract specific question concepts, excluding generic task wording."""
     terms = []
     question_without_report_reference = strip_named_report_attributions(
@@ -1121,7 +1125,15 @@ def question_relevance_terms(question: str) -> list[str]:
         )
         if expansions:
             terms.extend(expansions)
-        elif len(term) >= 4 or term in SHORT_SCIENTIFIC_TERMS:
+        elif (
+            len(term) >= 4
+            or term in SHORT_SCIENTIFIC_TERMS
+            or (
+                include_short_identifiers
+                and re.fullmatch(r"[a-z][a-z0-9]{1,2}", term)
+                and any(character.isdigit() for character in term)
+            )
+        ):
             terms.append(term)
     return list(dict.fromkeys(terms))
 

@@ -164,6 +164,11 @@ def test_editor_cannot_expose_or_change_private_bibliography(workspace):
         call('GET', route, 'bob', status=404)
     call('GET', '/api/writing?bib_preview=' + p['id'], 'bob', status=403)
     call('POST', who='bob', payload={'action': 'sync_bibliography', 'id': p['id']}, status=403)
+    call('POST', who='bob', payload={'action': 'configure_bibliography', 'id': p['id'], 'revision': p['revision'], 'enabled': False}, status=403)
+    refreshed = call('POST', who='bob', payload={'action': 'refresh_bibliography', 'id': p['id']})
+    assert 'collection' not in refreshed and 'files' not in refreshed
+    assert refreshed['bibliography_status']['state'] == 'synced'
+    call('POST', who='carol', payload={'action': 'refresh_bibliography', 'id': p['id']}, status=404)
     call('POST', who='bob', payload={**shared, 'action': 'save_project', 'collection': collection['id']}, status=403)
     call('POST', who='bob', payload={**shared, 'action': 'save_project', 'collection': 'f' * 32}, status=403)
 

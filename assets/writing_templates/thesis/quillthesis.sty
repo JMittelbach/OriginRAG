@@ -1,0 +1,78 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{quillthesis}[2026/11/17 Neutral Quill thesis style]
+\RequirePackage[T1]{fontenc}
+\RequirePackage{lmodern}
+\RequirePackage[english]{babel}
+\RequirePackage{microtype}
+\RequirePackage{graphicx}
+\RequirePackage{booktabs}
+\RequirePackage{tabularx}
+\RequirePackage{etoolbox}
+\RequirePackage{xcolor}
+\RequirePackage[authoryear,round]{natbib}
+\RequirePackage[automark,headsepline,plainheadsepline]{scrlayer-scrpage}
+\RequirePackage[hidelinks]{hyperref}
+
+\definecolor{thesisink}{gray}{0.12}
+\definecolor{thesismuted}{gray}{0.40}
+\definecolor{thesisrule}{gray}{0.68}
+\KOMAoptions{parskip=half,headinclude=true,footinclude=false}
+\recalctypearea
+\setkomafont{disposition}{\normalfont\sffamily\bfseries\color{thesisink}}
+\setkomafont{chapter}{\normalfont\sffamily\bfseries\huge\color{thesisink}}
+\setkomafont{pageheadfoot}{\normalfont\sffamily\small\color{thesismuted}}
+\setkomafont{pagenumber}{\normalfont\sffamily\small}
+\setkomafont{captionlabel}{\sffamily\bfseries}
+\setkomafont{caption}{\small}
+\RedeclareSectionCommand[beforeskip=0pt,afterskip=1.4\baselineskip]{chapter}
+\clearpairofpagestyles
+\automark[chapter]{chapter}
+\ihead*{\headmark}
+\ohead*{\pagemark}
+\pagestyle{scrheadings}
+\renewcommand*{\chapterpagestyle}{scrheadings}
+\raggedbottom
+\setlength{\emergencystretch}{2em}
+\setlength{\tabcolsep}{6pt}
+\newcommand{\thesistitleline}{\par\noindent\begingroup\color{thesisrule}\rule{\linewidth}{0.4pt}\endgroup\par}
+\newsavebox{\thesistitlebox}
+\newcommand{\thesismeasuretitle}[2]{%
+  \setbox\thesistitlebox=\vbox{%
+    \hsize=\linewidth
+    \raggedright\setlength{\parskip}{0pt}%
+    \sffamily\bfseries\fontsize{#1}{#2}\selectfont\color{thesisink}\ThesisTitle\par
+  }%
+}
+
+\newcommand{\makethesistitle}{%
+  \begin{titlepage}
+  \thispagestyle{empty}
+  \raggedright
+  \setlength{\parindent}{0pt}
+  \setlength{\parfillskip}{0pt plus 1fil}
+  {\sffamily\small\color{thesismuted}\MakeUppercase{\ThesisType}\par}
+  \vspace{0.7cm}
+  \thesistitleline
+  \vspace*{2.4cm}
+  \thesismeasuretitle{32}{40}%
+  \ifdim\ht\thesistitlebox>.26\textheight\thesismeasuretitle{26}{33}\fi
+  \ifdim\ht\thesistitlebox>.26\textheight\thesismeasuretitle{22}{29}\fi
+  \noindent\usebox{\thesistitlebox}\par
+  \ifdefempty{\ThesisSubtitle}{}{\vspace{0.65cm}{\sffamily\large\color{thesismuted}\ThesisSubtitle\par}}
+  \vspace{1.35cm}
+  {\sffamily\Large\ThesisAuthor\par}
+  \vfill
+  \thesistitleline
+  \vspace{0.55cm}
+  {\small\renewcommand{\arraystretch}{1.4}%
+    \noindent\begin{tabularx}{\linewidth}{@{}>{\sffamily\color{thesismuted}}l >{\raggedright\arraybackslash}X@{}}
+      Degree & \ThesisDegree \\
+      Supervisor & \ThesisSupervisor \\
+      \ifdefempty{\ThesisSecondSupervisor}{}{Second supervisor & \ThesisSecondSupervisor \\}%
+      Submitted & \ThesisDate
+    \end{tabularx}\par}
+  \ifdefempty{\ThesisUniversity}{}{\vspace{0.7cm}{\small\color{thesismuted}\ThesisUniversity\par}}
+  \ifdefempty{\ThesisDepartment}{}{{\small\color{thesismuted}\ThesisDepartment\par}}
+  \end{titlepage}
+}
+\endinput

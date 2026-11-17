@@ -125,6 +125,11 @@ those mechanisms.
    before closing the page. Ctrl/Cmd+S saves immediately.
 3. Add text files or upload figures and supporting LaTeX files. Choose the main
    `.tex` document in the file sidebar.
+   **↑ Upload** accepts `.tex`, `.bib`, `.sty`, `.cls`, `.bst`, `.bbl`, `.txt`,
+   `.md`, `.csv`, PNG, JPEG and PDF files. Individual uploads are limited to 8 MB,
+   with 200 files and 12 MB total per project. A batch is checked before any file
+   is added; duplicate filenames (including case-only differences) are rejected.
+   These are LaTeX project assets, not editable Word documents. Use Folio for DOCX.
 4. Click **Recompile**, or enable **Auto-compile**. Auto-compile waits briefly
    after typing and compiles saved source, not an older unsaved buffer.
 5. Inspect **Errors, warnings & compile log**. File/line diagnostics jump to the
@@ -168,11 +173,22 @@ processes each have their own worker limit.
 
 ## Choose a template
 
-The template gallery includes Research article, Bioinformatics, G3, PLOS ONE,
+The template gallery includes Research article, Bachelor/Master thesis, Bioinformatics, G3, PLOS ONE,
 PLOS Computational Biology and PLOS Genetics. Search by journal or filter by
 publisher. PLOS entries are lightweight Quill starters with the official
 PLOS BibTeX style, not publisher-endorsed submission checks. Every template opens
 as a new manuscript, leaving the current project unchanged.
+
+The thesis starter uses KOMA-Script (`scrbook`) with an independent, neutral
+Quill style: restrained sans-serif headings, a serif body, fine running-header
+rules, a spacious title page, author–year references and separate chapter files.
+Abstract, contents, figure/table lists and an appendix are included. There are
+no logos or fixed institutional details. Edit `metadata.tex` to set the author,
+subtitle, supervisor and Bachelor or Master degree. University, department and
+second supervisor are optional and hidden when empty. It is a generic starter,
+not an approved university format:
+check your own formatting rules and required declarations. Prepare its compiler
+packages with `python scripts/prepare_writing_templates.py --warm-cache --template thesis`.
 
 Hosts preparing an offline compiler can warm just the new templates once with
 `python scripts/prepare_writing_templates.py --warm-cache --template plos-one --template plos-compbiol --template plos-genetics`.
@@ -217,24 +233,56 @@ Inside a manuscript, place the cursor where the citation should go before openin
 2. Open **Search corpus**, search by title, author or journal, and choose
    **Add to personal library** beside the papers you need.
 3. Return to **Your library** and choose **Insert citation** for a paper.
-   When its BibTeX entry is missing, a preview
-   shows the proposed bibliography changes first.
-4. Review the preview, then choose **Apply sync and insert citation**. This adds
-   the reference and inserts `\cite{...}` at your editing position.
+   Automatic sync normally already supplies its bibliography entry, so Quill
+   inserts `\cite{...}` directly at your editing position.
+4. If you deliberately use manual bibliography mode, review the preview and
+   choose **Apply sync and insert citation** first.
 
-The default target is `references.bib`; another `.bib` filename can be selected.
-**Connect to the main document if it has no bibliography yet** can add the
-bibliography commands for a straightforward project. Existing bibliography
-configurations are left alone. Imported projects with custom classes, `biblatex`
-or complex includes may need their existing setup adjusted manually.
+**Keep bibliography synced automatically** is on by default. Linking a personal
+library populates the bibliography, and later library membership changes update
+its linked manuscripts in the same database transaction, including closed ones.
+New papers are added and unedited generated entries receive current metadata.
+The editor checks for updates about every 15 seconds while visible, and on
+returning to the tab. Opening, saving, compiling and ZIP export reconcile the
+linked bibliography again. No LLM or always-running background worker is needed.
+Metadata changed outside the application is reconciled on access, not by a
+continuous filesystem watcher.
 
-To refresh references later, use **Preview bibliography sync**, inspect added
-and updated entries, then **Apply bibliography sync**. Linking a library alone
-does not rewrite the manuscript. Existing entries are retained, including those
-for papers removed from the collection. Handwritten entries and manually edited
-generated entries are never silently overwritten: conflicting keys block the
-sync until you resolve them. If another window changes the project or library,
-preview again before applying.
+The default target is `references.bib`. An existing single bibliography target
+is respected. For multiple files or a custom setup, enter the desired `.bib`
+filename in **References → Bibliography file** and choose **Save sync settings**.
+Straightforward documents are connected automatically on the first citation,
+when they have no bibliography configuration. Merely collecting papers does not
+start an empty BibTeX run. Existing configurations are not replaced; custom
+classes or dynamic includes may need a manual connection in the source.
+
+Handwritten entries and manually modified generated entries are never silently
+overwritten. Conflicting or malformed entries trigger a persistent **Review
+references** warning. Other safe additions can still sync, but compilation is
+held until you resolve the issue or deliberately select manual mode. Recovery
+ZIPs and draft exports remain available. Missing corpus records are reported,
+not used as a reason to erase saved references. Entries for removed papers are
+also retained, so existing citations do not break.
+
+For a deliberately manual bibliography, clear **Keep bibliography synced
+automatically** and choose **Save sync settings**. The existing preview/apply
+workflow remains available. Concurrent edits are merged only when safe; a
+conflict keeps the draft and requires review rather than overwriting it.
+
+New citation keys use the first author's family name and year, for example
+`Doe2026`. If that name is taken, Quill allocates `Doe2026a`, `Doe2026b`, and so on.
+Keys are stored per account and reused across personal libraries. Later metadata
+corrections or collection changes do not rename them. Already-used keys from
+older Quill projects are preserved, as are imported or handwritten `.bib` keys.
+
+After syncing references, type `\cite{`, `\citep{`, `\citet{`, `\parencite{` or
+`\textcite{` directly in the source. Suggestions use the project's `.bib` files
+and display author/year details with the title on selection. Type part of a key,
+use the arrow keys, then Enter to insert it; Ctrl+Space requests suggestions and
+Escape closes them. Comma-separated citations are supported. This runs locally
+in the browser and does not query a model. Unsynced corpus papers must first be
+added through **References** so that the citation has a real bibliography entry.
+Quill does not invent an entry just because a key was typed.
 
 Citation keys remain stable for the same corpus paper. The references panel
 shows each key and flags incomplete metadata. Check author names, titles,
@@ -251,6 +299,7 @@ and kept separately; selecting a template does not replace its files.
 The bundled gallery includes:
 
 - **Research article**: a lightweight, general-purpose LaTeX starter.
+- **Bachelor / Master thesis**: configurable degree details and separate chapter files.
 - **Bioinformatics**: a Quill starter using the official OUP authoring class.
 - **G3 · OUP authoring**: a starter using the generic OUP class offered by G3,
   not the separate GSA template.
@@ -274,6 +323,13 @@ Change the code font size with its zoom controls, independently of the PDF zoom.
 Neither changes the document's printed font size or page layout. **◐** switches
 the code editor between light and dark. Display preferences are remembered in
 this browser, not saved as manuscript content.
+
+The code font-size field accepts any positive finite pixel value, including
+decimals such as `9.5` or `32`. There is no fixed 11–24 px preset limit. Enter
+applies the value; Escape restores the previous size. **−** and **+** adjust it
+in one-pixel steps, or halve/double values below one pixel. Zero, negative and
+invalid values leave the last valid setting intact. **Reset layout** restores
+14 px if you zoom too far.
 
 The editor includes LaTeX syntax colours, line numbers, bracket matching, command
 suggestions, and separate undo history for each open file. Click a heading in
@@ -299,6 +355,31 @@ require this build step.
 Projects and personal collections are stored per account in `.writing.sqlite3`
 under the existing private user-data directory, excluded from Git. They are not
 stored in the shared corpus. Back up that directory along with account data.
+
+## Back up a manuscript to Dropbox or another folder
+
+In an open manuscript, choose **••• → Backups / Dropbox folder**. **Download
+backup ZIP** works in every supported browser. It saves the current manuscript
+first and exports a revision-checked ZIP with all source files, bibliographies
+and uploaded figures. Each backup has a timestamp, project identifier and
+revision in its filename. Import a backup using Quill's **Import LaTeX ZIP** action.
+
+Chromium browsers on localhost or HTTPS also offer **Choose backup folder…**.
+Select a folder inside the Dropbox folder on **your own computer**, then click
+**Save backup**. The Dropbox desktop application handles uploading that folder.
+This works even when Quill itself runs on a shared server. It is a local-folder
+integration, not Dropbox OAuth or a direct cloud-upload service; Quill neither
+stores Dropbox credentials nor verifies remote sync completion.
+
+Optionally enable backups of changed revisions every five minutes while the tab
+is open. Folder access and this setting last for that tab only. Closing the tab,
+losing access to the folder or a failed backup stops automatic copies. Firefox
+and Safari use ZIP downloads instead. Existing backup files are never deleted
+automatically; monitor space in the chosen folder.
+
+Only the open manuscript is included, not the shared PDF corpus, user accounts,
+shelves or private reader annotations. Treat exported ZIPs as private research
+data. A shared server still needs its own administrator-managed backup.
 
 ## Check a passage
 

@@ -12,7 +12,7 @@ SHELL = '''<!doctype html><html><head>
 <select id="layoutMode"><option value="split">Both</option><option value="code">Code</option><option value="pdf">PDF</option></select>
 <select id="paneDirection"><option value="side">Side</option><option value="stack">Stack</option></select>
 <button id="editorTheme">Theme</button><button id="resetLayout">Reset</button>
-<select id="codeZoom"><option>11</option><option>12</option><option>13</option><option>14</option><option>16</option><option>18</option><option>20</option><option>24</option></select>
+<input id="codeZoom" type="number" step="any" value="14">
 <button id="codeZoomOut">Smaller</button><button id="codeZoomIn">Larger</button>
 </header><main><div class="editor-grid" id="writerGrid">
 <aside class="files" id="filesPane"><button id="hideFiles">Hide</button>Files</aside>
@@ -113,10 +113,12 @@ def test_keyboard_resize_bounds_zoom_and_single_panes(layout_page):
     assert split.get_attribute('aria-valuenow') == '80'
     split.dblclick()
     assert split.get_attribute('aria-valuenow') == '50'
-    page.locator('#codeZoom').select_option('20')
+    page.locator('#codeZoom').fill('20')
+    page.locator('#codeZoom').press('Enter')
     assert page.locator('#source').evaluate('e => getComputedStyle(e).fontSize') == '20px'
     page.locator('#codeZoomIn').click()
-    assert page.locator('#codeZoomIn').is_disabled()
+    assert page.locator('#codeZoom').input_value() == '21'
+    assert not page.locator('#codeZoomIn').is_disabled()
     page.locator('#codeZoomOut').click()
     page.reload()
     page.wait_for_function('window.layout && window.lastResize')
@@ -154,7 +156,7 @@ def test_mobile_automatic_stacking_keeps_desktop_preference(layout_page):
 
 def test_legacy_settings_bounds_and_pointer_cancel(layout_page):
     page = layout_page
-    page.evaluate("localStorage.setItem('originwrite.layout.v1', JSON.stringify({width:999,ratio:.65,fontSize:999,direction:'invalid'}))")
+    page.evaluate("localStorage.setItem('originwrite.layout.v1', JSON.stringify({width:999,ratio:.65,fontSize:-999,direction:'invalid'}))")
     page.reload()
     page.wait_for_function('window.layout && window.lastResize')
     assert page.locator('#filesResize').get_attribute('aria-valuenow') == '400'
@@ -176,3 +178,31 @@ def test_legacy_settings_bounds_and_pointer_cancel(layout_page):
     page.mouse.up()
     page.evaluate('window.layout.destroy()')
     assert not page.locator('body').evaluate("e => e.classList.contains('resizing')")
+
+
+def test_free_font_sizes_below_eleven_above_twenty_four_and_decimals(layout_page):
+    page = layout_page
+    zoom = page.locator('#codeZoom')
+    for value in ['9', '6.5', '32', '72', '999', '0.5']:
+        zoom.fill(value)
+        zoom.press('Enter')
+        assert zoom.input_value() == value
+        assert float(page.locator('#source').evaluate('e => parseFloat(getComputedStyle(e).fontSize)')) == pytest.approx(float(value))
+    page.locator('#codeZoomOut').click()
+    assert zoom.input_value() == '0.25'
+    page.locator('#codeZoomIn').click()
+    assert zoom.input_value() == '0.5'
+    page.reload()
+    page.wait_for_function('window.layout && window.lastResize')
+    assert zoom.input_value() == '0.5'
+    assert page.evaluate('window.lastResize.fontSize') == .5
+    for invalid in ['0', '-2', '']:
+        zoom.fill(invalid)
+        zoom.press('Enter')
+        assert zoom.input_value() == '0.5'
+        assert zoom.get_attribute('aria-invalid') == 'true'
+    zoom.fill('15.25')
+    zoom.press('Escape')
+    assert zoom.input_value() == '0.5'
+    page.locator('#resetLayout').click()
+    assert zoom.input_value() == '14'

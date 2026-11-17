@@ -2896,6 +2896,7 @@ def explain_paper_search_matches(
     candidates = paper_reason_candidates(
         papers,
         chunk_results,
+        question=question,
         document_context=document_context,
         requested_fields=requested_fields,
     )
@@ -3458,10 +3459,12 @@ def paper_reason_candidates(
     papers: list[dict],
     chunk_results: list[dict],
     *,
+    question: str = "",
     document_context: dict[str, list[dict]] | None = None,
     requested_fields: tuple[str, ...] = (),
 ) -> list[dict]:
     document_context = document_context or {}
+    reason_patterns = _paper_reason_anchor_patterns(question) if not requested_fields else []
     chunks_by_paper: dict[str, list[dict]] = defaultdict(list)
     for chunk in chunk_results:
         paper_id = str(chunk.get("paper_id") or "")
@@ -3480,10 +3483,10 @@ def paper_reason_candidates(
                 max_chars=detail_budget,
             )
         else:
-            excerpts = [
-                str(chunk.get("text") or "")[:800]
-                for chunk in chunks_by_paper.get(paper_id, [])[:1]
-            ]
+            reason_chunks = chunks_by_paper.get(paper_id, [])
+            if not reason_chunks and reason_patterns:
+                reason_chunks = document_context.get(paper_id, [])
+            excerpts = _paper_reason_anchor_excerpts(reason_chunks, reason_patterns)
         if not excerpts:
             excerpts = _paper_reason_document_excerpts(document_context.get(paper_id, []))
         candidates.append(
@@ -3497,6 +3500,95 @@ def paper_reason_candidates(
             }
         )
     return candidates
+
+
+def _paper_reason_anchor_patterns(question: str) -> list[re.Pattern]:
+    """Prefer literal identifiers over task wording; never expand to inferred entities."""
+    relevant_terms = set(question_relevance_terms(question))
+    identifiers: list[str] = []
+    concepts: list[str] = []
+    dashes = "-\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+    dash_class = re.escape(dashes)
+    for token in re.findall(rf"[A-Za-z][A-Za-z0-9_]*(?:[{dash_class}][A-Za-z0-9_]+)*", question):
+        if not 2 <= len(token) <= 64:
+            continue
+        if token.isupper() or any(char.isdigit() for char in token) or "_" in token:
+            identifiers.append(token)
+        elif any(term in relevant_terms for term in normalize_text(token).split()):
+            concepts.append(token)
+        elif any(dash in token for dash in dashes):
+            concepts.append(token)
+    patterns = []
+    # Eight anchors leave at least 100 characters of context per excerpt. Matching
+    # samples only the first occurrence per anchor, not every occurrence in a PDF.
+    for token in dict.fromkeys(token.casefold() for token in [*identifiers, *concepts]):
+        parts = re.split(rf"[{dash_class}]", token)
+        literal = rf"[{dash_class}]".join(re.escape(part) for part in parts)
+        patterns.append(re.compile(rf"(?<![\w{dash_class}]){literal}(?![\w{dash_class}])", re.I))
+        if len(patterns) == 8:
+            break
+    return patterns
+
+
+def _paper_reason_anchor_excerpts(
+    chunks: list[dict],
+    patterns: list[re.Pattern],
+    *,
+    max_chars: int = 800,
+) -> list[str]:
+    """Keep distinct literal question anchors inside a shared, bounded text budget."""
+    if max_chars <= 0:
+        return []
+    pending = set(range(len(patterns)))
+    hits: dict[int, tuple[int, str, int, int]] = {}
+    first_text = ""
+    for chunk_index, chunk in enumerate(chunks):
+        text = " ".join(str(chunk.get("text") or "").split())
+        if not text:
+            continue
+        if not first_text:
+            first_text = text
+        for anchor_index in sorted(pending):
+            match = patterns[anchor_index].search(text)
+            if match:
+                hits[anchor_index] = (chunk_index, text, match.start(), match.end())
+                pending.remove(anchor_index)
+        if not pending:
+            break
+    if not hits:
+        return [first_text[:max_chars]] if first_text else []
+
+    windows: list[tuple[int, str, int, int]] = []
+    remaining = max_chars
+    for offset, anchor_index in enumerate(sorted(hits)):
+        chunk_index, text, match_start, match_end = hits[anchor_index]
+        allowance = remaining // (len(hits) - offset)
+        # Both omission markers count against the original 800-character budget.
+        body_budget = allowance - 12
+        if len(text) <= allowance:
+            start, end = 0, len(text)
+        else:
+            if body_budget < match_end - match_start:
+                continue
+            start = max(0, match_start - (body_budget - (match_end - match_start)) // 2)
+            start = min(start, max(0, len(text) - body_budget))
+            end = min(len(text), start + body_budget)
+        windows.append((chunk_index, text, start, end))
+        remaining -= end - start + (6 if start else 0) + (6 if end < len(text) else 0)
+
+    # Merge overlaps only within the same source chunk, never join separated
+    # passages as though they were contiguous evidence.
+    merged: list[tuple[int, str, int, int]] = []
+    for chunk_index, text, start, end in sorted(windows, key=lambda row: (row[0], row[2])):
+        if merged and merged[-1][0] == chunk_index and start <= merged[-1][3]:
+            previous = merged[-1]
+            merged[-1] = (chunk_index, text, previous[2], max(previous[3], end))
+        else:
+            merged.append((chunk_index, text, start, end))
+    return [
+        ("[...] " if start else "") + text[start:end] + (" [...]" if end < len(text) else "")
+        for _chunk_index, text, start, end in merged
+    ]
 
 
 def _paper_detail_excerpts(
@@ -3664,7 +3756,16 @@ Return JSON only:
 
 For every supplied paper ID, write one sentence in the language of the user question. Explain the
 scientific connection: what the paper studies, measures, compares, or reports that bears on the
-question. Never explain relevance merely as keyword, metadata, ranking, corpus, or full-text match.
+question. For an explicit identifier-mention search, you may instead report the literal mention
+and its stated context. For other requests, do not explain relevance merely as a keyword,
+metadata, ranking, corpus, or full-text match.
+Distinguish a mention or list entry, a measurement, and use as an input or channel component from
+demonstrated biological function, marker specificity, or study focus. A composite channel's label
+does not establish a component's localization or function. Claim those stronger interpretations
+only when the supplied evidence states them.
+Use the identifier spelling shown in the source, including punctuation. Do not silently substitute
+the query spelling or assert that spelling or punctuation variants are aliases unless the supplied
+evidence establishes their equivalence.
 Use only the supplied title, topics, and excerpts. Do not infer a result, cohort, independence, or
 causal relationship that is not stated. If the supplied material is insufficient, say precisely
 that the paper is potentially relevant by scope but the requested relationship is not established
@@ -6801,7 +6902,14 @@ def label_secondary_citation_roles(
             ]
             if secondary_ids and not primary_ids and not role_pattern.search(claim):
                 leading = claim[: len(claim) - len(claim.lstrip())]
-                pieces[index] = f"{leading}Secondary synthesis: {claim.lstrip()}"
+                cited_types = {source_type_by_id[evidence_id] for evidence_id in secondary_ids}
+                if cited_types == {"reanalysis_secondary_data"}:
+                    role = "Reanalysis"
+                elif "reanalysis_secondary_data" in cited_types:
+                    role = "Secondary source evidence"
+                else:
+                    role = "Secondary synthesis"
+                pieces[index] = f"{leading}{role}: {claim.lstrip()}"
         output_lines.append("".join(pieces))
     normalized_body = "".join(output_lines)
     return normalized_body + (separator + references if separator else "")

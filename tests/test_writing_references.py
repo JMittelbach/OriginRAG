@@ -19,7 +19,7 @@ def prepared(tmp_path, paper_ids=('P1',)):
     collection = store.change({'action': 'create_collection', 'name': 'My manuscript'}, CATALOGUE)
     for paper_id in paper_ids:
         collection = store.change({**collection, 'action': 'collection_paper', 'paper_id': paper_id}, CATALOGUE)
-    project = store.change({'action': 'create_project', 'name': 'Manuscript'}, CATALOGUE)
+    project = store.change({'action': 'create_project', 'name': 'Manuscript', 'bibliography_auto': False}, CATALOGUE)
     project = store.change({**project, 'action': 'save_project', 'collection': collection['id']}, CATALOGUE)
     return store, project, collection
 
@@ -37,7 +37,7 @@ def save_file(store, project, name, content):
 def test_stable_keys_and_structured_authors():
     paper = {**CATALOGUE[0], 'authors': [{'family': 'Müller', 'given': 'Ada'}, {'name': 'A & B Consortium'}],
              'volume': '12', 'issue': '3', 'pages': '1--8', 'title': r'PfEMP1 {quoted} \input{secret}'}
-    assert citation_key(paper) == 'paper' + hashlib.sha256(b'P1').hexdigest()[:12]
+    assert citation_key(paper) == 'Muller2026'
     entry = reference_entry(paper)
     assert r'author = {Müller, Ada and {A \& B Consortium}}' in entry
     assert 'volume = {12}' in entry and 'number = {3}' in entry and 'pages = {1--8}' in entry
@@ -51,6 +51,56 @@ def test_full_author_json_and_document_type():
     entry = reference_entry(paper)
     assert entry.startswith('@incollection{')
     assert 'author = {Jones, B. and Lee, A.}' in entry
+
+
+@pytest.mark.parametrize('author,expected', [('Jane Doe', 'Doe2026'), ('Doe, Jane', 'Doe2026'),
+    ('Doe J', 'Doe2026'), ('Müller A.', 'Muller2026'), ('Doe et al.', 'Doe2026'), ('', 'Unknown2026')])
+def test_readable_author_year_keys(author, expected):
+    assert citation_key({'paper_id': 'paper', 'author': author, 'year': '2026'}) == expected
+
+
+def test_keys_persist_across_collections_metadata_changes_and_collisions(tmp_path):
+    catalogue = [{**CATALOGUE[0], 'author': 'Jane Doe'}, {**CATALOGUE[1], 'author': 'Doe J', 'year': '2026'}]
+    store, project, collection = prepared(tmp_path, ('P1', 'P2'))
+    first = store.collection_references(collection['id'], catalogue)
+    assert [r['key'] for r in first['references']] == ['Doe2026', 'Doe2026a']
+    # No re-keying when metadata is corrected or a library is reordered.
+    changed = [{**p, 'year': '2027', 'author': 'New name'} for p in catalogue]
+    second = WritingStore(tmp_path).collection_references(collection['id'], changed)
+    assert [r['key'] for r in second['references']] == ['Doe2026', 'Doe2026a']
+    preview = store.bibliography_preview(project['id'], changed)
+    assert [r['key'] for r in preview['added']] == ['Doe2026', 'Doe2026a']
+
+
+def test_collisions_past_z_are_alphabetical_and_case_insensitive(tmp_path):
+    catalogue = [{'paper_id': f'P{i:03}', 'author': 'Doe', 'year': '2026', 'title': f'Study {i}'} for i in range(30)]
+    store = WritingStore(tmp_path)
+    collection = store.change({'action': 'create_collection', 'name': 'Many'}, catalogue)
+    for paper in catalogue:
+        collection = store.change({**collection, 'action': 'collection_paper', 'paper_id': paper['paper_id']}, catalogue)
+    keys = [r['key'] for r in store.collection_references(collection['id'], catalogue)['references']]
+    assert len(set(k.casefold() for k in keys)) == 30
+    assert keys[:2] == ['Doe2026', 'Doe2026a'] and keys[27] == 'Doe2026aa'
+
+
+def test_existing_legacy_keys_remain_citable(tmp_path):
+    store, project, collection = prepared(tmp_path)
+    legacy = 'paper' + hashlib.sha256(b'P1').hexdigest()[:12]
+    entry = reference_entry(CATALOGUE[0], legacy)
+    project = save_file(store, project, 'references.bib', entry)
+    project = save_file(store, project, 'main.tex', project['files']['main.tex'] + '\n\\cite{' + legacy + '}')
+    refs = store.collection_references(collection['id'], CATALOGUE)
+    assert refs['references'][0]['key'] == legacy
+    preview = store.bibliography_preview(project['id'], CATALOGUE)
+    assert len(preview['unchanged']) == 1 and not preview['added']
+    assert store.get(project['id'])['files'] == project['files']
+
+
+def test_export_checks_the_saved_revision(tmp_path):
+    store, project, _ = prepared(tmp_path)
+    assert store.export(project['id'], expected_revision=project['revision']).startswith(b'PK')
+    with pytest.raises(WritingConflict, match='before export'):
+        store.export(project['id'], expected_revision=0)
 
 
 def test_collection_references_order_missing_metadata_and_private_rename(tmp_path):

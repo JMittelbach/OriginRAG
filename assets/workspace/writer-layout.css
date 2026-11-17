@@ -33,10 +33,12 @@
 .writing.resizing-rows {cursor:row-resize}
 .writing .code-zoom {display:flex;align-items:center;gap:2px;margin-left:4px}
 .writing .code-zoom button {font-size:15px;min-width:25px;padding:3px}
-.writing .code-zoom select,.writing #codeZoom {
-  width:62px;min-width:0;margin:0;padding:3px 2px;border-color:var(--code-line);
-  background:var(--code-gutter);color:var(--code-text);font-size:11px;
-}
+.writing .code-zoom-value {display:inline-flex;align-items:center;gap:3px;margin:0;padding:3px 7px;border:1px solid var(--code-line);border-radius:7px;background:var(--code-gutter);color:var(--code-text)}
+.writing .code-zoom-value:focus-within {outline:2px solid var(--writer-accent);outline-offset:1px}
+.writing #codeZoom {width:4.5em;min-width:0;margin:0;padding:0;border:0;background:transparent;color:inherit;font:12px/1.4 var(--ui-font,system-ui,sans-serif);text-align:right;appearance:textfield;outline:none}
+.writing #codeZoom::-webkit-inner-spin-button,.writing #codeZoom::-webkit-outer-spin-button {appearance:none;margin:0}
+.writing #codeZoom[aria-invalid=true] {box-shadow:inset 0 -2px #b04848}
+.writing .code-zoom-value>span {font-size:11px;color:var(--code-muted)}
 .writing .code-toolbar {flex-wrap:wrap}
 .writing #paneDirection {max-width:122px}
 .writing #paneDirection:disabled {opacity:.55}

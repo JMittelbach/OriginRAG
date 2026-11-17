@@ -472,15 +472,32 @@ def build_answer_template(question: str, evidence_pack: dict) -> str:
         specialized = build_cerebral_malaria_gene_answer(question, chunks, evidence_pack)
         if specialized:
             return specialized
+    # Resolve restricted scopes before dropping unreadable excerpts: an empty
+    # named/bounded scope must not fall through to unrelated context papers.
+    scoped_chunks = bounded_comparison_citation_chunks(evidence_pack, chunks)
+    if not scoped_chunks and has_explicit_named_study:
+        scoped_chunks = select_fallback_citation_chunks(chunks, question=question)
+    candidates = scoped_chunks if scoped_chunks or has_explicit_named_study else chunks
+    excerpts = {
+        id(chunk): complete_fallback_excerpt(str(chunk.get("text") or ""))
+        for chunk in candidates
+    }
+    readable_chunks = [
+        chunk for chunk in candidates
+        if str(chunk.get("evidence_id") or "").strip() and excerpts[id(chunk)]
+    ]
     cited_chunks = (
-        bounded_comparison_citation_chunks(evidence_pack, chunks)
-        or select_fallback_citation_chunks(
-            chunks,
+        readable_chunks if scoped_chunks or has_explicit_named_study
+        else select_fallback_citation_chunks(
+            readable_chunks,
             question=question,
-            evidence_pack=evidence_pack,
+            evidence_pack={**evidence_pack, "chunks": readable_chunks},
         )
     )
-    summaries = [format_cited_chunk_summary(chunk) for chunk in cited_chunks]
+    summaries = [
+        f"{chunk['evidence_id']}{chunk_locator(chunk)} reports that {excerpts[id(chunk)]}"
+        for chunk in cited_chunks
+    ]
     statements = "\n".join(f"- {summary}" for summary in summaries) if wants_list_answer(question) else " ".join(summaries)
     references = "\n".join(
         f"- {chunk.get('evidence_id')}: {chunk.get('citation_label')}."
@@ -488,10 +505,17 @@ def build_answer_template(question: str, evidence_pack: dict) -> str:
     )
     german = is_german_question(question)
     answer = statements or ("Nicht durch die abgerufene Evidenz gestützt." if german else "Not supported by retrieved evidence.")
+    if statements:
+        answer = (
+            "Quellenauszüge (keine Synthese):\n" if german
+            else "Source excerpts (not a synthesis):\n"
+        ) + answer
     cautious = (
-        "Die abgerufenen Arbeiten stützen Zusammenhänge zur Frage, belegen aber keinen einheitlichen kausalen Mechanismus."
+        "Die abgerufenen Arbeiten werden nur durch Quellenauszüge wiedergegeben; "
+        "dieser Fallback liefert keine zusammenfassende Antwort auf die Frage."
         if german
-        else "The retrieved papers support associations relevant to the question, but they do not by themselves establish a single causal mechanism."
+        else "The retrieved papers are represented by source excerpts only; "
+        "this fallback does not synthesize an answer to the question."
     )
     if epistemic_causal_comparison_question(question) and len(cited_chunks) == 2:
         cited_ids = "; ".join(
@@ -503,14 +527,16 @@ def build_answer_template(question: str, evidence_pack: dict) -> str:
             "evidence limit does not prove that a causal relationship is absent."
         )
     limitations = (
-        "Der Fallback fasst Evidenzausschnitte zusammen, kann aber widersprüchliche Studiendesigns oder fehlende Messungen nicht auflösen."
+        "Der Fallback wählt vollständige Quellensätze aus, bewertet aber nicht, "
+        "wie gut sie die Frage beantworten."
         if german
-        else "The fallback can summarize retrieved excerpts, but it cannot resolve conflicting study designs or missing measurements."
+        else "The fallback selects complete source sentences but does not assess "
+        "how well they answer the question."
     )
     missing = (
-        "Direkt passende Experimente oder longitudinale Datensätze wären nötig, um Kausalität zu prüfen."
+        "Dieser Fallback hat nicht geprüft, ob zusätzliche Evidenz benötigt wird."
         if german
-        else "Direct matched experiments or longitudinal datasets would be needed to test causality for this question."
+        else "This fallback has not assessed whether additional evidence is needed."
     )
     return f"""## Evidence-backed statements
 {answer}
@@ -1537,6 +1563,79 @@ def best_evidence_sentence(text: str, max_chars: int = 260) -> str:
     if len(sentence) > max_chars:
         sentence = truncate_at_word(sentence, max_chars=max_chars)
     return sentence
+
+
+def complete_fallback_excerpt(text: str, max_chars: int = 512) -> str:
+    """Select a whole source sentence, never repair or clip its scientific text.
+
+    This conservative path is only for the generic answer fallback. In particular,
+    do not use the shared cleaner, which can hide source truncation markers.
+    """
+    clean = re.sub(r"\s+", " ", text).strip()
+    sentences: list[str] = []
+    start = scanned = 0
+    stack: list[str] = []
+    invalid = False
+    pairs = {")": "(", "]": "[", "}": "{"}
+    contrast = re.compile(
+        r"^(?:However|But|Yet|Nevertheless|Nonetheless|In contrast|"
+        r"Aber|Jedoch|Dennoch|Im Gegensatz)\b", flags=re.IGNORECASE,
+    )
+    for boundary in re.finditer(r"[.!?][)\]\}\"'’”]*(?=\s|$)", clean):
+        end = boundary.end()
+        for character in clean[scanned:end]:
+            if character in "([{":
+                stack.append(character)
+            elif character in pairs:
+                if stack and stack[-1] == pairs[character]:
+                    stack.pop()
+                else:
+                    invalid = True
+        scanned = end
+        # Periods in citations, initials and figure references are not endings.
+        if clean[boundary.start()] == "." and re.search(
+            r"\b(?:figs?|eqs?|refs?|dr|mr|mrs|ms|prof|vs|no|nos|approx|"
+            r"et al|e\.g|i\.e|[A-Za-z])\.$",
+            clean[max(start, boundary.start() - 16):boundary.start() + 1],
+            flags=re.IGNORECASE,
+        ):
+            continue
+        if stack:
+            continue
+        sentence = clean[start:end].strip()
+        start = end
+        if invalid:
+            if sentences and contrast.match(sentence):
+                sentences.pop()
+            invalid = False
+            continue
+        # Keep an immediately following contrast with the statement it qualifies.
+        if contrast.match(sentence):
+            if sentences:
+                sentences[-1] += " " + sentence
+        else:
+            sentences.append(sentence)
+    if sentences and contrast.match(clean[start:].strip()):
+        # The qualifier is truncated, so its preceding statement is unsafe too.
+        sentences.pop()
+
+    usable = []
+    for sentence in sentences:
+        words = re.findall(r"\b\w+\b", sentence)
+        first_word = re.match(r"^[('\"‘“\[]*([^\W\d_]\w*)", sentence)
+        if (
+            not 1 <= len(sentence) <= max_chars
+            or not first_word
+            or not any(character.isupper() for character in first_word.group(1))
+            or not re.search(r"\b[a-zäöüß]{2,}\b", sentence)
+            or sum(any(character.isalpha() for character in word) for word in words) < 3
+            or sum(word.isdigit() for word in words) > len(words) / 3
+            or re.search(r"\.{2,}|…|https?://|www\.|\bdoi\b|[|\x00-\x1f]", sentence,
+                         flags=re.IGNORECASE)
+        ):
+            continue
+        usable.append(sentence)
+    return max(usable, key=sentence_score, default="")
 
 
 def source_lookup_sentence(question: str, text: str, max_chars: int = 260) -> str:

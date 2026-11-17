@@ -12,8 +12,8 @@ from originrag.writing_templates import ASSETS, ARCHIVE_HASH, list_templates, te
 
 def test_gallery_is_local_and_returned_metadata_is_not_mutable():
     gallery = list_templates()
-    assert len(gallery) == 6
-    assert len({entry['id'] for entry in gallery}) == 6
+    assert len(gallery) == 7
+    assert len({entry['id'] for entry in gallery}) == 7
     assert all(entry['main'] == 'main.tex' and entry['licence'] and entry['source'].startswith('https://') for entry in gallery)
     gallery[1]['journals'].append('changed')
     assert 'changed' not in list_templates()[1]['journals']
@@ -30,6 +30,15 @@ def test_complete_template_projects(template_id):
         assert 'plos2025.bst' in files and 'LPPL-1.3c.txt' in files
         assert '@@' not in files[main]
         assert ('Author summary' in files[main]) == (template_id != 'plos-one')
+    elif template_id == 'thesis':
+        assert 'metadata.tex' in files and 'chapters/introduction.tex' in files
+        assert 'quillthesis.sty' in files and 'scrbook' in files[main]
+        assert '\\ThesisDegree' in files['metadata.tex']
+        assert '\\tableofcontents' in files[main] and '\\appendix' in files[main]
+        assert '\\newcommand{\\ThesisUniversity}{}' in files['metadata.tex']
+        source = '\n'.join(value for name, value in files.items() if name.endswith(('.tex', '.sty', '.cls')))
+        assert not any(term in source.lower() for term in ('hamburg', 'tuhh', 'stsreprt', 'meinInstitut'.lower(), 'signature.png'))
+        assert 'titlepage.sty' not in files and 'stsreprt.cls' not in files
     elif template_id != 'article':
         assert 'oup-authoring-template.cls' in files and 'oup-abbrvnat.bst' in files
         assert 'LPPL-1.3c.txt' in files and 'OUP-README.txt' in files
@@ -81,6 +90,8 @@ def test_template_can_cite_synced_bibliography(template_id):
     files, main = template_files(template_id)
     files[main] = files[main].replace('% \\bibliographystyle', '\\bibliographystyle').replace('% \\bibliography', '\\bibliography')
     files[main] = files[main].replace('\\section{Introduction}', '\\section{Introduction}\nA test citation \\cite{sample2026}.')
+    if template_id == 'thesis':
+        files['chapters/introduction.tex'] += '\nA test citation \\cite{sample2026}.\n'
     files['references.bib'] = '@article{sample2026, author={Doe, Jane}, title={Synthetic bibliography test}, journal={Test journal}, year={2026}}\n'
     result = compile_project({'files': files, 'main': main, 'revision': 1})
     assert result['ok'], result.get('log')
@@ -89,3 +100,33 @@ def test_template_can_cite_synced_bibliography(template_id):
         text = ''.join(page.get_text() for page in document)
         assert 'Synthetic bibliography test' in text
     assert 'errors were issued by BibTeX' not in result['log']
+
+
+@pytest.mark.skipif(os.environ.get('ORIGINWRITE_TEST_COMPILER') != '1', reason='Requires prepared isolated TeX compiler')
+@pytest.mark.parametrize('long_title', [False, True])
+def test_neutral_thesis_title_and_optional_metadata_compile_cleanly(tmp_path, long_title):
+    from originrag.writing_compile import compile_project
+    import fitz
+    files, main = template_files('thesis')
+    if long_title:
+        title = 'A careful investigation of complex biological systems using reproducible computational methods and integrated evidence across multiple experimental settings'
+        files['metadata.tex'] = files['metadata.tex'].replace('Your thesis title', title)
+        files['metadata.tex'] = files['metadata.tex'].replace('{Master\'s thesis}', '{Bachelor\'s thesis}').replace('{Master of Science}', '{Bachelor of Science}')
+        files['metadata.tex'] = files['metadata.tex'].replace('\\ThesisUniversity}{}', '\\ThesisUniversity}{Example University}')
+        files['metadata.tex'] = files['metadata.tex'].replace('\\ThesisDepartment}{}', '\\ThesisDepartment}{Department of Research}')
+        files['metadata.tex'] = files['metadata.tex'].replace('\\ThesisSecondSupervisor}{}', '\\ThesisSecondSupervisor}{Another supervisor}')
+    result = compile_project({'files': files, 'main': main, 'revision': 1})
+    assert result['ok'], result['log']
+    assert 'Overfull' not in result['log'], result['log']
+    with fitz.open(stream=result['pdf'], filetype='pdf') as document:
+        title_text = document[0].get_text()
+        assert 'Hamburg' not in title_text and 'Your university' not in title_text
+        if long_title:
+            assert 'Example University' in title_text and 'Bachelor' in title_text
+            assert 'Another supervisor' in title_text
+        else:
+            assert 'University' not in title_text and 'Department' not in title_text
+        assert document[0].rect.width == pytest.approx(595, abs=4)
+        assert document[0].rect.height == pytest.approx(842, abs=4)
+        for number in [0, len(document) - 3]:
+            document[number].get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False).save(tmp_path / f'thesis-{long_title}-{number}.png')

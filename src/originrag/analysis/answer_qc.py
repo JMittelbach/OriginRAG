@@ -2353,7 +2353,9 @@ def incomplete_answer_prose_sections(answer: str, task: str) -> list[str]:
 
 
 def unbalanced_delimiters(answer: str) -> list[str]:
-    stripped = re.sub(r"https?://\S+", "", answer or "")
+    # Autolink contents are unambiguously URLs, including literal delimiters.
+    stripped = re.sub(r"<https?://[^<>\s]+>", "", answer or "")
+    stripped = re.sub(r"https?://[^<>\s]+", _url_delimiter_suffix, stripped)
     issues = []
     for opening, closing, label in [("(", ")", "parentheses"), ("[", "]", "brackets")]:
         depth = 0
@@ -2367,6 +2369,27 @@ def unbalanced_delimiters(answer: str) -> list[str]:
         if depth != 0:
             issues.append(label)
     return issues
+
+
+def _url_delimiter_suffix(match: re.Match[str]) -> str:
+    """Ignore URL contents, retaining a surrounding link/prose closing delimiter.
+
+    A greedy URL match also captures the closing ``)`` of ``[source](https://...)``.
+    Balanced delimiters within a URL belong to it; the first unmatched closing
+    delimiter ends it. Keep the entire suffix so later prose is still checked.
+    """
+    depths = {"(": 0, "[": 0}
+    openings = {")": "(", "]": "["}
+    url = match.group(0)
+    for index, character in enumerate(url):
+        if character in depths:
+            depths[character] += 1
+        elif character in openings:
+            opening = openings[character]
+            if depths[opening] == 0:
+                return url[index:]
+            depths[opening] -= 1
+    return ""
 
 
 def incomplete_gap_key_sources(answer: str, evidence_pack: dict) -> list[str]:
@@ -2437,6 +2460,7 @@ def unsupported_technical_terms(answer: str, evidence_pack: dict, limit: int = 2
             or normalized in translated_terms
             or _plural_variant_supported(normalized, support_terms)
             or _compound_term_supported(term, support_words)
+            or _source_hyphenation_supported(term, source_wording)
             or term in COMMON_TECHNICAL_WORDS
         ):
             continue
@@ -2447,6 +2471,28 @@ def unsupported_technical_terms(answer: str, evidence_pack: dict, limit: int = 2
         if len(unsupported) >= limit:
             break
     return unsupported
+
+
+def _source_hyphenation_supported(term: str, source_wording: list[str]) -> bool:
+    """Allow only contiguous source wording with changed word separators.
+
+    For example, ``T-cell-specific`` is the same wording as ``T-cell specific``.
+    Match each source field separately to avoid assembling new compounds from
+    unrelated passages. Do not reinterpret digit-containing identifiers or
+    match a prefix/suffix of a longer hyphenated identifier.
+    """
+    if "-" not in term or any(character.isdigit() for character in term):
+        return False
+    parts = term.split("-")
+    if not all(parts):
+        return False
+    pattern = re.compile(
+        r"(?<![\w‐‑‒–—―−-])"
+        + r"[\s‐‑‒–—-]+".join(re.escape(part) for part in parts)
+        + r"(?![\w‐‑‒–—―−-])",
+        flags=re.IGNORECASE,
+    )
+    return any(pattern.search(text) for text in source_wording)
 
 
 def _plural_variant_supported(normalized: str, support_terms: set[str]) -> bool:

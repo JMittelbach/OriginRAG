@@ -4,6 +4,8 @@ import {createPDFPreview} from './pdf-preview.mjs';
 import {openLibraryImport} from './library-import.mjs';
 import {collaborationStyle, snapshotProject, rebaseDraft, openSharing, openProjectCitations} from './writing-collaboration.mjs';
 import {openLanguageCheck} from './writing-language.mjs';
+import {setupProjectBackup} from './writing-backups.mjs';
+import {prepareProjectUploads} from './project-uploads.mjs';
 import {uploadCollectionPDFs} from './collection-drop.mjs';
 import {requestJSON} from './request.mjs';
 import {getAppProfile} from './profile.mjs';
@@ -14,7 +16,7 @@ const content = $('content');
 document.body.classList.add('workspace-page');
 const mode = location.pathname;
 if (mode === '/write') document.title = 'Quill';
-let sourceEditor, writerLayout, outlineTimer, diffTextChanges, serverProject, syncTimer, syncBusy = false, syncFailures = 0;
+let sourceEditor, writerLayout, outlineTimer, diffTextChanges, serverProject, syncTimer, syncBusy = false, syncFailures = 0, lastBibliographyCheck = 0;
 const textTypes = /\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i;
 let state, project, activeFile, editVersion = 0, savedVersion = 0, saving = null, unconfirmedSave = null;
 let appProfile = {profile: 'full', features: {rag: true, write: true}};
@@ -354,9 +356,13 @@ function collaborationControls() {
   $('shareProject').title = access.enabled ? 'Manage access to this manuscript' : 'Sharing is available when signed in to a shared server.';
   const editorOnly = access.role === 'editor';
   $('projectLibrary').disabled = editorOnly; $('updateBibliography').hidden = editorOnly;
-  $('librarySyncHint').textContent = editorOnly ? 'The owner manages the linked personal library. The project BibTeX files are shared.' : 'Preview bibliography changes before applying them. Your existing entries are kept.';
+  $('librarySyncHint').textContent = editorOnly ? 'The owner manages the linked personal library. The project BibTeX files are shared.' : 'Linked libraries update the bibliography automatically. Manual entries and existing citations are kept.';
   $('projectLibrary').value = project.collection || '';
   $('projectShared').hidden = !access.shared;
+  const status = project.bibliography_status;
+  $('bibliographyState').textContent = status?.state === 'synced' ? 'Library bibliography synced' : '';
+  $('bibliographyWarning').hidden = status?.state !== 'needs_review';
+  $('bibliographyMessage').textContent = status?.state === 'needs_review' ? status.message : '';
 }
 async function finishComposition() {
   const deadline = Date.now() + 30000;
@@ -416,12 +422,21 @@ function selectFile(name) {
   for (const b of document.querySelectorAll('[data-edit-command]')) b.disabled = !editable && b.dataset.editCommand !== 'search';
   outline();
 }
-async function synchronizeProject() {
+async function synchronizeProject(forceBibliography = false) {
+  if (forceBibliography && syncBusy) {
+    const deadline = Date.now() + 30000;
+    while (syncBusy && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 80));
+    if (syncBusy) throw new Error('Bibliography sync is still running. Please retry shortly.');
+  }
   clearTimeout(syncTimer);
-  if (syncBusy || document.hidden || saveBlocked || !project?.collaboration?.enabled) { scheduleSync(); return; }
+  if (syncBusy || (document.hidden && !forceBibliography) || saveBlocked || !project) { scheduleSync(); return; }
   syncBusy = true;
   try {
-    const remote = await api('/api/writing?revision=' + encodeURIComponent(project.id));
+    const checkBib = project.bibliography_auto !== false && (project.collection || project.collaboration?.role === 'editor') && (forceBibliography || Date.now() - lastBibliographyCheck > 15000);
+    if (!checkBib && !project.collaboration?.enabled) return;
+    const remote = checkBib ? await api('/api/writing', {action: 'refresh_bibliography', id: project.id})
+      : await api('/api/writing?revision=' + encodeURIComponent(project.id));
+    if (checkBib) lastBibliographyCheck = Date.now();
     project.collaboration = remote.collaboration; collaborationControls();
     if (remote.revision !== serverProject.revision) {
       if (saving || editVersion !== savedVersion) await save();
@@ -441,7 +456,7 @@ async function synchronizeProject() {
 }
 function scheduleSync() {
   clearTimeout(syncTimer);
-  if (project?.collaboration?.enabled && !saveBlocked) syncTimer = setTimeout(synchronizeProject, Math.min(30000, 2500 * 2 ** Math.min(syncFailures, 4)));
+  if (project && !saveBlocked && (project.collaboration?.enabled || (project.collection && project.bibliography_auto !== false))) syncTimer = setTimeout(() => synchronizeProject(), Math.min(30000, (project.collaboration?.enabled ? 2500 : 15000) * 2 ** Math.min(syncFailures, 4)));
 }
 function fileList() {
   $('fileList').replaceChildren(); $('mainFile').replaceChildren();
@@ -474,7 +489,7 @@ async function compile(force = false, retry = 0) {
   let startedVersion = editVersion;
   $('previewState').textContent = 'Compiling…';
   try {
-    await save(); const version = editVersion; startedVersion = version; const result = await api('/api/writing', {action: 'compile', id: project.id, revision: project.revision, force});
+    await save(); await synchronizeProject(true); await save(); const version = editVersion; startedVersion = version; const result = await api('/api/writing', {action: 'compile', id: project.id, revision: project.revision, force});
     $('compileLog').textContent = result.log || 'Compilation completed.'; $('problems').replaceChildren();
     for (const p of result.diagnostics) $('problems').append(button(`${p.file ? p.file + ':' + p.line + ' · ' : ''}${p.message}`, () => {
       if (!(p.file in project.files) || !p.line) return; selectFile(p.file); writerLayout.showCode(); sourceEditor.jump(p.line);
@@ -501,7 +516,7 @@ async function editor(id) {
   content.innerHTML = `
     <div class="writer-toolbar">
       <a href="/write" class="button back-projects" title="Back to projects">← Projects</a>
-      <div class="project-heading"><h1><span id="projectTitle"></span><span id="projectShared" class="sharing-badge" hidden>Shared</span></h1><span id="savedState" role="status">All changes saved</span><span id="syncState" role="status"></span></div>
+      <div class="project-heading"><h1><span id="projectTitle"></span><span id="projectShared" class="sharing-badge" hidden>Shared</span></h1><span id="savedState" role="status">All changes saved</span><span id="syncState" role="status"></span><span id="bibliographyState" role="status"></span></div>
       <div class="writer-actions">
         <button id="shareProject">Share</button>
         <a id="exportZip" class="button">Download LaTeX ZIP</a>
@@ -513,15 +528,16 @@ async function editor(id) {
         <button id="swapPanes" title="Swap code and PDF positions" aria-label="Swap code and PDF positions">⇄</button>
         <button id="editorTheme" title="Toggle dark code editor" aria-label="Dark code editor" aria-pressed="false">◐</button>
         <details class="writer-menu"><summary aria-label="Project options" title="Project options">•••</summary><div>
-          <button id="draft">Download draft</button><button id="resetLayout">Reset layout</button>
+          <button id="draft">Download draft</button><button id="backupProject">Backups / Dropbox folder</button><button id="resetLayout">Reset layout</button>
         </div></details>
       </div>
     </div>
     <aside id="collaborationConflict" class="writing-conflict" role="alert" hidden><p id="conflictMessage"></p><button id="retrySave" hidden>Retry saving</button><button id="conflictDraft">Download draft</button><button id="conflictReload">Reload saved version</button></aside>
+    <aside id="bibliographyWarning" class="writing-conflict" role="alert" hidden><p id="bibliographyMessage"></p><button id="reviewBibliography">Review references</button></aside>
     <div class="editor-grid" id="writerGrid">
       <aside class="files" id="filesPane" aria-label="Project files">
         <div class="files-heading"><strong>File tree</strong><button id="hideFiles" title="Hide file sidebar" aria-label="Hide file sidebar">×</button></div>
-        <div class="file-actions"><button id="addFile" title="New text file">+ New file</button><button id="uploadFile" title="Upload source files or figures">↑ Upload</button><input type="file" id="fileUpload" multiple hidden></div>
+        <div class="file-actions"><button id="addFile" title="New text file">+ New file</button><button id="uploadFile" title="Upload source files or figures">↑ Upload</button><input type="file" id="fileUpload" accept=".tex,.bib,.sty,.cls,.bst,.bbl,.txt,.md,.csv,.png,.jpg,.jpeg,.pdf" multiple hidden></div>
         <div id="fileList"></div>
         <details class="outline-panel" open><summary>File outline</summary><div id="outline"></div></details>
         <details class="project-settings"><summary>Project settings & references</summary>
@@ -539,9 +555,9 @@ async function editor(id) {
           <button data-edit-command="search" class="search-code" title="Find and replace (Ctrl/Cmd+F)" aria-label="Find and replace">⌕ <span>Find</span></button>
           <button id="insertCitation" title="Insert a citation from your library" aria-label="Insert citation">Cite</button>
           <button id="languageCheck" title="Check spelling and grammar in selected prose" aria-label="Language check">Check</button>
-          <button id="codeZoomOut" title="Smaller code" aria-label="Decrease code zoom">−</button>
-          <select id="codeZoom" aria-label="Code font size"><option value="11">11 px</option><option value="12">12 px</option><option value="13">13 px</option><option value="14" selected>14 px</option><option value="16">16 px</option><option value="18">18 px</option><option value="20">20 px</option><option value="24">24 px</option></select>
-          <button id="codeZoomIn" title="Larger code" aria-label="Increase code zoom">+</button>
+          <span class="code-zoom"><button id="codeZoomOut" title="Smaller code" aria-label="Decrease code zoom">−</button>
+          <label class="code-zoom-value"><input id="codeZoom" type="number" inputmode="decimal" step="any" value="14" aria-label="Code font size" title="Any positive font size in pixels. Enter to apply; Escape to cancel."><span aria-hidden="true">px</span></label>
+          <button id="codeZoomIn" title="Larger code" aria-label="Increase code zoom">+</button></span>
           <button id="compileCode" title="Recompile (Ctrl/Cmd+Enter)" aria-label="Recompile manuscript">▶</button>
         </div>
         <div id="source" class="code-editor"></div><div class="code-status"><span>LaTeX</span><span id="cursorPosition">Ln 1, Col 1</span><span>UTF-8</span></div>
@@ -557,7 +573,7 @@ async function editor(id) {
       </section>
     </div>
     <details id="logDetails"><summary>Errors, warnings & compile log</summary><div class="log-body"><div id="problems"></div><pre id="compileLog">No compilation yet.</pre></div></details>`;
-  sourceEditor = createLatexEditor($('source'), (name, text) => { project.files[name] = text; changed(); clearTimeout(outlineTimer); outlineTimer = setTimeout(outline, 300); }, (line, col) => { $('cursorPosition').textContent = `Ln ${line}, Col ${col}`; });
+  sourceEditor = createLatexEditor($('source'), (name, text) => { project.files[name] = text; changed(); clearTimeout(outlineTimer); outlineTimer = setTimeout(outline, 300); }, (line, col) => { $('cursorPosition').textContent = `Ln ${line}, Col ${col}`; }, () => project.files);
   writerLayout = setupWriterLayout(() => sourceEditor.measure());
   for (const b of document.querySelectorAll('[data-edit-command]')) b.onclick = () => sourceEditor.command(b.dataset.editCommand);
   $('pdfZoom').onchange = zoomPDF;
@@ -569,11 +585,22 @@ async function editor(id) {
   };
   $('projectTitle').textContent = project.name; activeFile = project.main; fileList();
   state.collections.forEach(c => $('projectLibrary').append(new Option(c.name, c.id))); $('projectLibrary').value = project.collection;
-  $('projectLibrary').onchange = () => { project.collection = $('projectLibrary').value; changed(); };
+  $('projectLibrary').onchange = () => { project.collection = $('projectLibrary').value; changed(); scheduleSync(); };
   $('mainFile').onchange = () => { project.main = $('mainFile').value; changed(); };
   $('addFile').onclick = () => askName('New text file (e.g. sections/methods.tex)', async name => { if (!textTypes.test(name) || !/^[A-Za-z0-9_][A-Za-z0-9_./ -]*$/.test(name) || name.split('/').some(p => !p || p.startsWith('.'))) throw new Error('Choose a safe relative text filename.'); if (name in project.files) throw new Error('That file already exists.'); project.files[name] = ''; activeFile = name; fileList(); changed(); });
   $('uploadFile').onclick = () => $('fileUpload').click();
-  $('fileUpload').onchange = async () => { try { for (const f of $('fileUpload').files) { if (f.size > 8000000) throw new Error('Individual uploads are limited to 8 MB.'); if (!/\.(tex|bib|sty|cls|bst|bbl|txt|md|csv|png|jpg|jpeg|pdf)$/i.test(f.name)) throw new Error('Unsupported file type.'); if (f.name in project.files) throw new Error(`${f.name} already exists. Edit it or choose another name.`); project.files[f.name] = textTypes.test(f.name) ? await f.text() : bytes64(await f.arrayBuffer()); changed(); } fileList(); } catch (e) { notice(e.message, true); } };
+  $('fileUpload').onchange = async () => {
+    const upload = $('uploadFile'); upload.disabled = true;
+    try {
+      const version = editVersion;
+      const added = await prepareProjectUploads([...$('fileUpload').files], project.files);
+      if (editVersion !== version) throw new Error('The project changed during upload. Please select the files again.');
+      if (Object.keys(added).some(name => Object.keys(project.files).some(current => current.toLowerCase() === name.toLowerCase()))) throw new Error('The project changed during upload. Please select the files again.');
+      Object.assign(project.files, added); fileList(); changed();
+      notice(`${Object.keys(added).length} file(s) added. Waiting for autosave…`);
+    } catch (e) { notice(e.message, true); }
+    finally { $('fileUpload').value = ''; upload.disabled = false; }
+  };
   const insertCitation = key => {
     if (!/\.tex$/i.test(activeFile)) selectFile(project.main);
     if (!/\.tex$/i.test(activeFile)) return false;
@@ -589,19 +616,25 @@ async function editor(id) {
     },
     acceptProject: updated => {
       clearTimeout(saveTimer);
-      try { adoptProject(updated); } catch (error) { pauseSaving(error); throw error; }
-      $('savedState').textContent = 'All changes saved'; $('previewState').textContent = 'Bibliography updated · recompile to see changes';
+      try {
+        const dirty = editVersion !== savedVersion;
+        adoptProject(dirty ? rebaseDraft(serverProject, project, updated, diffTextChanges) : updated, updated, dirty);
+        if (dirty) saveTimer = setTimeout(() => save().catch(error => notice(error.message, true)), 650);
+      } catch (error) { pauseSaving(error); throw error; }
+      $('previewState').textContent = 'Bibliography updated · recompile to see changes'; scheduleSync();
       if ($('autoCompile').checked) { clearTimeout(compileTimer); compileTimer = setTimeout(() => compile().catch(e => notice(e.message, true)), 1600); }
     },
     insertCitation
   }).catch(e => notice(e.message, true)); };
-  $('referenceButton').onclick = $('insertCitation').onclick = $('updateBibliography').onclick = references;
+  $('referenceButton').onclick = $('insertCitation').onclick = $('updateBibliography').onclick = $('reviewBibliography').onclick = references;
   $('languageCheck').hidden = !state.language_check;
   $('languageCheck').onclick = () => openLanguageCheck({api, save, getProject: () => project,
     editor: sourceEditor, enabled: state.language_check,
     reveal: (file, line) => { selectFile(file); writerLayout.showCode(); sourceEditor.jump(line); }});
   $('templateButton').onclick = () => openTemplateGallery(state.templates, item => newManuscript(item, project.collection));
   $('draft').onclick = () => download(JSON.stringify({name: project.name, main: project.main, files: project.files}, null, 2), 'quill-draft.json', 'application/json');
+  const backup = setupProjectBackup({getProject: () => project, save: async () => { await save(); await synchronizeProject(true); await save(); }, notify: notice});
+  $('backupProject').onclick = backup.open;
   $('conflictDraft').onclick = $('draft').onclick;
   $('retrySave').onclick = async () => {
     const retry = $('retrySave'); if (retry.disabled) return;
@@ -632,7 +665,7 @@ async function editor(id) {
       const updated = await api('/api/writing?id=' + encodeURIComponent(project.id));
       await finishComposition();
       sourceEditor.destroy();
-      sourceEditor = createLatexEditor($('source'), (name, text) => { project.files[name] = text; changed(); clearTimeout(outlineTimer); outlineTimer = setTimeout(outline, 300); }, (line, col) => { $('cursorPosition').textContent = `Ln ${line}, Col ${col}`; });
+      sourceEditor = createLatexEditor($('source'), (name, text) => { project.files[name] = text; changed(); clearTimeout(outlineTimer); outlineTimer = setTimeout(outline, 300); }, (line, col) => { $('cursorPosition').textContent = `Ln ${line}, Col ${col}`; }, () => project.files);
       adoptProject(updated); unconfirmedSave = null; saveBlocked = false; $('collaborationConflict').hidden = true; notice('Saved version loaded.'); scheduleSync();
     } catch (error) { notice(error.message, true); }
   };
@@ -641,7 +674,7 @@ async function editor(id) {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) synchronizeProject(); });
   window.addEventListener('pagehide', () => clearTimeout(syncTimer));
   $('exportZip').href = '/api/writing/export?id=' + project.id;
-  $('exportZip').onclick = async e => { e.preventDefault(); try { await save(); location.href = $('exportZip').href; } catch (err) { notice(err.message, true); } };
+  $('exportZip').onclick = async e => { e.preventDefault(); try { await save(); await synchronizeProject(true); await save(); location.href = $('exportZip').href; } catch (err) { notice(err.message, true); } };
   $('compile').disabled = $('compileCode').disabled = !state.compiler.configured; $('autoCompile').disabled = !state.compiler.configured;
   $('compile').title = 'Compile changes or reuse the saved PDF. Shift-click forces a fresh build.';
   $('compile').onclick = event => { $('previewState').textContent = 'Compiling…'; compile(Boolean(event.shiftKey)).catch(e => notice(e.message, true)); };

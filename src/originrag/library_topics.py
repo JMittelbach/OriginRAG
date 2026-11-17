@@ -11,6 +11,157 @@ STOPWORDS = frozenset(
 )
 
 
+# A paper is included in the dedicated falciparum view only when its
+# bibliographic text names the species explicitly.  This deliberately avoids
+# pulling general malaria, vivax, host-immunity or methods papers into the
+# species collection just because they happen to sit in a malaria directory.
+FALCIPARUM_RE = re.compile(
+    r"\b(?:plasmodium\s+falciparum|p\.?\s*falciparum|falciparum)\b",
+    re.IGNORECASE,
+)
+
+FALCIPARUM_TOPIC_RULES = (
+    (
+        "epidemiology_population",
+        "P. falciparum · Epidemiology & population genetics",
+        (
+            "epidemiolog",
+            "population",
+            "prevalence",
+            "transmission",
+            "haplot",
+            "microsatellite",
+            "multiplicity",
+            "genetic diversity",
+            "genetic structure",
+            "genetic relatedness",
+            "population structure",
+            "population genetics",
+            "identity by descent",
+            "surveillance",
+            "clonal",
+            "demograph",
+        ),
+    ),
+    (
+        "genomics_variation",
+        "P. falciparum · Genomics & variation",
+        (
+            "genom",
+            "whole-genome",
+            "whole genome",
+            "sequenc",
+            "assembly",
+            "microarray",
+            "polymorphism",
+            "variant",
+            "copy number",
+            "heterozygom",
+            "resequenc",
+            "genetic cross",
+            "low-complexity",
+            "telomere",
+        ),
+    ),
+    (
+        "transcriptomics_regulation",
+        "P. falciparum · Transcriptomics & gene regulation",
+        (
+            "transcript",
+            "rna-seq",
+            "rna seq",
+            "gene expression",
+            "transcription",
+            "translational",
+            "microarray",
+            "single-cell",
+            "single cell",
+            "transcription factor",
+            "regulatory",
+        ),
+    ),
+    (
+        "proteomics_metabolism",
+        "P. falciparum · Proteomics & metabolism",
+        (
+            "proteom",
+            "phospho",
+            "kinom",
+            "mass spect",
+            "metabol",
+            "metabolite",
+            "metabolic",
+            "protein expression",
+            "protein interaction",
+            "complexome",
+        ),
+    ),
+    (
+        "epigenetics_chromatin",
+        "P. falciparum · Epigenetics & chromatin",
+        (
+            "epigen",
+            "chromatin",
+            "histone",
+            "nucleosome",
+            "methyl",
+            "acetyl",
+            "heterochromatin",
+            "telomere",
+        ),
+    ),
+    (
+        "cell_biology_life_cycle",
+        "P. falciparum · Cell biology & life cycle",
+        (
+            "erythrocy",
+            "gametocyt",
+            "life cycle",
+            "life-cycle",
+            "cell division",
+            "organel",
+            "apicoplast",
+            "export",
+            "transport",
+            "trafficking",
+            "host cell",
+            "stage",
+        ),
+    ),
+    (
+        "methods_annotation",
+        "P. falciparum · Methods & annotation",
+        (
+            "annotation",
+            "bioinform",
+            "pipeline",
+            "database",
+            "computational",
+            "modeling",
+            "modelling",
+            "network analysis",
+            "method",
+            "tool",
+        ),
+    ),
+)
+
+
+def falciparum_subject(row):
+    """Return the explicit species scope and a stable subtopic for a record."""
+    text = " ".join(
+        str(row.get(field) or "")
+        for field in ("title", "abstract", "journal", "category", "collection", "topics")
+    ).strip()
+    if not FALCIPARUM_RE.search(text):
+        return "", ""
+    folded = text.casefold()
+    for key, label, terms in FALCIPARUM_TOPIC_RULES:
+        if any(term in folded for term in terms):
+            return key, label
+    return "other", "P. falciparum · Other parasite biology"
+
+
 def _features(title):
     words = re.findall(r"[^\W_]+(?:[-'][^\W_]+)*", title.casefold(), re.UNICODE)
     words = [w for w in words if len(w) > 2 and not w.isdigit()]
@@ -131,14 +282,33 @@ def assign_library_topics(records, target=10):
     target = max(1, min(10, int(target)))
     source = list(records)
     if target == 1:
-        return tuple(dict(row, topic="all", topic_label="All papers") for row in source)
+        assigned = []
+        for row in source:
+            falciparum_topic, falciparum_topic_label = falciparum_subject(row)
+            assigned.append(
+                dict(
+                    row,
+                    topic="all",
+                    topic_label="All papers",
+                    falciparum_topic=falciparum_topic,
+                    falciparum_topic_label=falciparum_topic_label,
+                    falciparum_scope=bool(falciparum_topic),
+                )
+            )
+        return tuple(assigned)
     titles = tuple(sorted({str(row.get("title") or "").strip() for row in source}))
     mapping = dict(zip(titles, _discover(titles, target))) if titles else {}
-    return tuple(
-        dict(
-            row,
-            topic=mapping[str(row.get("title") or "").strip()][0],
-            topic_label=mapping[str(row.get("title") or "").strip()][1],
+    assigned = []
+    for row in source:
+        falciparum_topic, falciparum_topic_label = falciparum_subject(row)
+        assigned.append(
+            dict(
+                row,
+                topic=mapping[str(row.get("title") or "").strip()][0],
+                topic_label=mapping[str(row.get("title") or "").strip()][1],
+                falciparum_topic=falciparum_topic,
+                falciparum_topic_label=falciparum_topic_label,
+                falciparum_scope=bool(falciparum_topic),
+            )
         )
-        for row in source
-    )
+    return tuple(assigned)

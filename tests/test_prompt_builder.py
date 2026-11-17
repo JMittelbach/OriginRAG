@@ -445,15 +445,15 @@ def test_prompt_exposes_trace_claim_ceiling_and_unresolved_facets() -> None:
 
     assert "TRACE evidence constraints (hard limits)" in prompt
     assert "Maximum allowed claim strength: hypothesis_only" in prompt
-    assert "clinical_replication" in prompt
-    assert "lineage_graph_incomplete" in prompt
-    assert "Robust lineage status: lineage_review_required" in prompt
-    assert "Robust effective-evidence interval: [1.2, 3.0]" in prompt
-    assert "independent_replication" in prompt
-    assert "Certification core: 2 of 4 context reports; paper IDs: P1, P2" in prompt
+    assert "clinical_replication" not in prompt
+    assert "lineage_graph_incomplete" not in prompt
+    assert "Robust lineage status:" not in prompt
+    assert "Robust effective-evidence interval:" not in prompt
+    assert "independent_replication" not in prompt
+    assert "Certification core: paper IDs: P1, P2" in prompt
     assert "Claims of independent or replicated support may rely only" in prompt
     assert "context_only" in prompt
-    assert "other than robustly_sufficient as insufficient evidence" in prompt
+    assert "Do not treat this evidence set as sufficient unless the user explicitly forced an answer" in prompt
 
 
 def test_prompt_uses_current_full_selected_evidence_language() -> None:
@@ -484,7 +484,7 @@ def test_prompt_uses_current_full_selected_evidence_language() -> None:
         },
     )
 
-    assert "Certifying evidence set: 3 of 3 selected reports" in prompt
+    assert "Certifying evidence set: paper IDs: P1, P2, P3" in prompt
     assert "P1, P2, P3" in prompt
     assert "Certification core:" not in prompt
 

@@ -12,7 +12,7 @@ HARNESS = r'''async () => {
     if (!response.ok) throw new Error(result.error);
     return result;
   };
-  window.referencesProject = await api('/api/writing', {action:'create_project', name:'Reference test'});
+  window.referencesProject = await api('/api/writing', {action:'create_project', name:'Reference test', bibliography_auto:false});
   window.referenceMessages = []; window.referenceCitations = [];
   window.referenceContext = {
     api, getProject:()=>window.referencesProject, save:async()=>{},

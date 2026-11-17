@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from originrag.analysis.chat import conversation_prompt_block
+from originrag.analysis.answer_qc import lineage_independence_certified
 
 from originrag.analysis.comparison_coverage import (
     comparison_text_has_null,
@@ -550,14 +551,7 @@ def _trace_constraint_block(evidence_pack: dict) -> str:
     certificate = evidence_pack.get("trace_sufficiency_certificate")
     if not isinstance(certificate, dict):
         return ""
-    grade = str(certificate.get("evidence_sufficiency") or "unknown")
     claim = str(certificate.get("allowed_claim_strength") or "unknown")
-    unresolved = ", ".join(
-        str(item) for item in certificate.get("unresolved_facets", []) if str(item).strip()
-    ) or "none"
-    reasons = ", ".join(
-        str(item) for item in certificate.get("reasons", []) if str(item).strip()
-    ) or "none"
     robust = evidence_pack.get("trace_robust_lineage")
     robust_lines = ""
     if isinstance(robust, dict):
@@ -574,36 +568,20 @@ def _trace_constraint_block(evidence_pack: dict) -> str:
         current_strategy = (
             certifying_evidence.get("strategy") == "full_selected_set_v2"
         )
-        certifying_count = certifying_evidence.get(
-            "certifying_paper_count",
-            certifying_evidence.get("certification_paper_count", 0),
-        )
         if current_strategy:
             evidence_set_lines = (
-                f"- Certifying evidence set: {certifying_count} of "
-                f"{certifying_evidence.get('context_paper_count', 0)} selected "
-                f"reports; paper IDs: {certifying_papers}\n"
+                f"- Certifying evidence set: paper IDs: {certifying_papers}\n"
                 "- Claims of independent or replicated support may rely only on "
                 "the robust certificate for this declared evidence set."
             )
         else:
             evidence_set_lines = (
-                "- Certification core: "
-                f"{certifying_evidence.get('certification_paper_count', 0)} of "
-                f"{certifying_evidence.get('context_paper_count', 0)} context "
-                f"reports; paper IDs: {certifying_papers}\n"
+                f"- Certification core: paper IDs: {certifying_papers}\n"
                 "- Claims of independent or replicated support may rely only on "
                 "the certification core. Other context may inform the synthesis "
                 "but cannot increase certified origin support."
             )
-        effective = robust.get("effective_evidence") or {}
-        pessimistic = robust.get("pessimistic_flow") or {}
         robust_status = str(robust.get("status") or "unknown")
-        robust_facets = ", ".join(
-            str(item)
-            for item in pessimistic.get("unresolved_facets", [])
-            if str(item).strip()
-        ) or "none"
         if evidence_pack.get("provisional_synthesis_authorized"):
             lineage_instruction = (
                 "- Provide a cautious paper-level synthesis instead of withholding all text.\n"
@@ -612,17 +590,17 @@ def _trace_constraint_block(evidence_pack: dict) -> str:
                 "- Do not present a finding as a core, independently replicated, or independently supported result unless the lineage certificate permits it.\n"
                 "- If a paper itself labels a result as replicated, you may report that wording only with explicit paper attribution and must state that study-origin independence is not certified."
             )
-        else:
+        elif robust_status != "robustly_sufficient":
             lineage_instruction = (
-                "- Treat any robust lineage status other than robustly_sufficient as insufficient "
-                "evidence unless the user explicitly forced an answer."
+                "- Do not treat this evidence set as sufficient unless the user explicitly forced an answer."
+            )
+        else:
+            lineage_instruction = ""
+        if not lineage_independence_certified(robust):
+            lineage_instruction += (
+                "\n- Study-origin independence among the retrieved reports is not certified."
             )
         robust_lines = f"""
-- Robust lineage status: {robust_status}
-- Robust effective-evidence interval: [{effective.get('lower', 0)}, {effective.get('upper', 0)}]
-- Robust lineage-count interval: [{robust.get('lineage_count_lower', 0)}, {robust.get('lineage_count_upper', 0)}]
-- Pessimistic unresolved facets: {robust_facets}
-- Missing / uncertain lineage pairs: {robust.get('missing_pair_count', 0)} / {robust.get('uncertain_pair_count', 0)}
 {evidence_set_lines}
 - Evidence entries labelled `context_only` may support attributed descriptive statements, but not a claim of independent or replicated support.
 {lineage_instruction}
@@ -630,13 +608,9 @@ def _trace_constraint_block(evidence_pack: dict) -> str:
     return f"""
 
 TRACE evidence constraints (hard limits):
-- Certificate grade: {grade}
 - Maximum allowed claim strength: {claim}
-- Unresolved required facets: {unresolved}
-- Certificate reasons: {reasons}
 {robust_lines}
 - Never make a claim stronger than the maximum allowed claim strength.
-- Treat unresolved facets as missing evidence, not as facts that may be filled from background knowledge.
 """
 
 

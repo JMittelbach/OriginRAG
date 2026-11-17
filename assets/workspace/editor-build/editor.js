@@ -6,6 +6,7 @@ import {stex} from '@codemirror/legacy-modes/mode/stex';
 import {search, searchKeymap, openSearchPanel, highlightSelectionMatches} from '@codemirror/search';
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from '@codemirror/autocomplete';
 import {tags} from '@lezer/highlight';
+import {citationCompletion} from '../citation-completion.mjs';
 
 const colours = HighlightStyle.define([
   {tag: [tags.keyword, tags.tagName], class: 'tex-command'},
@@ -79,7 +80,7 @@ export function diffTextChanges(before, after) {
   return null;
 }
 
-export function createLatexEditor(parent, onChange, onCursor) {
+export function createLatexEditor(parent, onChange, onCursor, getFiles = () => ({})) {
   const documents = new Map();
   const editability = new Compartment();
   let current = '', view;
@@ -105,7 +106,7 @@ export function createLatexEditor(parent, onChange, onCursor) {
       lineNumbers(), highlightActiveLineGutter(), highlightSpecialChars(), history(), drawSelection(), dropCursor(),
       highlightActiveLine(), highlightSelectionMatches(), bracketMatching(), closeBrackets(),
       search({top: true}), StreamLanguage.define(stex), syntaxHighlighting(colours), indentUnit.of('  '),
-      autocompletion({override: [complete]}), EditorState.allowMultipleSelections.of(true),
+      autocompletion({override: [citationCompletion(getFiles, () => /\.tex$/i.test(current)), complete]}), EditorState.allowMultipleSelections.of(true),
       keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap, ...completionKeymap, indentWithTab]),
       editability.of([EditorView.editable.of(editable), EditorState.readOnly.of(!editable)]), theme,
       EditorView.contentAttributes.of({'aria-label': 'LaTeX source', spellcheck: 'false'}),

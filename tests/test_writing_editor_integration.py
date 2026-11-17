@@ -19,6 +19,34 @@ def get_project(page, project_id):
     return page.evaluate("async id => (await fetch('/api/writing?id=' + id)).json()", project_id)
 
 
+def test_real_code_editor_free_font_size_does_not_change_manuscript(workspace_server):
+    playwright = pytest.importorskip('playwright.sync_api')
+    base, _ = workspace_server
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={'width': 1500, 'height': 1000})
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        project_id = create_manuscript(page, base, 'Readable at any size')
+        original = get_project(page, project_id)
+        zoom = page.locator('#codeZoom')
+        for size in ['8', '9.5', '32', '72', '120']:
+            zoom.fill(size)
+            zoom.press('Enter')
+            assert page.locator('#source .cm-editor').evaluate('e => parseFloat(getComputedStyle(e).fontSize)') == float(size)
+        page.locator('#codeZoomIn').click()
+        assert zoom.input_value() == '121'
+        page.locator('#codeZoomOut').click()
+        assert zoom.input_value() == '120'
+        page.reload()
+        page.locator('#source .cm-content').wait_for()
+        assert zoom.input_value() == '120'
+        assert get_project(page, project_id)['files'] == original['files']
+        assert get_project(page, project_id)['revision'] == original['revision']
+        assert not errors
+        browser.close()
+
+
 def drag(page, selector, dx=0, dy=0):
     bounds = page.locator(selector).bounding_box()
     x, y = bounds['x'] + bounds['width'] / 2, bounds['y'] + bounds['height'] / 2
@@ -37,6 +65,9 @@ def test_real_editor_dirty_source_reference_sync_and_cursor(workspace_server):
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         project_id = create_manuscript(page, base)
+        page.evaluate("async id => { const project = await (await fetch('/api/writing?id=' + id)).json(); await fetch('/api/writing', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'configure_bibliography', id, revision:project.revision, enabled:false, filename:'references.bib'})}); }", project_id)
+        page.reload()
+        page.locator('#source .cm-content').wait_for()
         code = page.locator('#source .cm-content')
         code.fill('\\documentclass{article}\n\\begin{document}\nA result needs evidence: \n\\end{document}')
         page.locator('#source .cm-line').filter(has_text='A result needs evidence:').click()
@@ -93,7 +124,7 @@ def test_template_gallery_creates_new_project_and_preserves_unsaved_original(wor
         page.locator('#source .cm-content').fill(text)
         page.locator('#templateButton').click()
         page.locator('#templateDialog').wait_for()
-        playwright.expect(page.locator('#templateDialog .template-card')).to_have_count(6)
+        playwright.expect(page.locator('#templateDialog .template-card')).to_have_count(7)
         page.wait_for_function("() => [...document.querySelectorAll('#templateDialog img')].every(image => image.complete && image.naturalWidth > 0)")
         page.screenshot(path=str(tmp / 'originwrite-template-gallery.png'), full_page=True)
         page.locator('#templateDialog [data-template="bioinformatics"]').click()
@@ -112,7 +143,7 @@ def test_template_gallery_creates_new_project_and_preserves_unsaved_original(wor
         playwright.expect(page.locator('.manuscript-row')).to_have_count(2)
         page.screenshot(path=str(tmp / 'originwrite-dashboard.png'), full_page=True)
         page.get_by_role('tab', name='Templates', exact=True).click()
-        playwright.expect(page.locator('#deskPanel .template-card')).to_have_count(6)
+        playwright.expect(page.locator('#deskPanel .template-card')).to_have_count(7)
         page.locator('[aria-label="Search templates"]').fill('G3')
         playwright.expect(page.locator('#deskPanel .template-card')).to_have_count(1)
         page.get_by_role('button', name='Clear', exact=True).click()
@@ -122,9 +153,9 @@ def test_template_gallery_creates_new_project_and_preserves_unsaved_original(wor
         playwright.expect(page.locator('#deskPanel .template-card')).to_have_count(1)
         playwright.expect(page.locator('#deskPanel .template-card h3')).to_have_text('PLOS Computational Biology')
         page.locator('[aria-label="Search templates"]').fill('not-a-journal')
-        playwright.expect(page.locator('#deskPanel [role="status"]')).to_contain_text('0 of 6')
+        playwright.expect(page.locator('#deskPanel [role="status"]')).to_contain_text('0 of 7')
         page.get_by_role('button', name='Clear', exact=True).click()
-        playwright.expect(page.locator('#deskPanel .template-card')).to_have_count(6)
+        playwright.expect(page.locator('#deskPanel .template-card')).to_have_count(7)
         page.screenshot(path=str(tmp / 'originwrite-expanded-templates.png'), full_page=True)
         print('Quill dashboard screenshot:', tmp / 'originwrite-dashboard.png')
         print('Quill template screenshot:', tmp / 'originwrite-template-gallery.png')
@@ -155,7 +186,8 @@ def test_real_compile_stacked_height_and_independent_code_pdf_zoom(workspace_ser
         playwright.expect(page.locator('#previewState')).to_contain_text('PDF · revision')
         assert compile_payloads[-1]['force'] is False
         original = get_project(page, project_id)['files']
-        page.locator('#codeZoom').select_option('20')
+        page.locator('#codeZoom').fill('20')
+        page.locator('#codeZoom').press('Enter')
         assert page.locator('#source .cm-editor').evaluate('element => getComputedStyle(element).fontSize') == '20px'
         page.locator('#pdfZoom').select_option('0.5')
         before = page.locator('#pdfPages canvas').bounding_box()['width']
@@ -169,7 +201,7 @@ def test_real_compile_stacked_height_and_independent_code_pdf_zoom(workspace_ser
         assert page.locator('#sourcePane').bounding_box()['height'] > before + 70
         page.locator('#codeZoomOut').click()
         assert page.locator('#pdfZoom').input_value() == '0.75'
-        assert page.locator('#source .cm-editor').evaluate('element => getComputedStyle(element).fontSize') == '18px'
+        assert page.locator('#source .cm-editor').evaluate('element => getComputedStyle(element).fontSize') == '19px'
         assert get_project(page, project_id)['files'] == original
         assert len(compile_payloads) == 1
         page.screenshot(path=str(tmp / 'originwrite-stacked-editor.png'), full_page=True)

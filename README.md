@@ -30,7 +30,8 @@ a few practical tools around the corpus:
   reader, summaries and personal notes.
 - **Quill (optional):** a small LaTeX workspace with source and PDF side by
   side. It can connect a manuscript to a Library collection and insert its
-  references. Quill is useful for writing, but it is separate from the
+  references, keeping the linked bibliography updated automatically while
+  protecting manual edits. Quill is useful for writing, but it is separate from the
   OriginRAG evidence workflow and does not require a language model.
 - **Folio (full installation):** a visual document editor with a ribbon,
   text formatting, tables, images, comments and DOCX import/export. Write
@@ -195,7 +196,11 @@ If Quill is enabled, open it from the application switcher or at `/write`.
 It provides a compact LaTeX editor with a PDF preview, autosave, templates and
 ZIP import/export. A manuscript can use a private Library collection for its
 bibliography. PDF compilation requires an isolated TeX setup; editing and export
-work without it. See [the writing guide](docs/writing.md) for details.
+work without it. Inside `\cite{...}`, suggestions show keys from the project's
+`.bib` files. Library sync assigns readable, stable author-year keys. The template
+gallery also includes a Bachelor/Master thesis starter. Project options provide
+ZIP backups, including direct saves to a synced Dropbox folder in supporting
+browsers. See [the writing guide](docs/writing.md) for details.
 
 In the full installation, **Folio** opens from the same switcher or at `/folio`.
 Documents autosave to your local workspace, or to your own account when the

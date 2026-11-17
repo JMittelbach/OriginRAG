@@ -10,6 +10,7 @@ import re
 import sqlite3
 import time
 import uuid
+import unicodedata
 import zipfile
 
 from .writing_templates import list_templates, template_files
@@ -126,10 +127,36 @@ def unpack_project(encoded):
 
 
 def citation_key(paper):
-    return 'paper' + hashlib.sha256(str(paper['paper_id']).encode()).hexdigest()[:12]
+    authors = paper.get('authors') or paper.get('full_authors') or paper.get('author') or 'Unknown'
+    if isinstance(authors, str) and authors.lstrip().startswith('['):
+        try:
+            authors = json.loads(authors)
+        except ValueError:
+            pass
+    if isinstance(authors, list):
+        first = authors[0] if authors else 'Unknown'
+        family = first.get('family') or first.get('name') or 'Unknown' if isinstance(first, dict) else first
+    else:
+        first = re.split(r'\s+and\s+|;', str(authors), maxsplit=1)[0]
+        family = first.split(',', 1)[0] if ',' in first else re.sub(r'\s+et\s+al\.?$', '', first).strip()
+        words = family.split()
+        if len(words) > 1:
+            family = words[0] if all(re.fullmatch(r'[A-Z]\.?', w) for w in words[1:]) else words[-1]
+    family = unicodedata.normalize('NFKD', str(family)).encode('ascii', 'ignore').decode()
+    family = re.sub(r'[^A-Za-z0-9]', '', family)[:48] or 'Unknown'
+    year = re.search(r'\b(?:18|19|20|21)\d{2}\b', str(paper.get('year') or ''))
+    return family + (year.group(0) if year else 'nd')
 
 
-def reference_entry(paper):
+def _key_suffix(number):
+    result = ''
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        result = chr(97 + remainder) + result
+    return result
+
+
+def reference_entry(paper, key=None):
     replacements = {'\\': r'\textbackslash{}', '{': r'\{', '}': r'\}', '%': r'\%', '&': r'\&', '#': r'\#', '_': r'\_', '$': r'\$', '~': r'\textasciitilde{}', '^': r'\textasciicircum{}'}
 
     def escape(value):
@@ -164,14 +191,14 @@ def reference_entry(paper):
         values.insert(1, ('author', author_field))
     kind = {'book': 'book', 'book-chapter': 'incollection', 'proceedings-article': 'inproceedings'}.get(paper.get('type') or paper.get('document_type'), 'article')
     fields = ',\n'.join('  ' + field + ' = {' + value + '}' for field, value in values)
-    return '@' + kind + '{' + citation_key(paper) + ',\n' + fields + '\n}'
+    return '@' + kind + '{' + (key or citation_key(paper)) + ',\n' + fields + '\n}'
 
 
 def bibtex(papers):
     return '\n\n'.join(reference_entry(p) for p in papers) + '\n'
 
 
-def collection_reference_data(collection, catalogue):
+def collection_reference_data(collection, catalogue, keys=None):
     available = {p['paper_id']: p for p in catalogue}
     references, missing = [], []
     for paper_id in collection['papers']:
@@ -187,7 +214,8 @@ def collection_reference_data(collection, catalogue):
             warnings.append('The author list may be abbreviated. Check it before submission.')
         if not paper.get('year'):
             warnings.append('Publication year is missing.')
-        references.append({**paper, 'key': citation_key(paper), 'entry': reference_entry(paper), 'warnings': warnings})
+        key = (keys or {}).get(paper_id) or citation_key(paper)
+        references.append({**paper, 'key': key, 'entry': reference_entry(paper, key), 'warnings': warnings})
     return {'id': collection['id'], 'name': collection['name'], 'revision': collection['revision'],
             'references': references, 'missing': missing,
             'bibtex': '\n\n'.join(r['entry'] for r in references) + ('\n' if references else '')}
@@ -337,7 +365,7 @@ def bibliography_connection(project, filename, connect_document):
     return needed, change
 
 
-def bibliography_plan(project, collection, catalogue, filename, connect_document=False):
+def bibliography_plan(project, collection, catalogue, filename, connect_document=False, keys=None):
     if not isinstance(connect_document, bool):
         raise ValueError('Invalid bibliography connection option.')
     file_name(filename)
@@ -346,7 +374,7 @@ def bibliography_plan(project, collection, catalogue, filename, connect_document
     source = project['files'].get(filename, '')
     existing = bibtex_entries(source)
     prior = project.get('bibliography_sync', {}).get(filename, {}).get('entries', {})
-    refs = collection_reference_data(collection, catalogue)
+    refs = collection_reference_data(collection, catalogue, keys)
     desired = {r['key']: r for r in refs['references']}
     if len(desired) != len(refs['references']):
         raise ValueError('Two papers have the same generated citation key. Resolve the collision before synchronising.')
@@ -402,7 +430,127 @@ class WritingStore:
         db.execute('CREATE INDEX IF NOT EXISTS documents_listing ON documents(updated DESC, id, kind, revision)')
         db.execute('CREATE TABLE IF NOT EXISTS writing_summaries (document_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, data TEXT NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS writing_bases (document_id TEXT, revision INTEGER, digest TEXT NOT NULL, PRIMARY KEY(document_id, revision))')
+        db.execute('CREATE TABLE IF NOT EXISTS writing_citation_keys (paper_id TEXT PRIMARY KEY, citation_key TEXT NOT NULL COLLATE NOCASE UNIQUE)')
+        db.execute("CREATE INDEX IF NOT EXISTS writing_linked_collection ON documents(json_extract(data, '$.collection')) WHERE kind='projects'")
         return db
+
+    def _automatic_bibliography(self, db, key, data, catalogue):
+        if not data.get('collection') or data.get('bibliography_auto', True) is False:
+            data.pop('bibliography_status', None)
+            return
+        try:
+            row = db.execute("SELECT data,revision FROM documents WHERE id=? AND kind='collections'", (data['collection'],)).fetchone()
+            if not row:
+                raise ValueError('The linked personal library is unavailable. Choose a library in References.')
+            collection = {**json.loads(row[0]), 'id': data['collection'], 'revision': row[1]}
+            target = data.get('bibliography_target')
+            sources, _ = document_tex_sources(data)
+            cited = any(re.search(r'(?<!\\)\\(?:[Cc]ite(?:[pt]|alt|alp|author|yearpar|year|num|alias)?|autocite|parencite|textcite|footcite|nocite)\b', source)
+                        for _, _, source in sources)
+            connected = set()
+            for _, _, source in sources:
+                for match in re.finditer(r'\\(?:bibliography|addbibresource)(?:\[[^\]]*\])?\s*\{([^{}]+)\}', source):
+                    for name in match[1].split(','):
+                        name = name.strip().removeprefix('./')
+                        connected.add(name if name.lower().endswith('.bib') else name + '.bib')
+            if not target:
+                managed = list(data.get('bibliography_sync', {}))
+                choices = connected or set(managed)
+                if len(choices) > 1:
+                    raise ValueError('This project uses several bibliography files. Choose the automatic sync target in References.')
+                target = next(iter(choices), 'references.bib')
+            catalogue = list(catalogue)
+            keys = self.citation_keys(collection, catalogue, db)
+            preview, managed = bibliography_plan({**data, 'id': key, 'revision': 0}, collection, catalogue, target, True, keys)
+            has_entries = bool(bibtex_entries(preview['bibtex']))
+            files = {**data['files'], target: preview['bibtex']}
+            if has_entries and cited and preview['document_change']:
+                change = preview['document_change']
+                files[change['filename']] = change['after']
+            validate_files(files, data['main'])
+            status = {'state': 'synced', 'filename': target, 'message': 'Library bibliography is up to date.',
+                      'conflicts': [r['key'] for r in preview['conflicts']], 'missing_count': len(preview['missing'])}
+            if preview['conflicts']:
+                status.update(state='needs_review', message='Some bibliography entries have manual changes. They were kept; review them in References.')
+            elif preview['missing']:
+                status.update(state='needs_review', message='Some linked papers are missing from the corpus. Existing entries were kept.')
+            elif has_entries and target not in connected and not preview['document_change']:
+                status.update(state='needs_review', message='The bibliography cannot be connected safely. Check the main document’s bibliography setup.')
+            data.update(files=files, bibliography_target=target, bibliography_status=status)
+            data.setdefault('bibliography_sync', {})[target] = {'entries': managed, 'collection': collection['id'],
+                                                               'collection_revision': collection['revision']}
+        except ValueError as exc:
+            data['bibliography_status'] = {'state': 'needs_review', 'message': str(exc), 'conflicts': [], 'missing_count': 0}
+
+    def _write_refreshed_project(self, db, key, before, revision, data):
+        if data == before:
+            return revision
+        encoded = json.dumps(data)
+        used = db.execute('SELECT COALESCE(SUM(length(data)),0) FROM documents WHERE id != ?', (key,)).fetchone()[0]
+        if used + len(encoded) > 100_000_000:
+            raise ValueError('Account writing storage limit reached (100 MB).')
+        self._remember_basis(db, key, revision, before)
+        db.execute('UPDATE documents SET data=?,revision=?,updated=? WHERE id=?', (encoded, revision + 1, time.time(), key))
+        self._remember_summary(db, key, revision + 1, data)
+        self._remember_basis(db, key, revision + 1, data)
+        return revision + 1
+
+    def refresh_bibliography(self, key, catalogue):
+        key = identifier(key)
+        db = self.connect()
+        try:
+            with db:
+                db.execute('BEGIN IMMEDIATE')
+                row = db.execute("SELECT data,revision FROM documents WHERE id=? AND kind='projects'", (key,)).fetchone()
+                if not row:
+                    raise KeyError('Project not found.')
+                data, revision = json.loads(row[0]), row[1]
+                before = json.loads(row[0])
+                self._automatic_bibliography(db, key, data, catalogue)
+                revision = self._write_refreshed_project(db, key, before, revision, data)
+                return {**data, 'id': key, 'revision': revision}
+        finally:
+            db.close()
+
+    def _refresh_collection_projects(self, db, collection, catalogue):
+        keys = [row[0] for row in db.execute("SELECT id FROM documents WHERE kind='projects' AND json_extract(data, '$.collection')=?", (collection,))]
+        if not keys:
+            return
+        catalogue = list(catalogue)
+        for key in keys:
+            raw, revision = db.execute('SELECT data,revision FROM documents WHERE id=?', (key,)).fetchone()
+            data, before = json.loads(raw), json.loads(raw)
+            self._automatic_bibliography(db, key, data, catalogue)
+            self._write_refreshed_project(db, key, before, revision, data)
+
+    def citation_keys(self, collection, catalogue, db=None):
+        owns_db = db is None
+        db = db or self.connect()
+        try:
+            if owns_db:
+                db.execute('BEGIN IMMEDIATE')
+            assigned = dict(db.execute('SELECT paper_id,citation_key FROM writing_citation_keys'))
+            used = {key.casefold() for key in assigned.values()}
+            papers = {p['paper_id']: p for p in catalogue}
+            requested = set(collection['papers']) & papers.keys()
+            for paper_id in sorted(requested - assigned.keys()):
+                legacy = 'paper' + hashlib.sha256(str(paper_id).encode()).hexdigest()[:12]
+                # Preserve keys already used by older Quill projects. Never rewrite citations.
+                legacy_used = db.execute("SELECT 1 FROM documents WHERE kind='projects' AND instr(data, ?) > 0 LIMIT 1", (legacy,)).fetchone()
+                base = legacy if legacy_used else citation_key(papers[paper_id])
+                key, suffix = base, 0
+                while key.casefold() in used:
+                    suffix += 1
+                    key = base + _key_suffix(suffix)
+                db.execute('INSERT INTO writing_citation_keys VALUES(?,?)', (paper_id, key))
+                assigned[paper_id] = key
+                used.add(key.casefold())
+            if owns_db:
+                db.commit()
+            return {pid: assigned[pid] for pid in requested}
+        finally:
+            if owns_db:
+                db.close()
 
     @staticmethod
     def _remember_summary(db, key, revision, data):
@@ -481,9 +629,11 @@ class WritingStore:
         action = payload.get('action')
         if action == 'sync_bibliography':
             return self.sync_bibliography(payload, catalogue)
-        allowed = {'create_project', 'save_project', 'delete_project', 'create_collection', 'collection_paper', 'rename_collection'}
+        allowed = {'create_project', 'save_project', 'delete_project', 'create_collection', 'collection_paper', 'rename_collection', 'configure_bibliography'}
         if not isinstance(action, str) or action not in allowed:
             raise ValueError('Unknown writing action.')
+        if action == 'collection_paper':
+            catalogue = list(catalogue)
         kind = 'collections' if action in {'create_collection', 'collection_paper', 'rename_collection'} else 'projects'
         create = action.startswith('create_')
         key = uuid.uuid4().hex if create else identifier(payload.get('id'))
@@ -500,6 +650,10 @@ class WritingStore:
                     revision = 0
                     data = {'name': name.strip()}
                     if kind == 'projects':
+                        automatic = payload.get('bibliography_auto', True)
+                        if type(automatic) is not bool:
+                            raise ValueError('Invalid automatic bibliography option.')
+                        data['bibliography_auto'] = automatic
                         if payload.get('zip') and payload.get('template'):
                             raise ValueError('Choose a template or a ZIP, not both.')
                         if payload.get('template'):
@@ -530,7 +684,15 @@ class WritingStore:
                         db.execute('DELETE FROM writing_summaries WHERE document_id=?', (key,))
                         db.execute("DELETE FROM documents WHERE id=? AND kind='projects'", (key,))
                         return {'id': key, 'deleted': True}
-                    if action == 'save_project':
+                    if action == 'configure_bibliography':
+                        automatic = payload.get('enabled')
+                        if type(automatic) is not bool:
+                            raise ValueError('Invalid automatic bibliography option.')
+                        target = file_name(payload.get('filename', 'references.bib'))
+                        if not target.lower().endswith('.bib'):
+                            raise ValueError('Choose a .bib file for automatic synchronisation.')
+                        data.update(bibliography_auto=automatic, bibliography_target=target)
+                    elif action == 'save_project':
                         files, main = payload.get('files'), payload.get('main')
                         validate_files(files, main)
                         collection = payload.get('collection', '')
@@ -573,6 +735,8 @@ class WritingStore:
                             if len(data['papers']) >= 500:
                                 raise ValueError('A collection holds up to 500 papers.')
                             data['papers'].append(paper)
+                if kind == 'projects':
+                    self._automatic_bibliography(db, key, data, catalogue)
                 encoded = json.dumps(data)
                 used = db.execute('SELECT COALESCE(SUM(length(data)),0) FROM documents WHERE id != ?', (key,)).fetchone()[0]
                 if used + len(encoded) > 100_000_000:
@@ -582,6 +746,8 @@ class WritingStore:
                 self._remember_summary(db, key, revision + 1, data)
                 if kind == 'projects':
                     self._remember_basis(db, key, revision + 1, data)
+                elif action == 'collection_paper':
+                    self._refresh_collection_projects(db, key, catalogue)
             return {**data, 'id': key, 'revision': revision + 1}
         finally:
             db.close()
@@ -590,14 +756,18 @@ class WritingStore:
         return self.collection_references(key, catalogue)['bibtex']
 
     def collection_references(self, key, catalogue):
-        return collection_reference_data(self.get(key, 'collections'), catalogue)
+        collection = self.get(key, 'collections')
+        catalogue = list(catalogue)
+        return collection_reference_data(collection, catalogue, self.citation_keys(collection, catalogue))
 
     def bibliography_preview(self, key, catalogue, filename='references.bib', connect_document=False):
         project = self.get(key)
         if not project.get('collection'):
             raise ValueError('Link a personal library to this project first.')
         collection = self.get(project['collection'], 'collections')
-        return bibliography_plan(project, collection, catalogue, filename, connect_document)[0]
+        catalogue = list(catalogue)
+        return bibliography_plan(project, collection, catalogue, filename, connect_document,
+                                 self.citation_keys(collection, catalogue))[0]
 
     def sync_bibliography(self, payload, catalogue):
         key = identifier(payload.get('id'))
@@ -620,8 +790,10 @@ class WritingStore:
                 if type(payload.get('collection_revision')) is not int or payload['collection_revision'] != collection['revision']:
                     raise WritingConflict('The personal library changed. Preview bibliography changes again.')
                 filename = payload.get('filename', 'references.bib')
+                catalogue = list(catalogue)
+                keys = self.citation_keys(collection, catalogue, db)
                 preview, managed = bibliography_plan({**data, 'id': key, 'revision': revision}, collection, catalogue,
-                                                    filename, payload.get('connect_document', False))
+                                                    filename, payload.get('connect_document', False), keys)
                 if payload.get('preview_token') != preview['preview_token']:
                     raise WritingConflict('Bibliographic metadata or sync options changed. Preview changes again.')
                 if preview['conflicts']:
@@ -633,6 +805,8 @@ class WritingStore:
                     data['files'][edit['filename']] = edit['after']
                 data.setdefault('bibliography_sync', {})[filename] = {'entries': managed, 'collection': collection['id'],
                                                                     'collection_revision': collection['revision']}
+                data['bibliography_target'] = filename
+                self._automatic_bibliography(db, key, data, catalogue)
                 validate_files(data['files'], data['main'])
                 encoded = json.dumps(data)
                 used = db.execute('SELECT COALESCE(SUM(length(data)),0) FROM documents WHERE id != ?', (key,)).fetchone()[0]
@@ -645,8 +819,10 @@ class WritingStore:
         finally:
             db.close()
 
-    def export(self, key):
+    def export(self, key, expected_revision=None):
         project = self.get(key)
+        if expected_revision is not None and project['revision'] != expected_revision:
+            raise WritingConflict('The project changed before export. Save again before backing up.')
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, 'w', zipfile.ZIP_DEFLATED) as archive:
             for name, content in project['files'].items():

@@ -1,6 +1,6 @@
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const key = 'originwrite.layout.v1';
-const fontSizes = [11, 12, 13, 14, 16, 18, 20, 24];
+const validFontSize = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
 
 export function setupWriterLayout(onResize = () => {}) {
   const grid = document.getElementById('writerGrid'), files = document.getElementById('filesPane');
@@ -12,7 +12,7 @@ export function setupWriterLayout(onResize = () => {}) {
     ratio: Number.isFinite(saved.ratio) ? clamp(saved.ratio, .2, .8) : .5,
     stackRatio: Number.isFinite(saved.stackRatio) ? clamp(saved.stackRatio, .2, .8) : .5,
     direction: saved.direction === 'stack' ? 'stack' : 'side',
-    fontSize: fontSizes.includes(saved.fontSize) ? saved.fontSize : 14,
+    fontSize: validFontSize(saved.fontSize) ? saved.fontSize : 14,
     collapsed: saved.collapsed === true, swapped: saved.swapped === true,
     mode: ['split', 'code', 'pdf'].includes(saved.mode) ? saved.mode : 'split', dark: saved.dark === true};
   let drag = null, frame = null;
@@ -43,8 +43,8 @@ export function setupWriterLayout(onResize = () => {}) {
       directionControl.disabled = narrow || layout.mode !== 'split';
       directionControl.title = narrow ? 'Panes stack automatically on small screens' : 'Arrange code and PDF side by side or vertically';
     }
-    if (zoomControl) zoomControl.value = String(layout.fontSize);
-    for (const [id, unavailable] of [['codeZoomOut', layout.fontSize === fontSizes[0]], ['codeZoomIn', layout.fontSize === fontSizes.at(-1)]]) {
+    if (zoomControl && document.activeElement !== zoomControl) zoomControl.value = String(layout.fontSize);
+    for (const [id, unavailable] of [['codeZoomOut', layout.fontSize / 2 === 0], ['codeZoomIn', !Number.isFinite(layout.fontSize + Math.max(1, layout.fontSize * Number.EPSILON))]]) {
       const button = document.getElementById(id);
       if (button) button.disabled = unavailable;
     }
@@ -69,18 +69,28 @@ export function setupWriterLayout(onResize = () => {}) {
   document.getElementById('editorTheme').onclick = () => { layout.dark = !layout.dark; apply(); store(); };
   document.getElementById('resetLayout').onclick = () => {
     Object.assign(layout, {width: 230, ratio: .5, stackRatio: .5, direction: 'side', fontSize: 14, collapsed: false, swapped: false, mode: 'split'});
+    zoomControl?.removeAttribute('aria-invalid');
     apply(); store();
   };
   if (directionControl) directionControl.onchange = e => { layout.direction = e.target.value === 'stack' ? 'stack' : 'side'; apply(); store(); };
   if (zoomControl) zoomControl.onchange = e => {
     const value = Number(e.target.value);
-    if (fontSizes.includes(value)) layout.fontSize = value;
+    if (validFontSize(value)) { layout.fontSize = value; zoomControl.removeAttribute('aria-invalid'); }
+    else zoomControl.setAttribute('aria-invalid', 'true');
+    zoomControl.value = String(layout.fontSize);
     apply(); store();
+  };
+  if (zoomControl) zoomControl.onkeydown = event => {
+    if (event.key === 'Enter') { event.preventDefault(); zoomControl.blur(); }
+    else if (event.key === 'Escape') { zoomControl.value = String(layout.fontSize); zoomControl.removeAttribute('aria-invalid'); zoomControl.blur(); }
   };
   for (const [id, change] of [['codeZoomIn', 1], ['codeZoomOut', -1]]) {
     const button = document.getElementById(id);
     if (button) button.onclick = () => {
-      layout.fontSize = fontSizes[clamp(fontSizes.indexOf(layout.fontSize) + change, 0, fontSizes.length - 1)];
+      const value = layout.fontSize < 1 ? layout.fontSize * (change > 0 ? 2 : .5)
+        : change < 0 && layout.fontSize <= 1 ? layout.fontSize / 2 : layout.fontSize + change;
+      if (validFontSize(value)) layout.fontSize = Number(value.toPrecision(12));
+      zoomControl?.removeAttribute('aria-invalid');
       apply(); store();
     };
   }

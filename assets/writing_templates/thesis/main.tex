@@ -1,0 +1,28 @@
+\documentclass[11pt,a4paper,oneside,openany,BCOR=7mm,DIV=12]{scrbook}
+\usepackage{quillthesis}
+\input{metadata}
+\begin{document}
+\frontmatter
+\hypersetup{pageanchor=false}
+\makethesistitle
+\setcounter{page}{1}
+\hypersetup{pageanchor=true}
+\addchap{Abstract}
+State the research question, approach, principal findings and limitations.
+\tableofcontents
+\listoffigures
+\listoftables
+\mainmatter
+\input{chapters/introduction}
+\input{chapters/methods}
+\input{chapters/results}
+\input{chapters/discussion}
+\chapter{Conclusion}
+Summarise what the evidence establishes and what remains unresolved.
+% Connect a personal library through References before enabling these commands.
+% \bibliographystyle{plainnat}
+% \bibliography{references}
+\appendix
+\chapter{Supporting material}
+Add supplementary methods, tables or additional analyses here.
+\end{document}

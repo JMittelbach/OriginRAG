@@ -69,20 +69,20 @@ def test_existing_style_is_not_duplicated_and_comment_selects_available_style():
     assert '\\bibliographystyle{plain}' in tex_without_comments(bibliography_connection(p, 'refs.bib', True)[1]['after'])
 
 
-@pytest.mark.parametrize('template_id', ['article', 'bioinformatics', 'g3', 'plos-one', 'plos-compbiol', 'plos-genetics'])
+@pytest.mark.parametrize('template_id', ['article', 'thesis', 'bioinformatics', 'g3', 'plos-one', 'plos-compbiol', 'plos-genetics'])
 def test_bundled_template_connects_real_main_with_matching_style(template_id):
     files, main = template_files(template_id)
     needed, edit = bibliography_connection({'main': main, 'files': files, 'template': template_id}, 'references.bib', True)
     active = tex_without_comments(edit['after'])
     assert needed and active.count('\\bibliography{references}') == 1
     assert active.count('\\bibliographystyle') == 1
-    style = 'plos2025' if template_id.startswith('plos-') else ('plain' if template_id == 'article' else 'oup-abbrvnat')
+    style = 'plos2025' if template_id.startswith('plos-') else ('plainnat' if template_id == 'thesis' else ('plain' if template_id == 'article' else 'oup-abbrvnat'))
     assert '\\bibliographystyle{' + style + '}' in active
 
 
 @pytest.mark.skipif(os.environ.get('ORIGINWRITE_TEST_COMPILER') != '1', reason='Requires prepared isolated TeX compiler')
-@pytest.mark.parametrize('template_id', ['article', 'bioinformatics', 'g3', 'plos-one', 'plos-compbiol', 'plos-genetics'])
-def test_create_link_sync_cite_and_compile_template(tmp_path, template_id):
+@pytest.mark.parametrize('template_id', ['article', 'thesis', 'bioinformatics', 'g3', 'plos-one', 'plos-compbiol', 'plos-genetics'])
+def test_create_link_automatically_sync_cite_and_compile_template(tmp_path, template_id):
     from originrag.writing_compile import compile_project
     import fitz
 
@@ -94,13 +94,14 @@ def test_create_link_sync_cite_and_compile_template(tmp_path, template_id):
     assert p.get('template') == template_id
     p = store.change({**p, 'action': 'save_project', 'collection': library['id']}, catalogue)
     preview = store.bibliography_preview(p['id'], catalogue, connect_document=True)
-    assert preview['connection_needed'] and preview['document_change']
-    p = store.change({'action': 'sync_bibliography', 'id': p['id'], 'revision': p['revision'],
-                      'collection_revision': library['revision'], 'preview_token': preview['preview_token'],
-                      'connect_document': True}, catalogue)
+    assert not preview['added'] and not preview['updated'] and not preview['conflicts']
+    assert p['bibliography_status']['state'] == 'synced'
     key = store.collection_references(library['id'], catalogue)['references'][0]['key']
     p['files'][p['main']] = p['files'][p['main']].replace('\\section{Introduction}', '\\section{Introduction}\nCitation \\cite{' + key + '}.')
+    if template_id == 'thesis':
+        p['files']['chapters/introduction.tex'] += '\nCitation \\cite{' + key + '}.\n'
     p = store.change({**p, 'action': 'save_project'}, catalogue)
+    assert '\n\\bibliography{references}' in p['files'][p['main']]
     result = compile_project(p)
     assert result['ok'], result['log']
     with fitz.open(stream=result['pdf'], filetype='pdf') as document:

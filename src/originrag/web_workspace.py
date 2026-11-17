@@ -80,8 +80,10 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
             params = parse_qs(query)
             if path == '/api/writing/export':
                 key = params.get('id', [''])[0]
+                expected = int(params['revision'][0]) if 'revision' in params else None
                 with project_access(store, collaboration, user, key) as access:
-                    data = access.store.export(key)
+                    access.store.refresh_bibliography(key, catalogue)
+                    data = access.store.export(key, expected_revision=expected)
                 binary_response(handler, data, 'application/zip', 'manuscript.zip')
             elif path == '/api/writing/bibliography':
                 handler.respond_json({'bibtex': store.collection_bib(params.get('id', [''])[0], catalogue)})
@@ -108,7 +110,7 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                 elif kind == 'projects':
                     key = params['id'][0]
                     with project_access(store, collaboration, user, key) as access:
-                        data = access.public(access.store.get(key))
+                        data = access.public(access.store.refresh_bibliography(key, catalogue))
                 else:
                     raise ValueError('Invalid document type.')
                 handler.respond_json(data)
@@ -136,10 +138,19 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                     if access.store.revision(key) != payload['revision']:
                         raise WritingConflict('The manuscript changed during the check. Select the passage again.')
                 handler.respond_json({**result, 'revision': payload['revision'], 'file': payload['file']})
+            elif payload.get('action') == 'refresh_bibliography':
+                key = payload.get('id')
+                with project_access(store, collaboration, user, key) as access:
+                    project = access.store.refresh_bibliography(key, catalogue)
+                    result = {'id': key, 'revision': project['revision'], 'collaboration': access.info,
+                              'bibliography_status': project.get('bibliography_status')}
+                handler.respond_json(result)
             elif payload.get('action') == 'compile':
                 key = payload.get('id')
                 with project_access(store, collaboration, user, key) as access:
-                    project = access.store.get(key)
+                    project = access.store.refresh_bibliography(key, catalogue)
+                    if project.get('bibliography_status', {}).get('state') == 'needs_review':
+                        raise WritingConflict(project['bibliography_status']['message'])
                     if payload.get('revision') != project['revision']:
                         raise WritingConflict('The project changed before compilation. Save or reload first.')
                     if not isinstance(payload.get('force', False), bool):
@@ -150,10 +161,10 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                     pass
                 result['pdf'] = base64.b64encode(result['pdf']).decode('ascii')
                 handler.respond_json(result)
-            elif payload.get('action') in {'save_project', 'sync_bibliography', 'delete_project'}:
+            elif payload.get('action') in {'save_project', 'sync_bibliography', 'delete_project', 'configure_bibliography'}:
                 key = payload.get('id')
                 with project_access(store, collaboration, user, key,
-                                    owner_only=payload['action'] in {'sync_bibliography', 'delete_project'}) as access:
+                                    owner_only=payload['action'] in {'sync_bibliography', 'delete_project', 'configure_bibliography'}) as access:
                     if access.info['role'] == 'editor':
                         if payload.get('collection'):
                             raise PermissionError('Only the owner can link a personal library to this project.')

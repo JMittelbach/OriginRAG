@@ -56,6 +56,9 @@ def main():
                 subprocess.run([args.tectonic, '--untrusted', '--keep-logs', main_file], cwd=root, check=True, timeout=300)
                 sample = files[main_file].replace('% \\bibliographystyle', '\\bibliographystyle').replace('% \\bibliography', '\\bibliography')
                 sample = sample.replace('\\section{Introduction}', '\\section{Introduction}\nCitation test \\cite{originwriteTest}.')
+                if item['id'] == 'thesis':
+                    intro = root / 'chapters/introduction.tex'
+                    intro.write_text(files['chapters/introduction.tex'] + '\nCitation test \\cite{originwriteTest}.\n', encoding='utf-8')
                 (root / main_file).write_text(sample, encoding='utf-8')
                 (root / 'references.bib').write_text('@article{originwriteTest, author={Doe, Jane}, title={Synthetic package preparation test}, journal={Test journal}, year={2026}}\n', encoding='utf-8')
                 subprocess.run([args.tectonic, '--untrusted', '--keep-logs', main_file], cwd=root, check=True, timeout=300)
