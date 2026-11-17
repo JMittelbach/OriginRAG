@@ -7,6 +7,7 @@ import {search, searchKeymap, openSearchPanel, highlightSelectionMatches} from '
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from '@codemirror/autocomplete';
 import {tags} from '@lezer/highlight';
 import {citationCompletion} from '../citation-completion.mjs';
+import {assistantReviewEffect, assistantReviewField, assistantReviewTheme} from './assistant-review.js';
 
 const colours = HighlightStyle.define([
   {tag: [tags.keyword, tags.tagName], class: 'tex-command'},
@@ -83,9 +84,24 @@ export function diffTextChanges(before, after) {
 export function createLatexEditor(parent, onChange, onCursor, getFiles = () => ({})) {
   const documents = new Map();
   const editability = new Compartment();
-  let current = '', view;
+  let current = '', view, assistantReview = null, assistantApplying = false, disposed = false;
+  function paintAssistantReview() {
+    if (disposed) return;
+    const items = assistantReview?.items.filter(item => item.file === current) || [];
+    view.dispatch({effects: assistantReviewEffect.of({items, options: assistantReview?.options || {}}), annotations: Transaction.addToHistory.of(false)});
+  }
+  function clearAssistantReview(reason = '') {
+    const previous = assistantReview; assistantReview = null;
+    for (const [name, saved] of documents) {
+      if (name !== current && saved.state.field(assistantReviewField).size) {
+        documents.set(name, {...saved, state: saved.state.update({effects: assistantReviewEffect.of({items: [], options: {}}), annotations: Transaction.addToHistory.of(false)}).state});
+      }
+    }
+    paintAssistantReview();
+    if (reason && previous) previous.options.invalidated?.(reason);
+  }
   const theme = EditorView.theme({
-    '&': {height: '100%', color: 'var(--code-text)', backgroundColor: 'var(--code-bg)', fontSize: 'var(--editor-font-size, 14px)'},
+    '&': {height: '100%', color: 'var(--code-text)', backgroundColor: 'var(--code-bg)', fontSize: 'var(--editor-font-size, 11px)'},
     '&.cm-focused': {outline: 'none'},
     '.cm-scroller': {overflow: 'auto', fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace', lineHeight: '1.65'},
     '.cm-content': {padding: '16px 0', caretColor: 'var(--code-text)'},
@@ -108,9 +124,13 @@ export function createLatexEditor(parent, onChange, onCursor, getFiles = () => (
       search({top: true}), StreamLanguage.define(stex), syntaxHighlighting(colours), indentUnit.of('  '),
       autocompletion({override: [citationCompletion(getFiles, () => /\.tex$/i.test(current)), complete]}), EditorState.allowMultipleSelections.of(true),
       keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap, ...completionKeymap, indentWithTab]),
-      editability.of([EditorView.editable.of(editable), EditorState.readOnly.of(!editable)]), theme,
+      editability.of([EditorView.editable.of(editable), EditorState.readOnly.of(!editable)]), theme, assistantReviewField, assistantReviewTheme,
       EditorView.contentAttributes.of({'aria-label': 'LaTeX source', spellcheck: 'false'}),
       EditorView.updateListener.of(update => {
+        if (update.docChanged && assistantReview && !assistantApplying) {
+          const previous = assistantReview;
+          queueMicrotask(() => { if (assistantReview === previous) clearAssistantReview('The draft changed. Previous suggestions were cleared.'); });
+        }
         if (update.docChanged && update.transactions.some(tr => tr.docChanged && !tr.annotation(Transaction.remote))) onChange(current, update.state.doc.toString());
         if (update.docChanged || update.selectionSet) cursor();
       }),
@@ -158,16 +178,81 @@ export function createLatexEditor(parent, onChange, onCursor, getFiles = () => (
       view.setState(old.state);
       view.scrollDOM.scrollTop = old?.top || 0;
       view.scrollDOM.scrollLeft = old?.left || 0;
+      paintAssistantReview();
       cursor();
       return true;
     },
     applyRemote,
+    showAssistantReview(items, expectedFiles, options) {
+      if (disposed || !Array.isArray(items) || !items.length || items.length > 4) return false;
+      for (const item of items) {
+        if (typeof expectedFiles[item.file] !== 'string' || !Number.isInteger(item.from) || !Number.isInteger(item.to)
+            || item.from < 0 || item.to <= item.from || item.to > expectedFiles[item.file].length || expectedFiles[item.file].slice(item.from, item.to) !== item.original
+            || typeof item.replacement !== 'string') return false;
+        if (item.file === current && view.state.doc.toString() !== expectedFiles[item.file]) return false;
+      }
+      assistantReview = {items, options: {...options, total: items.length}};
+      paintAssistantReview(); return true;
+    },
+    clearAssistantReview,
     isComposing() { return view.compositionStarted; },
+    focus() { view.focus(); },
     selection() {
       const {from, to} = view.state.selection.main;
       return {file: current, from, to, text: view.state.sliceDoc(from, to)};
     },
-    destroy() { view.destroy(); documents.clear(); current = ''; },
+    replaceSelection(selected, replacement, expectedSource) {
+      if (view.state.readOnly || view.compositionStarted || current !== selected.file
+          || typeof replacement !== 'string' || view.state.doc.toString() !== expectedSource
+          || view.state.sliceDoc(selected.from, selected.to) !== selected.text) return false;
+      view.dispatch({changes: {from: selected.from, to: selected.to, insert: replacement},
+        selection: {anchor: selected.from, head: selected.from + replacement.length},
+        annotations: isolateHistory.of('full'), userEvent: 'input.proofread'});
+      view.focus();
+      return true;
+    },
+    applyProjectEdits(edits, expectedFiles) {
+      if (view.compositionStarted || !Array.isArray(edits) || !edits.length || edits.length > 4) return false;
+      const groups = new Map(), transactions = [];
+      for (const edit of edits) {
+        if (!edit || typeof edit.file !== 'string' || !/\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i.test(edit.file)
+            || typeof expectedFiles[edit.file] !== 'string' || typeof edit.original !== 'string' || !edit.original
+            || typeof edit.replacement !== 'string') return false;
+        const source = expectedFiles[edit.file], anchored = Number.isInteger(edit.from) && Number.isInteger(edit.to);
+        const from = anchored ? edit.from : source.indexOf(edit.original), to = anchored ? edit.to : from + edit.original.length;
+        if (from < 0 || to <= from || to > source.length || source.slice(from, to) !== edit.original
+            || !anchored && source.indexOf(edit.original, from + 1) !== -1) return false;
+        const changes = groups.get(edit.file) || [];
+        if (changes.some(change => from < change.to && to > change.from)) return false;
+        changes.push({from, to, insert: edit.replacement}); groups.set(edit.file, changes);
+      }
+      for (const [name, changes] of groups) {
+        let before = name === current ? view.state : documents.get(name)?.state || state(expectedFiles[name], true);
+        if (before.readOnly) return false;
+        if (before.doc.toString() !== expectedFiles[name]) {
+          if (name === current) return false;
+          const remote = remoteTransaction(before, expectedFiles[name], true);
+          if (!remote) return false;
+          before = remote.state;
+        }
+        const transaction = before.update({changes: changes.sort((a, b) => a.from - b.from),
+          annotations: isolateHistory.of('full'), userEvent: 'input.assistant'});
+        transactions.push({name, transaction});
+      }
+      assistantApplying = true;
+      try {
+        for (const {name, transaction} of transactions) {
+          if (name === current) view.dispatch(transaction);
+          else {
+            const saved = documents.get(name);
+            documents.set(name, {state: transaction.state, top: saved?.top || 0, left: saved?.left || 0});
+            onChange(name, transaction.state.doc.toString());
+          }
+        }
+      } finally { assistantApplying = false; }
+      return true;
+    },
+    destroy() { clearAssistantReview('The editor closed.'); disposed = true; view.destroy(); documents.clear(); current = ''; },
     jump(line) {
       const target = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines)));
       view.dispatch({selection: {anchor: target.from, head: target.to}, effects: EditorView.scrollIntoView(target.from, {y: 'center'})});

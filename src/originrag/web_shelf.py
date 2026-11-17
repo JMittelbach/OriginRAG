@@ -44,7 +44,7 @@ CSS = r"""
 
 MARKUP = r"""
   <dialog id="shelfDialog" aria-labelledby="shelfTitle">
-    <div class="shelf-heading"><div><h2 id="shelfTitle">My little bookshelf</h2><p>Your current reads, a little closer.</p></div><button id="shelfClose" type="button" aria-label="Close my shelf">Close</button></div>
+    <button id="shelfClose" class="dialog-close" type="button" aria-label="Close my shelf" title="Close my shelf">×</button><div class="shelf-heading"><div><h2 id="shelfTitle">My little bookshelf</h2><p>Your current reads, a little closer.</p></div></div>
     <p id="shelfNotice" role="status" aria-live="polite"></p>
     <div class="shelf-layout"><div class="shelf-case" id="shelfBooks" aria-label="Saved papers"></div><div class="shelf-detail" id="shelfDetail"></div></div>
   </dialog>

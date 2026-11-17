@@ -100,7 +100,7 @@ def test_library_import_works_without_visiting_chat(workspace_server):
         assert json.loads(imported[3]) == {'doi': '10.1000/test'}
         assert page.locator('.library-find-results h3').inner_text() == '<b>A study</b>'
         assert page.locator('.library-find-results h3 b').count() == 0
-        dialog.get_by_role('button', name='Close', exact=True).click()
+        dialog.get_by_role('button', name='Close paper search and import', exact=True).click()
         playwright.expect(dialog).not_to_be_attached()
         assert page.url.endswith('/library')
         assert not errors

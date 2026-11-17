@@ -1,12 +1,14 @@
 import {requestJSON} from './request.mjs';
+import {addDialogClose} from './dialog-close.mjs';
 
 function el(tag, text, cls) { const item = document.createElement(tag); if (text !== undefined) item.textContent = text; if (cls) item.className = cls; return item; }
 
 export async function openLibraryImport({notice, changed}) {
   if (document.getElementById('libraryImportDialog')) return;
   const dialog = el('dialog', undefined, 'library-import-dialog'); dialog.id = 'libraryImportDialog';
-  const heading = el('div', undefined, 'panel-heading'), close = el('button', 'Close'); close.type = 'button'; close.onclick = () => dialog.close();
-  const title = el('h2', 'Add papers to the library'); title.id = 'libraryImportTitle'; dialog.setAttribute('aria-labelledby', title.id); heading.append(title, close);
+  addDialogClose(dialog, 'Close paper search and import');
+  const heading = el('div', undefined, 'panel-heading');
+  const title = el('h2', 'Add papers to the library'); title.id = 'libraryImportTitle'; dialog.setAttribute('aria-labelledby', title.id); heading.append(title);
   const message = el('p', '', 'hint'); message.id = 'libraryImportStatus'; message.setAttribute('role', 'status');
   const files = el('input'); files.type = 'file'; files.accept = '.pdf,application/pdf'; files.multiple = true; files.disabled = true; files.id = 'libraryImportFiles'; files.setAttribute('aria-label', 'Upload article PDFs');
   const form = el('form', undefined, 'library-find-form'), query = el('input'); query.type = 'search'; query.placeholder = 'Topic, title or author'; query.setAttribute('aria-label', 'Find papers');

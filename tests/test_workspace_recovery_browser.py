@@ -1,7 +1,10 @@
+from pathlib import Path
+import shutil
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from test_app_profiles import profile_server as profile_server
 from test_writing import workspace_server as workspace_server
 
 
@@ -12,6 +15,28 @@ def workspace_page(workspace_server):
     with playwright.sync_playwright() as engine:
         browser = engine.chromium.launch()
         page = browser.new_page(viewport={'width': 1440, 'height': 1050})
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        yield base, page, playwright.expect
+        browser.close()
+        assert not errors
+
+
+@pytest.fixture
+def account_page(profile_server):
+    playwright = pytest.importorskip('playwright.sync_api')
+    _, port, headers, _, _, root = profile_server
+    source = Path(__file__).resolve().parents[1]
+    shutil.copytree(source / 'assets/workspace', root / 'assets/workspace', ignore=shutil.ignore_patterns('editor-build'))
+    base = f'http://127.0.0.1:{port}'
+    with playwright.sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        context = browser.new_context(viewport={'width': 1440, 'height': 1050})
+        context.add_cookies([
+            {'name': item.split('=', 1)[0], 'value': item.split('=', 1)[1], 'url': base}
+            for item in headers['Cookie'].split('; ')
+        ])
+        page = context.new_page()
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         yield base, page, playwright.expect
@@ -96,15 +121,16 @@ def test_library_search_failure_has_working_retry(workspace_page):
     assert not page.locator('#papers').evaluate('element => element.inert')
 
 
-def test_navigation_remains_usable_while_account_request_waits(workspace_page):
-    base, page, expect = workspace_page
+@pytest.mark.parametrize('profile_server', ['full'], indirect=True)
+def test_navigation_remains_usable_while_account_request_waits(account_page):
+    base, page, expect = account_page
     waiting = []
     page.route('**/api/app-profile', lambda route: waiting.append(route))
     page.goto(base + '/library')
     page.locator('#globalSettings').click()
     expect(page.locator('#globalSettingsDialog')).to_be_visible()
     page.locator('#globalStartPage').select_option('/library')
-    page.get_by_role('button', name='Done', exact=True).click()
+    page.get_by_role('button', name='Close settings', exact=True).click()
     page.locator('#globalAccount').click()
     expect(page.locator('#globalAccountDetails')).to_have_text('Loading account…')
     assert len(waiting) == 1
@@ -113,14 +139,15 @@ def test_navigation_remains_usable_while_account_request_waits(workspace_page):
     expect(page.locator('#globalSignOut')).to_be_hidden()
     page.unroute('**/api/app-profile')
     page.locator('#globalAccountRetry').click()
-    expect(page.locator('#globalAccountDetails')).to_contain_text('no sign-in required')
+    expect(page.locator('#globalAccountDetails')).to_contain_text('alice')
     expect(page.locator('#globalAccountRetry')).to_be_hidden()
     assert page.locator('#globalStartPage').input_value() == '/library'
 
 
 @pytest.mark.parametrize('unavailable', ['timeout', 'malformed'])
-def test_account_request_timeout_and_invalid_profile_are_recoverable(workspace_page, unavailable):
-    base, page, expect = workspace_page
+@pytest.mark.parametrize('profile_server', ['full'], indirect=True)
+def test_account_request_timeout_and_invalid_profile_are_recoverable(account_page, unavailable):
+    base, page, expect = account_page
     page.clock.install()
     waiting = []
 
@@ -139,12 +166,13 @@ def test_account_request_timeout_and_invalid_profile_are_recoverable(workspace_p
     expect(page.locator('#globalAccountError')).not_to_be_empty()
     page.unroute('**/api/app-profile')
     page.evaluate("window.dispatchEvent(new Event('online'))")
-    expect(page.locator('#globalAccountDetails')).to_contain_text('no sign-in required')
+    expect(page.locator('#globalAccountDetails')).to_contain_text('alice')
     expect(page.locator('#globalAccountError')).to_be_empty()
 
 
-def test_sign_out_preserves_unsaved_draft_and_does_not_duplicate_requests(workspace_page):
-    base, page, expect = workspace_page
+@pytest.mark.parametrize('profile_server', ['full'], indirect=True)
+def test_sign_out_preserves_unsaved_draft_and_does_not_duplicate_requests(account_page):
+    base, page, expect = account_page
     page.route('**/api/app-profile', lambda route: route.fulfill(json={
         'home': '/chat', 'features': {'rag': True, 'write': True},
         'authenticated': True, 'user': {'username': 'test-user'},
@@ -244,7 +272,7 @@ def test_import_reconnects_retries_failed_job_and_restores_progress(workspace_pa
     expect(page.get_by_role('button', name='Retry import')).to_be_enabled(timeout=10000)
     page.get_by_role('button', name='Retry import').click()
     assert state['starts'] == 2
-    page.locator('#libraryImportDialog').get_by_role('button', name='Close', exact=True).click()
+    page.locator('#libraryImportDialog').get_by_role('button', name='Close paper search and import', exact=True).click()
     page.get_by_role('button', name='Find or import papers', exact=True).first.click()
     expect(page.locator('.library-import-jobs')).to_contain_text('Waiting to import')
     state['jobs'][-1].update(state='imported', message='Added to library and indexed')
@@ -262,7 +290,7 @@ def test_import_finishes_upload_and_schedules_it_after_dialog_closes(workspace_p
     open_import(base, page, expect)
     page.locator('#libraryImportFiles').set_input_files({'name': 'one.pdf', 'mimeType': 'application/pdf', 'buffer': b'%PDF-1.4'})
     expect(page.locator('#libraryImportStatus')).to_contain_text('Uploading 1 of 1')
-    page.locator('#libraryImportDialog').get_by_role('button', name='Close', exact=True).click()
+    page.locator('#libraryImportDialog').get_by_role('button', name='Close paper search and import', exact=True).click()
     assert pending
     with page.expect_response('**/api/library-sync'):
         pending[0].fulfill(json={'upload_id': 'accepted-one'})

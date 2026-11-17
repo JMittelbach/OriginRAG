@@ -32,9 +32,22 @@ MODEL_URL = (
     "2ac1d27317927518c9ef7bd99f91f3f1e4ee288d/" + MODEL_FILE
 )
 OLLAMA_DOWNLOADS = {
+    "qwen3.5:4b": 3_400_000_000,
+    "qwen3.5:9b": 6_600_000_000,
+    "qwen3.5:35b": 22_000_000_000,
+    "qwen2.5-coder:7b": 4_700_000_000,
+    "qwen3-coder:30b": 19_000_000_000,
+    "qwen3:30b": 20_000_000_000,
     "qwen3:4b-q4_K_M": 3_000_000_000,
     "qwen3:8b-q4_K_M": 6_000_000_000,
     "qwen3:30b-a3b-q4_K_M": 20_000_000_000,
+}
+RECOMMENDATIONS = {
+    "qwen3.5:9b": ("General use · balanced", "general", 3),
+    "qwen3.5:4b": ("General use · lighter", "general", 2),
+    "qwen3.5:35b": ("General use · larger", "general", 4),
+    "qwen3-coder:30b": ("Code & LaTeX · larger", "code", 3),
+    "qwen2.5-coder:7b": ("Code & LaTeX · lighter", "code", 2),
 }
 COLIBRI_MODELS = {
     "glm-5.3": {
@@ -178,6 +191,8 @@ class ModelManager:
         self.inventory_cache = None
         self.inventory_at = 0
         self.inventory_lock = threading.Lock()
+        self.runtime_reachability = {}
+        self.discovered = {}
         atexit.register(self.close)
 
     def selected(self):
@@ -200,43 +215,76 @@ class ModelManager:
             if not refresh and self.inventory_cache is not None and time.monotonic() - self.inventory_at < 10:
                 return self.inventory_cache
             error = None
-            try:
-                installed = http_json(self.ollama_url + "/api/tags").get("models", [])
-                loaded = {row["name"] for row in http_json(self.ollama_url + "/api/ps").get("models", [])}
-            except (OSError, ValueError, KeyError):
-                installed, loaded = [], set()
-                error = "Ollama is not reachable. Start Ollama on this host to use its models."
+            installed, loaded, reachable, error = self.ollama_inventory(self.ollama_url)
+            self.runtime_reachability[self.ollama_url] = reachable
             rows = {row["name"]: {
                 "provider": "ollama", "model": row["name"], "name": row["name"],
-                "installed": True, "loaded": row["name"] in loaded,
+                "installed": True, "loaded": row["name"] in (loaded or {}),
                 "bytes": row.get("size"), "downloadable": False,
+                "runtime_reachable": reachable, 'loaded_verified': loaded is not None,
+                **self.loaded_details((loaded or {}).get(row["name"])),
             } for row in installed if isinstance(row, dict) and isinstance(row.get("name"), str)}
             for url in sorted(set(self.ollama_model_urls.values())):
                 names = {name for name, endpoint in self.ollama_model_urls.items() if endpoint == url}
-                try:
-                    extra = http_json(url + "/api/tags").get("models", [])
-                    extra_loaded = {row["name"] for row in http_json(url + "/api/ps").get("models", [])}
-                    found = {row["name"]: row for row in extra
-                             if isinstance(row, dict) and isinstance(row.get("name"), str)}
-                    note = None
-                except (OSError, ValueError, KeyError):
-                    found, extra_loaded = {}, set()
-                    note = "This model's configured Ollama service is not reachable."
-                    error = error or note
+                extra, extra_loaded, extra_reachable, note = self.ollama_inventory(url)
+                self.runtime_reachability[url] = extra_reachable
+                found = {row['name']: row for row in extra}
+                error = error or note
                 for name in names:
                     rows[name] = {
                         "provider": "ollama", "model": name, "name": name,
-                        "installed": name in found, "loaded": name in extra_loaded,
+                        "installed": name in found, "loaded": name in (extra_loaded or {}),
+                        "runtime_reachable": extra_reachable, 'loaded_verified': extra_loaded is not None,
                         "bytes": found.get(name, {}).get("size"), "downloadable": False,
+                        **self.loaded_details((extra_loaded or {}).get(name)),
                         **({"note": note} if note else {}),
                     }
             for name, size in OLLAMA_DOWNLOADS.items():
                 rows.setdefault(name, {"provider": "ollama", "model": name, "name": name,
                                        "installed": False, "loaded": False, "bytes": size,
-                                       "downloadable": True})
+                                       "downloadable": True, "runtime_reachable": reachable})
             self.inventory_cache = (list(rows.values()), error)
             self.inventory_at = time.monotonic()
             return self.inventory_cache
+
+    @staticmethod
+    def ollama_inventory(url):
+        try:
+            installed = http_json(url + '/api/tags')['models']
+            if not isinstance(installed, list):
+                raise ValueError('Invalid inventory')
+            installed = [row for row in installed if isinstance(row, dict) and isinstance(row.get('name'), str)]
+        except (OSError, ValueError, KeyError, TypeError):
+            return [], None, False, 'Ollama is not reachable. Start its configured service to check installed models.'
+        try:
+            loaded = http_json(url + '/api/ps')['models']
+            if not isinstance(loaded, list):
+                raise ValueError('Invalid running-model status')
+            loaded = {row['name']: row for row in loaded if isinstance(row, dict) and isinstance(row.get('name'), str)}
+            return installed, loaded, True, None
+        except (OSError, ValueError, KeyError, TypeError):
+            return installed, None, True, 'Installed models are available, but running-model status could not be checked.'
+
+    @staticmethod
+    def loaded_details(row):
+        if not row:
+            return {}
+        size, vram = row.get('size'), row.get('size_vram')
+        device = 'Runtime (placement unknown)'
+        if isinstance(vram, (int, float)) and isinstance(size, (int, float)) and size > 0:
+            device = 'GPU' if vram >= size * .95 else 'GPU + RAM' if vram > 0 else 'CPU / RAM'
+        return {'device': device, 'loaded_bytes': size, 'vram_bytes': vram,
+                'loaded_context': row.get('context_length')}
+
+    def search(self, query):
+        from originrag.model_catalog import search_models
+        rows = search_models(query)
+        with self.lock:
+            for row in rows:
+                self.discovered[row['model']] = (time.monotonic(), dict(row))
+            while len(self.discovered) > 128:
+                del self.discovered[next(iter(self.discovered))]
+        return rows
 
     def colibri_ready(self, model=MODEL_ID):
         return ((self.colibri / "c/coli").is_file()
@@ -266,7 +314,15 @@ class ModelManager:
                 and (path / "tokenizer.json").is_file()
                 and any(path.glob("*.safetensors")))
 
-    def snapshot(self, can_manage):
+    def snapshot(self, can_manage, *, search_rows=None):
+        from originrag.analysis.ollama_client import DEFAULT_MODEL, env_value
+        from originrag.model_hardware import hardware_snapshot, estimate_fit
+        from urllib.parse import urlsplit
+        hardware = hardware_snapshot()
+        default = {"provider": "ollama", "model": env_value(
+            "ORIGINRAG_OLLAMA_ANSWER_MODEL", "PFEMPIRE_OLLAMA_ANSWER_MODEL", "HYPORAG_OLLAMA_ANSWER_MODEL",
+            "ORIGINRAG_OLLAMA_MODEL", "PFEMPIRE_OLLAMA_MODEL", "HYPORAG_OLLAMA_MODEL",
+        ) or DEFAULT_MODEL, "mode": "fast"}
         rows, error = self.inventory()
         shared_status = {}
         try:
@@ -284,6 +340,16 @@ class ModelManager:
                 selection = None
                 selection_error = "Saved model settings could not be read. Restore the configured default."
             rows = [dict(row) for row in rows]
+            present = {row['model']: row for row in rows}
+            for _, discovered in self.discovered.values():
+                row = present.get(discovered['model'])
+                if row is None:
+                    rows.append(dict(discovered))
+                else:
+                    row.update({key: value for key, value in discovered.items()
+                                if key not in {'installed', 'loaded', 'downloadable', 'bytes'}})
+                    if not row['installed']:
+                        row['bytes'] = discovered['bytes']
             for model, spec in COLIBRI_MODELS.items():
                 rows.append({
                     "provider": "colibri", "model": model, "name": spec["name"],
@@ -295,7 +361,19 @@ class ModelManager:
                     "shared_service": bool(model == "glm-5.3" and os.environ.get("ORIGINRAG_GLM_SERVICE_URL")),
                     "context": spec["context"], "note": spec["note"],
                 })
+            configured = None if selection_error else selection or default
+            if configured and not any((row['provider'], row['model']) == (configured['provider'], configured['model']) for row in rows):
+                rows.append({**configured, 'name': configured['model'], 'installed': False,
+                             'loaded': False, 'downloadable': False, 'bytes': None})
+            active = None
             for row in rows:
+                row["default"] = (row["provider"], row["model"]) == (default["provider"], default["model"])
+                row["selected"] = bool(configured and row['installed'] and (row["provider"], row["model"]) == (configured["provider"], configured["model"]))
+                if row['selected']:
+                    active = configured
+                row["deletable"] = bool(row["installed"] and not row["default"] and not row["selected"]
+                                        and not row["loaded"] and not row.get("shared_service")
+                                        and not (row["provider"] == "colibri" and (self.state / row["model"]).is_symlink()))
                 if row["model"] == "glm-5.3" and row.get("shared_service"):
                     row.update(loaded=shared_status.get("loaded", False),
                                accelerator=shared_status.get("accelerator"))
@@ -303,8 +381,31 @@ class ModelManager:
                     if shared_status.get("error"):
                         row["note"] += " " + shared_status["error"]
                 row["measurement"] = self.stats.get((row["provider"], row["model"]))
+                endpoint = self.ollama_model_urls.get(row['model'], self.ollama_url)
+                if row['provider'] == 'ollama' and endpoint in self.runtime_reachability:
+                    row.setdefault('runtime_reachable', self.runtime_reachability[endpoint])
+                local = row['provider'] == 'colibri' or urlsplit(endpoint).hostname in {'localhost', '127.0.0.1', '::1'}
+                row['local_runtime'] = local
+                row['fit'] = estimate_fit(row, hardware, local_runtime=local)
+                if row['provider'] == 'ollama' and row['model'] in RECOMMENDATIONS:
+                    purpose, task, rank = RECOMMENDATIONS[row['model']]
+                    row.update(purpose=purpose, recommendation_task=task, recommendation_rank=rank)
+            for task in ('general', 'code'):
+                candidates = [row for row in rows if row.get('recommendation_task') == task
+                              and row['fit']['status'] in {'fits', 'loaded'}]
+                if candidates:
+                    max(candidates, key=lambda row: (
+                        row['fit']['device'] not in {None, 'RAM / CPU'}, row['recommendation_rank'],
+                    ))['recommended'] = True
+            target_unavailable = bool(configured and any(
+                row['provider'] == configured['provider'] and row['model'] == configured['model']
+                and row.get('runtime_reachable') is False for row in rows))
             return {
-                "can_manage": can_manage, "selection": selection, "models": rows,
+                "can_manage": can_manage, "selection": selection, "default": default,
+                "effective_selection": active, "configured_selection": configured,
+                "selection_status": 'invalid' if selection_error else 'installed' if active else 'unavailable' if target_unavailable else 'missing',
+                "models": rows, "hardware": hardware,
+                "search_models": [row['model'] for row in search_rows] if search_rows is not None else None,
                 "job": dict(self.job) if self.job else None,
                 "active_requests": self.active_requests, "ollama_error": error,
                 "selection_error": selection_error, "colibri_available": self.colibri_ready(),
@@ -329,7 +430,7 @@ class ModelManager:
             if response:
                 threading.Thread(target=response.close, daemon=True).start()
             return
-        if action not in {"download", "select", "default", "benchmark", "stop"}:
+        if action not in {"download", "delete", "select", "default", "benchmark", "stop"}:
             raise ValueError("Unknown model action.")
         provider, model = payload.get("provider"), payload.get("model")
         mode = payload.get("mode", "fast")
@@ -339,16 +440,29 @@ class ModelManager:
             if not isinstance(provider, str) or not isinstance(model, str) or len(model) > 200:
                 raise ValueError("Choose a model from the catalogue.")
             if provider == "colibri":
-                if model not in COLIBRI_MODELS or not self.colibri_ready(model):
+                if model not in COLIBRI_MODELS or (action != "delete" and not self.colibri_ready(model)):
                     raise ValueError("This Colibri model or runtime is not available on this host.")
                 installed = self.model_installed(model)
             elif provider == "ollama":
                 rows, error = self.inventory(refresh=True)
                 installed = any(row["model"] == model and row["installed"] for row in rows)
-                if error and not installed:
+                target = next((row for row in rows if row['model'] == model), {})
+                if error and not installed and not target.get('runtime_reachable'):
                     raise ValueError(error)
                 if not installed and model not in OLLAMA_DOWNLOADS:
-                    raise ValueError("Choose a model from the catalogue.")
+                    with self.lock:
+                        discovered = self.discovered.get(model)
+                    if (action != 'download' or not discovered
+                            or time.monotonic() - discovered[0] > 1800
+                            or payload.get('catalog_digest') != discovered[1]['catalog_digest']):
+                        raise ValueError("Search for this model in the catalogue before downloading it.")
+                    from originrag.model_catalog import model_metadata, invalidate_model
+                    current = model_metadata(model)
+                    if current['catalog_digest'] != discovered[1]['catalog_digest']:
+                        invalidate_model(model)
+                        with self.lock:
+                            self.discovered.pop(model, None)
+                        raise ValueError('The model download changed. Search again and review its new size.')
             else:
                 raise ValueError("Choose Ollama or Colibri.")
             if action != "download" and not installed:
@@ -359,11 +473,24 @@ class ModelManager:
                 raise ValueError("GLM-5.3 is installed by the host with Colibri's resumable downloader.")
             if action == "download" and payload.get("confirmed") is not True:
                 raise ValueError("Confirm the model download and disk usage.")
+            if action == "delete":
+                if payload.get("confirmed") is not True:
+                    raise ValueError("Confirm model deletion. A later use requires downloading it again.")
+                view = self.snapshot(True)
+                row = next((item for item in view["models"]
+                            if item["provider"] == provider and item["model"] == model), None)
+                if not row or not row["deletable"]:
+                    raise ValueError("The active, configured default, loaded or externally managed model cannot be deleted here.")
         with self.lock:
             if self.job and self.job["status"] == "running":
                 raise ValueError("Another model operation is running. Wait or cancel it first.")
             if self.active_requests:
                 raise ValueError("A model request is running. Wait for it to finish before changing models.")
+            if action == "delete" and not any(
+                row["provider"] == provider and row["model"] == model and row["deletable"]
+                for row in self.snapshot(True)["models"]
+            ):
+                raise ValueError("This model is active or protected. Refresh the model list before deleting it.")
             self.job = {"id": uuid.uuid4().hex, "status": "running", "action": action,
                         "message": "Preparing…", "completed": 0, "total": 0}
             self.cancel = threading.Event()
@@ -394,6 +521,8 @@ class ModelManager:
                 if (self.selected() or {}).get("provider") == "colibri":
                     raise ValueError("Restore the configured default before stopping Colibri.")
                 self.close()
+            elif action == "delete":
+                self.delete_model(provider, model)
             else:
                 selection = {"provider": provider, "model": model, "mode": mode}
                 self.progress("Starting the selected runtime…")
@@ -449,6 +578,23 @@ class ModelManager:
                 if item.get("status") == "success":
                     return
         raise ValueError("Download ended before Ollama confirmed success. Retry to resume.")
+
+    def delete_model(self, provider, model):
+        self.progress("Removing the unused model…")
+        if provider == "ollama":
+            request = urllib.request.Request(
+                self.ollama_model_urls.get(model, self.ollama_url) + "/api/delete",
+                data=json.dumps({"model": model}).encode(), method="DELETE",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                response.read(4096)
+        else:
+            target = self.state / model
+            if (model not in COLIBRI_MODELS or target.is_symlink()
+                    or target.resolve().parent != self.state.resolve() or not target.is_dir()):
+                raise ValueError("Only an app-managed model directory can be removed here.")
+            shutil.rmtree(target)
 
     def download_container(self, model):
         spec = COLIBRI_MODELS[model]
@@ -668,11 +814,19 @@ class ModelManager:
             self._close_engine()
 
     @contextmanager
-    def session(self):
+    def session(self, *, override=None):
+        if override is not None:
+            if (not isinstance(override, dict) or set(override) != {"provider", "model", "mode"}
+                    or override["provider"] != "ollama" or not isinstance(override["model"], str)
+                    or override["mode"] != "fast"):
+                raise ValueError("Choose an installed Ollama model for this request.")
+            rows, error = self.inventory(refresh=True)
+            if not any(row["model"] == override["model"] and row["installed"] for row in rows):
+                raise ValueError("Install the requested model through Models before using it.")
         with self.lock:
             if self.job and self.job["status"] == "running" and self.job["action"] != "download":
                 raise ValueError("A model is being switched or tested. Please retry in a moment.")
-            selection = self.selected()
+            selection = override or self.selected()
             self.active_requests += 1
         token = None
         try:

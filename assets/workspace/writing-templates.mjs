@@ -1,3 +1,5 @@
+import {addDialogClose} from './dialog-close.mjs';
+
 function el(tag, text, cls) {
   const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (cls) node.className = cls; return node;
 }
@@ -48,7 +50,7 @@ export function openTemplateGallery(templates, onUse) {
   document.getElementById('templateDialog')?.remove();
   const dialog = el('dialog', undefined, 'template-dialog'); dialog.id = 'templateDialog';
   const header = el('div', undefined, 'panel-heading'); header.append(el('h2', 'Choose a template'));
-  const close = el('button', 'Close'); close.onclick = () => dialog.close(); header.append(close);
+  addDialogClose(dialog, 'Close templates');
   dialog.append(header, el('p', 'Opens a new manuscript with the class, styles and supporting files included. Your current manuscript stays unchanged.', 'muted'));
   const body = el('div', undefined, 'template-scroll'); dialog.append(body);
   renderTemplates(body, templates, async item => { dialog.close(); await onUse(item); });

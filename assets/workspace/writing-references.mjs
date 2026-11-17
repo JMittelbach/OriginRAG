@@ -1,3 +1,5 @@
+import {addDialogClose} from './dialog-close.mjs';
+
 function element(tag, text, className) {
   const result = document.createElement(tag);
   if (text !== undefined) result.textContent = text;
@@ -66,8 +68,8 @@ export async function openReferences(ctx) {
   const header = element('div', undefined, 'references-heading');
   const heading = element('div'); const title = element('h2', 'Manuscript references'); title.id = 'referencesTitle';
   heading.append(title, element('p', 'Collect papers, insert citations and keep your bibliography in sync.', 'references-muted'));
-  const close = element('button', 'Close'); close.type = 'button'; close.id = 'referencesClose'; close.onclick = () => dialog.close();
-  header.append(heading, close);
+  const close = addDialogClose(dialog, 'Close manuscript references', {id: 'referencesClose'});
+  header.append(heading);
   const error = element('p', '', 'references-error'); error.id = 'referencesError'; error.setAttribute('role', 'alert');
   const layout = element('div', undefined, 'references-layout');
   const sidebar = element('aside', undefined, 'references-sidebar');

@@ -1,18 +1,52 @@
-.model-dialog { width:min(760px,calc(100vw - 32px)); max-height:85vh; overflow:auto; }
-.model-heading,.model-controls,.model-footer,.model-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-.model-heading { justify-content:space-between; }
-.model-heading h2 { margin:0; }
-.model-heading p,#modelAccess { opacity:.75; }
-.model-controls { margin:18px 0; }
-.model-controls label { display:flex; gap:8px; align-items:center; }
-.model-row { border-top:1px solid var(--border,#42515b); padding:16px 0; }
-.model-row-info { flex:1; min-width:200px; }
-.model-row-info strong { display:block; overflow-wrap:anywhere; }
-.model-row-info small { display:block; margin-top:6px; opacity:.8; }
-.model-row-actions { display:flex; gap:8px; flex-wrap:wrap; }
-.model-footer { border-top:1px solid var(--border,#42515b); padding:16px 0; }
-#modelJob { padding:12px; border:1px solid var(--border,#42515b); border-radius:10px; }
-#modelProgress { width:100%; margin-bottom:8px; }
-#modelError { color:var(--danger,#ed8b83); }
-#modelWarning { color:var(--warning,#d3ad6e); }
-.model-dialog [hidden] { display:none !important; }
+.origin-global-dialog.model-dialog {
+  width:min(660px,calc(100vw - 32px));max-height:calc(100dvh - 40px);
+  padding:20px!important;box-sizing:border-box;overflow:auto;font-size:13px;line-height:1.5;
+}
+.model-heading {display:flex;align-items:center;gap:12px;min-height:36px;padding-left:42px}
+.model-heading > div {flex:1;min-width:0}
+.model-dialog .model-heading h2 {margin:0;font-size:20px}
+.model-heading #modelSelection {margin:3px 0 0;color:var(--muted,#a5b6bc);font-size:12px;overflow-wrap:anywhere}
+.model-dialog #modelClose {top:20px;left:20px}
+.model-dialog #modelRefresh {padding:0;width:32px;min-width:32px;font-size:19px;background:transparent;color:var(--muted)}
+.model-dialog :is(button,select) {min-height:34px}
+.model-controls {display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0}
+.model-dialog .model-controls label {display:flex;gap:8px;align-items:center;min-width:0;margin:0}
+.model-browser-controls {display:grid;grid-template-columns:minmax(0,1fr) auto;margin:18px 0 12px}
+.model-browser-controls select {width:126px}
+.model-search-label input {width:100%;min-width:0;height:36px;box-sizing:border-box;padding:8px 10px;border:1px solid var(--line,#42515b);border-radius:8px;background:var(--panel-2,#203239);color:var(--text,#e9f0ed);font:inherit}
+.model-row {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 14px;border:1px solid var(--line,#42515b);border-radius:10px;padding:12px;margin:8px 0;align-items:start}
+.model-row-info {min-width:0}
+.model-row-info > strong {display:block;font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.model-meta {display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:4px;font-size:12px;color:var(--muted,#a5b6bc)}
+.model-suggested {font-size:11px}
+.model-fit-tight,.model-fit-too_large,.model-fit-hybrid {color:var(--warning,#d3ad6e)}
+.model-row-actions {display:flex;gap:8px;flex-wrap:wrap}
+.model-row-actions button {font-size:12px;white-space:nowrap}
+.model-details {font-size:12px;margin-top:7px}
+.model-details summary,.model-advanced > summary {cursor:pointer;color:var(--muted,#a5b6bc)}
+.model-details small {display:block;margin-top:8px;color:var(--muted,#a5b6bc);overflow-wrap:anywhere}
+.model-details .model-row-actions {margin-top:10px}
+.model-details a {display:inline-block;margin-top:8px}
+.model-advanced {font-size:12px;border-top:1px solid var(--line,#42515b);padding-top:12px;margin-top:16px}
+.model-hardware {margin:14px 0}
+.model-hardware strong,.model-hardware small {display:block;font-size:12px}
+.model-hardware small {margin-top:3px;color:var(--muted,#a5b6bc)}
+.model-advanced :is(p,.model-hint) {color:var(--muted,#a5b6bc);font-size:12px;line-height:1.6}
+.model-footer {display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.model-hint {font-size:12px;color:var(--muted,#a5b6bc);line-height:1.5}
+#modelSearchStatus {margin:8px 0}
+#modelJob {padding:10px 12px;border:1px solid var(--line,#42515b);border-radius:8px;margin:10px 0}
+#modelJobText {margin:0 0 6px;font-size:12px}
+#modelProgress {display:block;width:100%;margin-bottom:8px}
+#modelError {color:var(--danger,#ed8b83)}
+#modelWarning {color:var(--warning,#d3ad6e)}
+#modelWarning:empty,#modelError:empty,#modelSearchStatus:empty {display:none}
+.model-dialog .sr-only {position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.model-delete {color:var(--danger,#ed8b83)}
+.model-dialog [hidden] {display:none!important}
+@media(max-width:480px) {
+  .origin-global-dialog.model-dialog {width:calc(100vw - 20px);max-height:calc(100dvh - 20px);padding:16px!important}
+  .model-dialog #modelClose {top:16px;left:16px}
+  .model-row {gap:8px;padding:10px}
+  .model-browser-controls select {width:112px}
+}

@@ -3,7 +3,9 @@
 Start the web application with `./web`. In the full installation, the same top
 navigation connects the enabled areas. Standalone Quill or OriginRAG installations
 omit the suite switcher and retain their own Library, Bookshelf, **Appearance**,
-**Settings** and account controls.
+**Settings** and, on installations requiring sign-in, account controls. Local
+use without sign-in hides the account button across all enabled areas. An
+authenticated server retains it, including when accessed through an SSH tunnel.
 `/workspace` opens your preferred start page, chosen in **Settings**.
 
 - **OriginRAG**: search, ask questions and inspect study overlap.
@@ -78,6 +80,10 @@ retain a quote from the selection, not an anchor that tracks subsequent edits.
 page settings and explicit page breaks control the printed output. Pagination
 and font metrics can differ from Word, and depend on installed fonts and browser.
 
+In **Find and replace**, Enter moves to the next match and Shift+Enter to the
+previous one, keeping the search field ready for typing. Escape closes the
+search panel and returns to the document.
+
 If saving fails, keep the tab open. Retry **Save**, or use **File → Save a copy**
 after a conflict to create a separate document in Origin. **Download recovery JSON**
 preserves the current buffer even when the server cannot save it. A newer saved
@@ -144,6 +150,9 @@ If a connection or temporary server error interrupts saving, the draft stays
 in the editor. Choose **Retry saving** to resume. Quill checks for concurrent
 edits before accepting the save, including when an earlier save reached the
 server but its confirmation was lost. Conflicting edits still require review.
+Saving unchanged content keeps the existing revision and avoids rewriting the
+project database. A retried save that has already been applied behaves the same
+way; revision and conflict checks still run.
 
 Unchanged successful builds reuse a cached PDF from your own project.
 **Shift-click Recompile** requests a fresh build. A bibliography error or unresolved citation
@@ -182,7 +191,10 @@ as a new manuscript, leaving the current project unchanged.
 The thesis starter uses KOMA-Script (`scrbook`) with an independent, neutral
 Quill style: restrained sans-serif headings, a serif body, fine running-header
 rules, a spacious title page, author–year references and separate chapter files.
-Abstract, contents, figure/table lists and an appendix are included. There are
+Abstract, contents, figure/table lists, a list of abbreviations and an appendix
+are included. Edit `frontmatter/abbreviations.tex` to replace the example entries
+with your own abbreviations in alphabetical order. The list is included in the
+contents and needs no separate glossary/index build step. There are
 no logos or fixed institutional details. Edit `metadata.tex` to set the author,
 subtitle, supervisor and Bachelor or Master degree. University, department and
 second supervisor are optional and hidden when empty. It is a generic starter,
@@ -329,7 +341,9 @@ decimals such as `9.5` or `32`. There is no fixed 11–24 px preset limit. Enter
 applies the value; Escape restores the previous size. **−** and **+** adjust it
 in one-pixel steps, or halve/double values below one pixel. Zero, negative and
 invalid values leave the last valid setting intact. **Reset layout** restores
-14 px if you zoom too far.
+11 px if you zoom too far. New editor views default to 11 px unless you have
+saved another code font size in this browser. This does not change the LaTeX
+document's printed font size.
 
 The editor includes LaTeX syntax colours, line numbers, bracket matching, command
 suggestions, and separate undo history for each open file. Click a heading in
@@ -376,33 +390,134 @@ is open. Folder access and this setting last for that tab only. Closing the tab,
 losing access to the folder or a failed backup stops automatic copies. Firefox
 and Safari use ZIP downloads instead. Existing backup files are never deleted
 automatically; monitor space in the chosen folder.
+Unchanged revisions are skipped only after a successful copy to the selected
+folder. A separate ZIP download does not replace that folder backup.
 
 Only the open manuscript is included, not the shared PDF corpus, user accounts,
 shelves or private reader annotations. Treat exported ZIPs as private research
 data. A shared server still needs its own administrator-managed backup.
 
-## Check a passage
+## Ask about selected text
 
-Select a short passage in the LaTeX editor, choose **Check**, then **Check language**.
-The optional language assistant suggests spelling and grammar corrections in English
-or German. Click a suggestion's line number to find its location, then edit normally.
-It never applies changes or rewrites scientific claims. Results can be wrong or
-incomplete, and are discarded if the manuscript changes during the check.
+Select a passage in the editor, right-click and choose **Ask Quill…**, or use
+the **Ask Quill** toolbar button. The project chat opens with that passage attached
+and an empty input. Type your own request, such as a spelling correction,
+a clearer formulation, a translation or an explanation. No fixed proofreading
+mode, prewritten prompt or automatic model call is involved.
 
-The host can enable this experimental feature with `ORIGINWRITE_LANGUAGE_CHECK=1`
-before starting the web service. It uses the existing Ollama answer-model configuration
-(`ORIGINRAG_OLLAMA_ANSWER_MODEL` or `ORIGINRAG_OLLAMA_MODEL`) and configured endpoint.
-No model is downloaded automatically. Only the selected passage is sent, not the
-whole project or corpus. An alternative installed model can be selected with
-`ORIGINWRITE_LANGUAGE_MODEL` without changing the RAG model. The
-endpoint may be remote if the host configured it that way.
-There are no background checks while typing. Each explicit check is limited to
-3,000 selected UTF-16 units, source files of 250,000 characters, a 4,096-token context
-and 900 output tokens. The request timeout is 60 seconds; the model is kept warm
-for 60 seconds after use unless another request changes that setting. A busy RAG/import/check
-operation causes a retry message instead of starting a parallel check. Compiler
-errors remain in the normal compile log. This is a language aid, not a scientific
-review or a complete LaTeX parser.
+The attached passage is visible and removable. While attached, proposed changes
+are restricted to its exact position in its file, including when the same text
+occurs elsewhere. It supports selections up to 8,000 UTF-16 units. Other relevant
+project files may still be supplied as context; they cannot be changed by this
+selection-scoped request. If the passage changes before sending, select it again.
+Remove the selection chip to ask about the whole project instead.
+
+Answers stream into the chat. Suggested text appears directly at its location in
+the LaTeX editor: the original is marked and the replacement is shown underneath.
+Choose **Accept** or **Reject** there. Accepting needs no second browser confirmation.
+During generation the preview is provisional and Accept stays disabled. It is not
+part of the document, autosave, compilation or exports until accepted.
+**Stop** or closing a running chat discards unfinished previews. Completed
+suggestions remain reviewable in the editor when the chat is closed. Normal
+autosave, conflict checks and per-file Undo remain available. Generated wording,
+claims and LaTeX can be wrong.
+
+## Chat about a Quill project
+
+Inside a manuscript, choose **Project chat**. Ask about the source or request a
+rewrite, a LaTeX table or an explanation. The panel is separate from OriginRAG's
+evidence-synthesis chat. Drag its title to move it within Quill, drag either lower
+corner to resize it, or choose **↗** to open the same conversation in a separate browser window.
+Resize grips also support arrow keys. Detached windows resize using the browser's
+normal window edges.
+You can move that window onto another screen. **↙** docks it back without losing
+the conversation. A browser that blocks pop-ups leaves the docked chat usable.
+No second model or duplicate inference request is started by moving the window.
+The window stays connected to its open editor. Closing the editor or switching
+projects clears the detached window's project context and conversation; a link
+lets you reopen the original manuscript. Closing only the detached window keeps
+the conversation in the editor session, ready to reopen.
+
+Choose **+ New chat** to start another conversation about the same project.
+Click the chat name to open a compact list: switch chats, rename one with **✎**,
+or delete one with **×** and an inline confirmation. Names initially come from
+the first question. Each chat keeps its own history, selected passage, unsent
+draft and suggestions. New chats receive the current project but no other chat's
+conversation. Deleting a chat stops its reply and removes its unaccepted
+suggestions; document edits already accepted and editor Undo are untouched.
+Chat switching and deletion pause briefly while an accepted change is saved.
+
+Replies continue when you switch chats or hide the panel. The list shows
+**Running** or **New reply**. **Stop** affects only the selected chat. Only its
+suggestions appear in the editor; background chats cannot replace the current
+preview. If another accepted change or manual edit makes a proposal stale, it
+cannot be applied. Ask again using the updated draft.
+Quill admits at most two concurrent project-chat requests per web service;
+further requests receive a busy message. Ollama may process admitted requests
+in parallel or queue them according to its own configuration and available memory.
+Opening another chat never downloads or creates a second copy of the model.
+
+Write your own question or change request. The chat uses the current project and
+the workspace's selected model automatically. There are no file pickers, model
+menus or spelling-check modes in the chat. Opening it does not wait for model or
+context-list requests. Enter sends a question; Shift+Enter inserts a line break.
+Questions ask for explanations; explicit change requests can produce reviewable
+proposals. Nothing is applied automatically.
+The assistant has no terminal tools, web search or access to other projects.
+
+Context is assembled from the saved current draft for each request. Small projects
+are supplied in full. Larger projects use bounded, located source excerpts,
+prioritising the main preamble, named/current files and any attached selection.
+The model is told which text is partial and must not claim to have read omitted
+lines. Changes to unsupplied text are rejected. Large inventories and older whole
+conversation turns are bounded too; the visible transcript is kept. PDFs and
+images contribute filenames only, not their contents. Corpus PDFs and personal
+reading notes are not automatically sent. Use the normal **Library** and
+**References** tools to find papers and synchronise project bibliography keys.
+This is a writing aid, not OriginRAG's evidence-sufficiency certification.
+
+**ORIGINWRITE_CHAT_CONTEXT** sets the requested window (32,768 tokens by default,
+8,192–65,536 allowed); the byte bound intentionally leaves room for response and
+template tokens and can reject some text that a tokenizer would fit.
+
+Replies stream into the panel; code previews stay in the editor, not the chat.
+Each inline proposal has **Accept** and **Reject** controls. **Next** navigates
+between proposals in different files without applying them. Accept changes only
+that proposal, then preserves and repositions the remaining proposals. Proposals
+must match unique existing passages in their allowed scope (the attached selection,
+if present, otherwise the included file); they cannot create,
+rename or delete files. Invalid or overlapping proposals are discarded as a set.
+Numbers and citation changes receive a review warning. The project version and
+access permissions are checked before delivery and again before applying.
+Repeated text is disambiguated using the validated selection position, not a
+global search-and-replace.
+Introduced citation keys must exist in an included project bibliography.
+Typing, remote source updates or Undo invalidate stale pending previews rather
+than applying them to a changed draft. Changes use normal autosave, conflict
+handling and per-file Undo. Use the toolbar's Undo/Redo buttons or Cmd+Z on macOS
+(Ctrl+Z on Linux) in the editor. Compile through
+Quill's normal isolated compiler to check generated LaTeX; the model does not
+execute code or establish scientific correctness.
+
+Change the workspace model through Quill's normal **Models** button. Regular Qwen
+can be used; a Coder model is optional, not a guarantee of valid LaTeX. If the
+configured model is unavailable and exactly one Ollama model is installed, that
+model can be used for the request without changing the shared selection. If a
+choice is needed, the reply offers a **Models** button instead of leaving Send
+permanently disabled. Missing models are never downloaded automatically.
+Named chats stay in this project's open editor session,
+are not stored in the project or shared with collaborators, and are lost when
+the editor is closed, reloaded or switched to another project.
+Only a bounded set of recent complete messages accompanies each request. The same
+**ORIGINWRITE_LANGUAGE_CHECK=0** switch disables both writing assistants.
+
+There is no fixed number of turns and no automatic summary or compaction of old
+messages. Each request includes at most the latest eight messages (usually four
+question/answer pairs), capped at 12,000 characters in total and 4,000 per message.
+The project-context budget can reduce that further. Older messages remain visible
+in the panel but are no longer model context; repeat important instructions when
+needed. Project text is assembled afresh, independently of this conversation
+window. New chat resets the conversation, not the model installation or your files.
 
 ## Write together
 

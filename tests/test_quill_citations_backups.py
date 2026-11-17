@@ -6,6 +6,8 @@ import pytest
 from test_writing import workspace_server as workspace_server
 from test_writing_editor_integration import create_manuscript, get_project
 
+pytest.importorskip('playwright.sync_api')
+
 
 def test_citation_parser_handles_comments_nested_titles_and_multiple_keys(workspace_server):
     from playwright.sync_api import sync_playwright
@@ -135,4 +137,65 @@ def test_folder_backups_permission_and_error_handling(workspace_server):
         page.locator('#saveProjectBackup').click()
         page.wait_for_function("() => document.getElementById('backupStatus').textContent.includes('Folder access expired')")
         assert page.evaluate('backupWrites.length') == 1
+        browser.close()
+
+
+def test_zip_download_does_not_suppress_automatic_folder_backup(workspace_server):
+    from playwright.sync_api import sync_playwright
+    base, _ = workspace_server
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(accept_downloads=True)
+        project_id = create_manuscript(page, base)
+        page.evaluate(r'''async id => {
+          const {setupProjectBackup} = await import('/assets/workspace/writing-backups.mjs');
+          window.backupWrites = [];
+          window.backupSaves = 0;
+          window.backupFolder = 'First';
+          window.showDirectoryPicker = async () => {
+            const name = window.backupFolder;
+            return {name, queryPermission: async () => 'granted',
+              getFileHandle: async () => ({createWritable: async () => ({
+                write: async blob => window.backupWrites.push({name, size: blob.size}),
+                close: async () => {
+                  if (window.backupPauseClose) await new Promise(resolve => {window.backupRelease = resolve;});
+                }, abort: async () => {}})})};
+          };
+          const project = await (await fetch('/api/writing?id=' + id)).json();
+          const interval = window.setInterval;
+          window.setInterval = callback => {window.backupTick = callback; return 0;};
+          try {
+            setupProjectBackup({getProject: () => project,
+              save: async () => { window.backupSaves++; }, notify: () => {}}).open();
+          } finally { window.setInterval = interval; }
+        }''', project_id)
+        page.locator('#chooseBackupFolder').click()
+        page.locator('#autoBackup').check()
+        with page.expect_download():
+            page.get_by_role('button', name='Download backup ZIP', exact=True).click()
+        page.wait_for_function("() => document.querySelector('#backupStatus').textContent.startsWith('Backup downloaded')")
+        assert page.evaluate('backupWrites.length') == 0
+        page.evaluate('backupTick()')
+        page.wait_for_function('() => backupWrites.length === 1')
+        page.wait_for_function("() => !document.querySelector('#saveProjectBackup').disabled")
+        page.evaluate('backupTick()')
+        page.wait_for_function("() => backupSaves === 3 && !document.querySelector('#saveProjectBackup').disabled")
+        assert page.evaluate('backupWrites.length') == 1
+        page.evaluate("backupFolder = 'Second'")
+        page.locator('#chooseBackupFolder').click()
+        page.evaluate('backupTick()')
+        page.wait_for_function('() => backupWrites.length === 2')
+        assert page.evaluate('backupWrites.map(item => item.name)') == ['First', 'Second']
+        page.wait_for_function("() => !document.querySelector('#saveProjectBackup').disabled")
+        page.evaluate("backupFolder = 'Third'; backupPauseClose = true")
+        page.locator('#chooseBackupFolder').click()
+        page.locator('#saveProjectBackup').click()
+        page.wait_for_function('() => Boolean(window.backupRelease)')
+        page.evaluate("backupFolder = 'Fourth'")
+        page.locator('#chooseBackupFolder').click()
+        page.evaluate('backupPauseClose = false; backupRelease()')
+        page.wait_for_function("() => !document.querySelector('#saveProjectBackup').disabled")
+        page.evaluate('backupTick()')
+        page.wait_for_function('() => backupWrites.length === 4')
+        assert page.evaluate('backupWrites.map(item => item.name)') == ['First', 'Second', 'Third', 'Fourth']
         browser.close()

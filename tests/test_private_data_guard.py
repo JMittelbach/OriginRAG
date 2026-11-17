@@ -19,6 +19,11 @@ PRIVATE = [
     ".env", ".env.production", "config/paths.yaml", "config/preferences.local.yaml",
     "users.sqlite", "users.sqlite-wal", "users.sqlite3-shm", "private.db",
     "my-export.pdf", "my-export.PDF", "chat.json", "sessions/a.json", "exports/papers.csv", "my.bib", "private.key",
+    "nested/OriginRAG/data/metadata/local_pdf_inventory.tsv",
+    "nested/OriginRAG/data/indexes/search.bin",
+    "nested/OriginRAG/runtime/maintenance/discovery.tsv",
+    "nested/OriginRAG/bib/papers/local.txt", "nested/OriginRAG/outputs/session/result.txt",
+    "nested/OriginRAG/external/private-model/config.json",
 ]
 
 
@@ -56,6 +61,16 @@ def test_force_added_private_file_is_detected(repository, monkeypatch):
     run(repository, "add", "-f", str(path), check=True)
     monkeypatch.chdir(repository)
     assert guard.inspect_index() == {"data/metadata/papers.tsv"}
+
+
+def test_nested_force_added_catalogue_is_detected(repository, monkeypatch):
+    name = 'nested/OriginRAG/data/metadata/local_pdf_inventory.tsv'
+    path = repository / name
+    path.parent.mkdir(parents=True)
+    path.write_text('synthetic private inventory\n')
+    run(repository, 'add', '-f', name, check=True)
+    monkeypatch.chdir(repository)
+    assert guard.inspect_index() == {name}
 
 
 def test_push_checks_removed_files_in_outgoing_history(repository, monkeypatch):

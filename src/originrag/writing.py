@@ -637,6 +637,7 @@ class WritingStore:
         kind = 'collections' if action in {'create_collection', 'collection_paper', 'rename_collection'} else 'projects'
         create = action.startswith('create_')
         key = uuid.uuid4().hex if create else identifier(payload.get('id'))
+        original = None
         db = self.connect()
         try:
             with db:
@@ -673,7 +674,8 @@ class WritingStore:
                     row = db.execute('SELECT data, revision FROM documents WHERE id=? AND kind=?', (key, kind)).fetchone()
                     if not row:
                         raise KeyError('Project or collection not found.')
-                    data, revision = json.loads(row[0]), row[1]
+                    original = row[0]
+                    data, revision = json.loads(original), row[1]
                     concurrent_save = action == 'save_project' and 'base' in payload
                     if type(payload.get('revision')) is not int or (payload['revision'] != revision and not concurrent_save):
                         raise WritingConflict('Changed in another window. Export your draft before reloading.')
@@ -696,15 +698,18 @@ class WritingStore:
                         files, main = payload.get('files'), payload.get('main')
                         validate_files(files, main)
                         collection = payload.get('collection', '')
-                        self._remember_basis(db, key, revision, data)
                         if concurrent_save:
                             base = payload['base']
                             if not isinstance(base, dict) or type(base.get('revision')) is not int or base['revision'] != payload['revision']:
                                 raise ValueError('Invalid synchronisation basis.')
                             validate_files(base.get('files'), base.get('main'))
-                            expected = db.execute('SELECT digest FROM writing_bases WHERE document_id=? AND revision=?',
-                                                  (key, base['revision'])).fetchone()
-                            if not expected or expected[0] != project_basis_digest(base):
+                            if base['revision'] == revision:
+                                expected = project_basis_digest(data)
+                            else:
+                                remembered = db.execute('SELECT digest FROM writing_bases WHERE document_id=? AND revision=?',
+                                                        (key, base['revision'])).fetchone()
+                                expected = remembered[0] if remembered else None
+                            if expected != project_basis_digest(base):
                                 raise WritingConflict('The saved basis is outdated or does not match this manuscript. Keep your draft and reload the saved version.')
                             try:
                                 files = merge_files(base['files'], files, data['files'], TEXT_TYPES)
@@ -738,9 +743,15 @@ class WritingStore:
                 if kind == 'projects':
                     self._automatic_bibliography(db, key, data, catalogue)
                 encoded = json.dumps(data)
+                if original is not None and (encoded == original or data == json.loads(original)):
+                    if action == 'collection_paper':
+                        self._refresh_collection_projects(db, key, catalogue)
+                    return {**data, 'id': key, 'revision': revision}
                 used = db.execute('SELECT COALESCE(SUM(length(data)),0) FROM documents WHERE id != ?', (key,)).fetchone()[0]
                 if used + len(encoded) > 100_000_000:
                     raise ValueError('Account writing storage limit reached (100 MB).')
+                if kind == 'projects' and original is not None:
+                    self._remember_basis(db, key, revision, json.loads(original))
                 db.execute('INSERT INTO documents VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data, revision=excluded.revision, updated=excluded.updated',
                            (key, kind, encoded, revision + 1, time.time()))
                 self._remember_summary(db, key, revision + 1, data)

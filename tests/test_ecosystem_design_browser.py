@@ -117,7 +117,8 @@ def test_ecosystem_navigation_theme_focus_and_layout(design_page, theme, viewpor
         assert current_fonts == navigation_fonts, (name, current_fonts, navigation_fonts)
         expect(page.locator('#globalNavigation [aria-current="page"]')).to_have_attribute('href', route.split('?')[0])
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), name
-        for selector in ['#appearanceButton', '#globalSettings', '#globalAccount']:
+        expect(page.locator('#globalAccount')).to_be_hidden()
+        for selector in ['#appearanceButton', '#globalSettings']:
             control = page.locator(selector)
             expect(control).to_be_visible()
             box = control.bounding_box()
@@ -220,7 +221,7 @@ def test_quill_light_dialogs_preserve_readability_and_source(design_page, monkey
         capture_design(page, identifier.removeprefix('#'), 'light', {'width': 1440})
 
     def close_dialog(identifier):
-        page.locator(identifier).get_by_role('button', name='Close', exact=True).click()
+        page.locator(identifier).locator('.dialog-close').click()
         expect(page.locator(identifier)).to_have_count(0)
         assert source.inner_text() == original
         assert source.evaluate('element => { const s = getComputedStyle(element); return [s.color, s.backgroundColor, s.fontSize]; }') == original_style
@@ -242,7 +243,9 @@ def test_quill_light_dialogs_preserve_readability_and_source(design_page, monkey
     check_dialog('#templateDialog', ['h2', '.muted', '.template-card h3', '.template-card p', '.template-layout'])
     close_dialog('#templateDialog')
 
-    page.get_by_role('button', name='Language check', exact=True).click()
-    expect(page.get_by_role('button', name='Check language', exact=True)).to_be_disabled()
-    check_dialog('#languageDialog', ['h2', '.sharing-muted', '[role="status"]'])
-    close_dialog('#languageDialog')
+    page.get_by_role('button', name='Ask Quill', exact=True).click()
+    expect(page.locator('#projectChatPanel')).to_be_visible()
+    expect(page.locator('#projectChatInput')).to_have_value('')
+    expect(page.locator('#projectChatSend')).to_be_disabled()
+    page.locator('#projectChatClose').click()
+    expect(page.locator('#projectChatPanel')).to_be_hidden()

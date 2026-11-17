@@ -1,3 +1,5 @@
+import {addDialogClose} from './dialog-close.mjs';
+
 const textFiles = /\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i;
 
 function element(tag, text, className) {
@@ -96,8 +98,8 @@ export async function openSharing({api, project, changed, notice}) {
   const dialog = element('dialog', undefined, 'writing-sharing'); dialog.id = 'sharingDialog';
   dialog.setAttribute('aria-labelledby', 'sharingTitle');
   const title = element('h2', 'Share this manuscript'); title.id = 'sharingTitle';
-  const header = element('div', undefined, 'sharing-heading'), close = action('Close', () => dialog.close()); close.id = 'sharingClose';
-  header.append(title, close);
+  const header = element('div', undefined, 'sharing-heading'), close = addDialogClose(dialog, 'Close sharing', {id: 'sharingClose'});
+  header.append(title);
   const description = element('p', 'Only the people added here can open and edit this project. A copied link does not grant access.', 'sharing-muted');
   const error = element('p', '', 'sharing-error'); error.id = 'sharingError'; error.setAttribute('role', 'alert');
   const members = element('div', undefined, 'sharing-members'); members.id = 'sharingMembers';
@@ -175,7 +177,8 @@ export function openProjectCitations(project, insert) {
   collaborationStyle(); document.getElementById('projectCitations')?.remove();
   const dialog = element('dialog', undefined, 'writing-sharing'); dialog.id = 'projectCitations';
   const title = element('h2', 'Citations in this project'); title.id = 'projectCitationsTitle'; dialog.setAttribute('aria-labelledby', title.id);
-  const header = element('div', undefined, 'sharing-heading'); header.append(title, action('Close', () => dialog.close()));
+  const header = element('div', undefined, 'sharing-heading'); header.append(title);
+  addDialogClose(dialog, 'Close project citations');
   const search = element('input'); search.type = 'search'; search.placeholder = 'Filter citation keys'; search.setAttribute('aria-label', 'Filter citation keys');
   const list = element('div', undefined, 'sharing-results');
   const error = element('p', '', 'sharing-error'); error.setAttribute('role', 'alert');

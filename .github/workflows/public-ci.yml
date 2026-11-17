@@ -33,8 +33,13 @@ jobs:
         run: |
           python -m pytest -q \
             tests/test_web_models.py \
+            tests/test_model_catalog_browser.py \
+            tests/test_model_panel_browser.py \
+            tests/test_navigation_accounts.py \
+            tests/test_dialog_close_browser.py \
             tests/test_web_onboarding_browser.py \
             tests/test_workspace_recovery_browser.py \
+            tests/test_workspace_small_polish_browser.py \
             tests/test_ecosystem_design_browser.py \
             tests/test_web_reader.py \
             tests/test_reader_product_browser.py \
@@ -59,6 +64,13 @@ jobs:
             tests/test_folio_word_ribbon_browser.py \
             tests/test_folio_document_tools_browser.py \
             tests/test_writing.py \
+            tests/test_quill_citations_backups.py \
+            tests/test_writing_chat_browser.py \
+            tests/test_writing_chat_threads_browser.py \
+            tests/test_writing_chat_reset_browser.py \
+            tests/test_writing_chat_window_browser.py \
+            tests/test_writing_inline_review_browser.py \
+            tests/test_writing_language_browser.py \
             tests/test_writing_collaboration_browser.py \
             tests/test_writing_references_browser.py
       - name: Verify Folio in Firefox

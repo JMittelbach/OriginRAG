@@ -1,3 +1,5 @@
+import {addDialogClose} from '../workspace/dialog-close.mjs';
+
 const WIDTH = 960;
 const HEIGHT = 540;
 const MAX_STROKES = 300;
@@ -48,6 +50,7 @@ export function openDrawing({onInsert, onClose, initialTool = 'pen', initialColo
   const dialog = element('dialog', undefined, 'folio-drawing-dialog');
   dialog.setAttribute('aria-labelledby', 'folioDrawingTitle');
   dialog.setAttribute('aria-describedby', 'folioDrawingHelp');
+  addDialogClose(dialog, 'Close drawing', {onClose: close});
   const header = element('header', undefined, 'folio-drawing-header');
   const heading = element('h2', 'Draw');
   heading.id = 'folioDrawingTitle';

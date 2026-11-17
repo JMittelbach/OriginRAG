@@ -14,7 +14,7 @@ def private_path(name: str) -> bool:
     path = PurePosixPath(name)
     if name in SAFE:
         return False
-    if path.parts[0] in {"data", "bib", "outputs"} or LOCAL_DIRS.intersection(path.parts[:-1]):
+    if ({"data", "bib", "outputs"} | LOCAL_DIRS).intersection(path.parts[:-1]):
         return True
     base = path.name.lower()
     if base.startswith(".env") and base != ".env.example":

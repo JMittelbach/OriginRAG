@@ -46,7 +46,7 @@ class AppProfile:
         if not self.folio and (path == '/folio' or path == '/api/folio'
                                or path.startswith(('/api/folio/', '/assets/folio/'))):
             return False
-        if not self.rag and path in CHAT_ROUTES | {'/api/models'}:
+        if not self.rag and path in CHAT_ROUTES:
             return False
         if not self.write and (path == '/write' or path == '/api/writing/export'):
             return False

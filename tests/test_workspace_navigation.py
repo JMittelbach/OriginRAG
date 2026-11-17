@@ -59,7 +59,7 @@ def test_corpus_drag_navigation_and_double_delete(workspace_server):
         pw.expect(page.locator('.manuscript-row')).to_have_count(0)
         page.locator('#globalSettings').click()
         page.locator('#globalStartPage').select_option('/library')
-        page.get_by_role('button', name='Done', exact=True).click()
+        page.get_by_role('button', name='Close settings', exact=True).click()
         page.goto(base + '/workspace')
         page.wait_for_url('**/library')
         pw.expect(page.get_by_role('button', name='Working papers', exact=True)).to_be_visible()

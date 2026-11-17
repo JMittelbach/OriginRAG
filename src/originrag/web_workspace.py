@@ -1,14 +1,16 @@
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from http import HTTPStatus
+import json
 import sqlite3
+import time
 from urllib.parse import parse_qs
 
 from .writing import WritingConflict, WritingStore
 from .writing_compile import CompilerBusy, compiler_status
 from .writing_builds import compile_saved_project
 from .writing_collaboration import LOCAL_COLLABORATION, ProjectAccess
-from . import writing_language
+from . import writing_language, writing_chat, writing_chat_sources
 from .web_appearance import with_appearance
 from .web_navigation import with_navigation
 
@@ -27,13 +29,13 @@ class DeferredCatalogue:
 
 HTML = '''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Origin</title><link rel="stylesheet" href="/assets/workspace/workspace.css"><link rel="stylesheet" href="/assets/workspace/writer.css"><link rel="stylesheet" href="/assets/workspace/writer-layout.css"><link rel="stylesheet" href="/assets/workspace/writing-library.css"><style></style><link rel="stylesheet" href="/assets/workspace/workspace-enhancements.css"></head>
+<title>Origin</title><link rel="stylesheet" href="/assets/workspace/workspace.css"><link rel="stylesheet" href="/assets/workspace/writer.css"><link rel="stylesheet" href="/assets/workspace/writer-layout.css"><link rel="stylesheet" href="/assets/workspace/writing-library.css"><link rel="stylesheet" href="/assets/workspace/writing-language.css"><style></style><link rel="stylesheet" href="/assets/workspace/workspace-enhancements.css"></head>
 <body>
 <div id="notice" role="status" aria-live="polite"></div><main id="content"></main>
 <dialog id="createDialog"><form id="createForm"><h2 id="createTitle">New project</h2><label>Name<input id="newName" maxlength="120" required autocomplete="off"></label><p id="createError" role="alert"></p><div class="actions"><button type="button" id="cancelCreate">Cancel</button><button class="primary">Create</button></div></form></dialog>
 <script type="module" src="/assets/workspace/workspace.mjs"></script></body></html>'''
 HTML = with_navigation(with_appearance(HTML.replace('</head>',
-    '<link rel="stylesheet" href="/assets/workspace/library-polish.css"><link rel="stylesheet" href="/assets/workspace/reading-history.css"></head>', 1)))
+    '<link rel="stylesheet" href="/assets/workspace/library-polish.css"><link rel="stylesheet" href="/assets/workspace/reading-history.css"><link rel="stylesheet" href="/assets/workspace/writing-chat.css"></head>', 1)))
 
 
 def binary_response(handler, data, content_type, name):
@@ -55,7 +57,63 @@ def project_access(store, collaboration, user, key, *, owner_only=False):
         yield ProjectAccess(store, dict(LOCAL_COLLABORATION))
 
 
-def handle_writing(handler, path, query, owner_directory, catalogue, *, post=False, collaboration=None, user=None, language_lock=None):
+def stream_language_review(handler, store, collaboration, user, payload, selected, model_manager, project_request=None):
+    handler.send_response(HTTPStatus.OK)
+    handler.send_security_headers()
+    handler.send_header('Content-Type', 'application/x-ndjson; charset=utf-8')
+    handler.send_header('Cache-Control', 'no-store')
+    handler.send_header('X-Accel-Buffering', 'no')
+    handler.send_header('Connection', 'close')
+    handler.end_headers()
+    handler.close_connection = True
+
+    def current():
+        with project_access(store, collaboration, user, payload['id']) as access:
+            if access.store.revision(payload['id']) != payload['revision']:
+                raise WritingConflict('The manuscript changed during the check. Select the passage again.')
+
+    last_access_check = 0.0
+    def emit(event):
+        nonlocal last_access_check
+        if event['type'] in {'preview', 'edit_preview', 'done'} or (
+                event['type'] in {'answer_delta', 'edit_delta'} and time.monotonic() - last_access_check >= .5):
+            current()
+            last_access_check = time.monotonic()
+        handler.wfile.write((json.dumps(event, ensure_ascii=False) + '\n').encode())
+        handler.wfile.flush()
+
+    try:
+        emit({'type': 'started'})
+        override = None
+        if project_request is not None and payload.get('model'):
+            override = {'provider': 'ollama', 'model': payload['model'], 'mode': 'fast'}
+        elif project_request is not None and payload.get('auto_context') is True and model_manager:
+            state = model_manager().snapshot(False)
+            active = state.get('effective_selection')
+            if active and active['provider'] != 'ollama':
+                raise writing_language.LanguageUnavailable('Choose an installed Ollama model in Models to use the project assistant.')
+            if active:
+                override = {'provider': 'ollama', 'model': active['model'], 'mode': 'fast'}
+            else:
+                installed = [row for row in state['models'] if row['provider'] == 'ollama' and row['installed']]
+                if len(installed) != 1:
+                    raise writing_language.LanguageUnavailable('Choose an installed model in Models, then try again.')
+                override = {'provider': 'ollama', 'model': installed[0]['model'], 'mode': 'fast'}
+        session = (model_manager().session(override=override) if project_request is not None
+                   else model_manager().session()) if model_manager else nullcontext()
+        with session:
+            result = (writing_chat.chat(project_request, emit) if project_request is not None
+                      else writing_language.check_language_stream(*selected, emit))
+        emit({'type': 'done', **result, 'revision': payload['revision'], 'file': payload.get('file')})
+    except (KeyError, PermissionError, ValueError, OSError) as exc:
+        message = str(exc) if isinstance(exc, (writing_language.LanguageUnavailable, WritingConflict)) else 'The check could not be completed. Nothing has been changed.'
+        try:
+            emit({'type': 'error', 'error': message})
+        except OSError:
+            pass
+
+
+def handle_writing(handler, path, query, owner_directory, catalogue, *, post=False, collaboration=None, user=None, language_lock=None, chat_slots=None, model_manager=None, chunks_dir=None):
     if callable(catalogue):
         catalogue = DeferredCatalogue(catalogue)
     store = WritingStore(owner_directory)
@@ -101,6 +159,23 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                 with project_access(store, collaboration, user, key) as access:
                     result = {'id': key, 'revision': access.store.revision(key), 'collaboration': access.info}
                 handler.respond_json(result)
+            elif 'chat_library' in params:
+                key = params['chat_library'][0]
+                scope = params.get('scope', ['project'])[0]
+                if scope not in ('project', 'corpus'):
+                    raise ValueError('Choose the project library or whole corpus.')
+                with project_access(store, collaboration, user, key) as access:
+                    project = access.store.get(key)
+                    allowed = None
+                    if scope == 'project':
+                        allowed = set(access.store.get(project['collection'], 'collections')['papers']) if project.get('collection') else set()
+                    result = writing_chat_sources.search(catalogue, params.get('query', [''])[0], allowed=allowed)
+                handler.respond_json({**result, 'scope': scope})
+            elif 'chat_context' in params:
+                key = params['chat_context'][0]
+                with project_access(store, collaboration, user, key) as access:
+                    result = writing_chat.context_manifest(access.store.get(key))
+                handler.respond_json(result)
             elif 'id' in params:
                 kind = params.get('kind', ['projects'])[0]
                 if kind == 'collections':
@@ -122,7 +197,28 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                 handler.respond_json({**snapshot, 'compiler': compiler_status(), 'language_check': writing_language.enabled()})
         else:
             payload = handler.read_json_body()
-            if payload.get('action') == 'language_check':
+            if payload.get('action') == 'project_chat':
+                slots = chat_slots if chat_slots is not None else language_lock
+                if not writing_language.enabled() or slots is None:
+                    raise writing_language.LanguageUnavailable('Writing assistance is disabled on this host.')
+                with project_access(store, collaboration, user, payload.get('id')) as access:
+                    project = access.store.get(payload['id'])
+                    question = payload.get('message')
+                    if not isinstance(question, str) or not 1 <= len(question.strip()) <= 4000:
+                        raise ValueError('Ask a question using between 1 and 4,000 characters.')
+                    ids = writing_chat_sources.paper_ids(payload)
+                    sources = writing_chat_sources.prepare_sources(catalogue, ids, question, chunks_dir=chunks_dir) if ids else []
+                    prepared = writing_chat.prepare_request(project, payload, library_sources=sources)
+                if payload.get('model') is not None and (
+                        not isinstance(payload['model'], str) or len(payload['model']) > 200):
+                    raise ValueError('Choose an installed model for project chat.')
+                if not slots.acquire(blocking=False):
+                    raise WritingConflict('The model is busy with another request. Please try again shortly.')
+                try:
+                    stream_language_review(handler, store, collaboration, user, payload, None, model_manager, prepared)
+                finally:
+                    slots.release()
+            elif payload.get('action') == 'language_check':
                 if not writing_language.enabled() or language_lock is None:
                     raise writing_language.LanguageUnavailable('Language checking is not enabled on this host.')
                 key = payload.get('id')
@@ -131,7 +227,11 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                 if not language_lock.acquire(blocking=False):
                     raise WritingConflict('The model is busy with another request. Please try again shortly.')
                 try:
-                    result = writing_language.check_language(*selected)
+                    if payload.get('stream') is True:
+                        stream_language_review(handler, store, collaboration, user, payload, selected, model_manager)
+                        return
+                    with model_manager().session() if model_manager else nullcontext():
+                        result = writing_language.check_language(*selected)
                 finally:
                     language_lock.release()
                 with project_access(store, collaboration, user, key) as access:

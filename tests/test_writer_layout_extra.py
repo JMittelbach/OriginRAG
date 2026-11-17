@@ -12,7 +12,7 @@ SHELL = '''<!doctype html><html><head>
 <select id="layoutMode"><option value="split">Both</option><option value="code">Code</option><option value="pdf">PDF</option></select>
 <select id="paneDirection"><option value="side">Side</option><option value="stack">Stack</option></select>
 <button id="editorTheme">Theme</button><button id="resetLayout">Reset</button>
-<input id="codeZoom" type="number" step="any" value="14">
+<input id="codeZoom" type="number" step="any" value="11">
 <button id="codeZoomOut">Smaller</button><button id="codeZoomIn">Larger</button>
 </header><main><div class="editor-grid" id="writerGrid">
 <aside class="files" id="filesPane"><button id="hideFiles">Hide</button>Files</aside>
@@ -161,7 +161,7 @@ def test_legacy_settings_bounds_and_pointer_cancel(layout_page):
     page.wait_for_function('window.layout && window.lastResize')
     assert page.locator('#filesResize').get_attribute('aria-valuenow') == '400'
     assert page.locator('#panesResize').get_attribute('aria-valuenow') == '65'
-    assert page.locator('#codeZoom').input_value() == '14'
+    assert page.locator('#codeZoom').input_value() == '11'
     assert page.locator('#paneDirection').input_value() == 'side'
     page.locator('#filesResize').press('Home')
     assert box(page, '#filesPane')['width'] == pytest.approx(160, abs=1)
@@ -205,4 +205,22 @@ def test_free_font_sizes_below_eleven_above_twenty_four_and_decimals(layout_page
     zoom.press('Escape')
     assert zoom.input_value() == '0.5'
     page.locator('#resetLayout').click()
-    assert zoom.input_value() == '14'
+    assert zoom.input_value() == '11'
+
+
+def test_default_code_font_is_eleven_and_saved_sizes_are_respected(layout_page):
+    page = layout_page
+    zoom = page.locator('#codeZoom')
+    assert zoom.input_value() == '11'
+    assert page.locator('#source').evaluate('e => getComputedStyle(e).fontSize') == '11px'
+    assert page.evaluate('window.lastResize.fontSize') == 11
+    zoom.fill('18')
+    zoom.press('Enter')
+    page.reload()
+    page.wait_for_function('window.layout && window.lastResize')
+    assert zoom.input_value() == '18'
+    page.locator('#resetLayout').click()
+    assert zoom.input_value() == '11'
+    page.reload()
+    page.wait_for_function('window.layout && window.lastResize')
+    assert zoom.input_value() == '11'

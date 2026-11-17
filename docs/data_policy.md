@@ -50,6 +50,7 @@ would be replaced. Existing installations can enable them with
 paths even if someone used `git add -f`. The push check also examines outgoing
 commits, including files added and removed before the latest commit. CI provides
 an additional check, but CI runs after upload and is not a privacy boundary.
+Local data directories are also protected inside nested copies of a checkout.
 
 Keep custom exports inside `outputs/` and custom corpora inside `bib/` or outside
 the checkout. Arbitrarily renamed data in source directories cannot reliably be

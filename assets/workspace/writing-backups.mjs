@@ -1,3 +1,5 @@
+import {addDialogClose} from './dialog-close.mjs';
+
 function el(tag, text) {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
@@ -5,7 +7,7 @@ function el(tag, text) {
 }
 
 export function setupProjectBackup({getProject, save, notify}) {
-  let directory = null, automatic = false, busy = false, lastRevision = null;
+  let directory = null, automatic = false, busy = false, lastFolderRevision = null;
   let dialog, status, folderButton, automaticInput, saveButton;
   function message(text, error = false) {
     if (status) { status.textContent = text; status.classList.toggle('error', error); }
@@ -19,26 +21,27 @@ export function setupProjectBackup({getProject, save, notify}) {
       if (scheduled && document.hidden) return;
       await save();
       const project = getProject(), revision = project.revision;
-      if (scheduled && revision === lastRevision) return;
+      const folder = directory, backupKey = `${project.id}:${revision}`;
+      if (scheduled && backupKey === lastFolderRevision) return;
       message('Preparing a backup of your saved project…');
       const response = await fetch('/api/writing/export?id=' + encodeURIComponent(project.id) + '&revision=' + revision, {credentials: 'same-origin', signal: AbortSignal.timeout(30000)});
       if (!response.ok || !response.headers.get('content-type')?.includes('application/zip')) throw new Error('Backup could not be exported. Save your project and try again.');
       const blob = await response.blob();
       const name = (project.name || 'manuscript').replace(/[^\p{L}\p{N}_-]+/gu, '-').slice(0, 60);
       const filename = `${name}-${project.id.slice(0, 8)}-r${revision}-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
-      if (directory && !downloadOnly) {
-        if (await directory.queryPermission({mode: 'readwrite'}) !== 'granted') throw new Error('Folder access expired. Choose your backup folder again.');
-        const handle = await directory.getFileHandle(filename, {create: true});
+      if (folder && !downloadOnly) {
+        if (await folder.queryPermission({mode: 'readwrite'}) !== 'granted') throw new Error('Folder access expired. Choose your backup folder again.');
+        const handle = await folder.getFileHandle(filename, {create: true});
         const stream = await handle.createWritable();
         try { await stream.write(blob); await stream.close(); }
         catch (error) { await stream.abort().catch(() => {}); throw error; }
-        message(`Saved revision ${revision} to ${directory.name}. Dropbox sync is handled by your desktop app.`);
+        if (directory === folder) lastFolderRevision = backupKey;
+        message(`Saved revision ${revision} to ${folder.name}. Dropbox sync is handled by your desktop app.`);
       } else {
         const url = URL.createObjectURL(blob), link = el('a'); link.href = url; link.download = filename; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 30000);
         message('Backup downloaded. Move the ZIP into your Dropbox folder if you want a cloud copy.');
       }
-      lastRevision = revision;
     } catch (error) {
       automatic = false; if (automaticInput) automaticInput.checked = false;
       message('Backup failed: ' + error.message + ' Your saved manuscript is unchanged.', true);
@@ -56,7 +59,7 @@ export function setupProjectBackup({getProject, save, notify}) {
     folderButton.onclick = async () => {
       try {
         const selected = await window.showDirectoryPicker({mode: 'readwrite', id: 'quill-backups'});
-        directory = selected; lastRevision = null;
+        directory = selected; lastFolderRevision = null;
         automaticInput.disabled = false; message(`Folder selected: ${selected.name}. Choose Save backup to create a copy.`);
       } catch (error) { if (error.name !== 'AbortError') message(error.message, true); }
     };
@@ -69,8 +72,8 @@ export function setupProjectBackup({getProject, save, notify}) {
     const actions = el('div'); actions.className = 'actions';
     saveButton = el('button', 'Save backup'); saveButton.id = 'saveProjectBackup'; saveButton.onclick = () => backup();
     const download = el('button', 'Download backup ZIP'); download.onclick = () => backup(true);
-    const close = el('button', 'Close'); close.onclick = () => dialog.close();
-    actions.append(saveButton, download, close); dialog.append(title, description, scope, folderButton, label, note, status, actions);
+    addDialogClose(dialog, 'Close backups');
+    actions.append(saveButton, download); dialog.append(title, description, scope, folderButton, label, note, status, actions);
     document.body.append(dialog); dialog.showModal();
   }
   const timer = setInterval(() => { if (automatic && directory) backup(false, true); }, 300000);

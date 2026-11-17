@@ -1,4 +1,5 @@
 import { requestJSON } from "../workspace/request.mjs";
+import {addDialogClose} from '../workspace/dialog-close.mjs';
 import { createFolioEditor, safeLink, collectFolioNotes } from "./editor.mjs";
 import { icon, decorateRibbon } from './icons.mjs';
 import { openDrawing, drawingIcon } from './drawing.mjs';
@@ -835,21 +836,29 @@ function renderFind() {
   replace.placeholder = "Replace with";
   const result = el("p", "Enter text to find.", "folio-muted");
   let index = -1;
-  const next = () => {
+  const next = (direction = 1) => {
     const all = matches(find.value);
-    index = (index + 1) % Math.max(1, all.length);
-    result.textContent = all.length ? `${index + 1} of ${all.length} matches` : "No matches";
-    if (all[index]) state.editor.chain().focus().setTextSelection(all[index]).scrollIntoView().run();
+    index = index < 0 && direction < 0 ? all.length - 1 : (index + direction + all.length) % Math.max(1, all.length);
+    result.textContent = !find.value ? 'Enter text to find.' : all.length ? `${index + 1} of ${all.length} matches` : "No matches";
+    if (all[index]) {
+      const chain = state.editor.chain();
+      if (document.activeElement !== find) chain.focus();
+      chain.setTextSelection(all[index]).scrollIntoView().run();
+    }
   };
   find.oninput = () => {
     index = -1;
     const all = matches(find.value);
-    result.textContent = `${all.length} matches`;
+    result.textContent = find.value ? `${all.length} matches` : 'Enter text to find.';
   };
   find.onkeydown = (event) => {
+    if (event.isComposing) return;
     if (event.key === "Enter") {
       event.preventDefault();
-      next();
+      next(event.shiftKey ? -1 : 1);
+    } else if (event.key === 'Escape') {
+      event.preventDefault(); event.stopPropagation();
+      showSidebar(''); state.editor.commands.focus();
     }
   };
   pane.append(field("Find", find), field("Replace", replace), btn("Find next", next, "folio-button"), btn("Replace all", () => {
@@ -870,6 +879,11 @@ function dialog(title, fields, submitLabel, action, {canCancel = () => true} = {
   const controller = new AbortController();
   let committed = false;
   const d = el("dialog", void 0, "folio-dialog");
+  addDialogClose(d, 'Close ' + title, {onClose: () => {
+    if (!canCancel()) return;
+    controller.abort();
+    d.close();
+  }});
   const form = el("form");
   form.method = "dialog";
   const heading = el('h2', title);

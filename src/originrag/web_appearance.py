@@ -93,6 +93,7 @@ APPEARANCE_SCRIPT_HASH = base64.b64encode(hashlib.sha256(
 
 APPEARANCE_DIALOG = r"""
 <dialog id="appearanceDialog" class="appearance-panel" aria-labelledby="appearanceTitle" aria-describedby="appearanceDescription">
+  <form method="dialog" class="dialog-dismiss-form"><button class="dialog-close" type="submit" aria-label="Close appearance" title="Close appearance">×</button></form>
   <h2 id="appearanceTitle">Appearance</h2>
   <p id="appearanceDescription">Make this workspace yours.</p>
   <div class="appearance-fields">
@@ -123,9 +124,6 @@ APPEARANCE_DIALOG = r"""
   </div>
   <p id="appearanceNote">Artwork and colours adapt to Light or Dark mode.</p>
   <p id="appearanceStatus" role="status" aria-live="polite">Changes are saved in this browser.</p>
-  <form method="dialog" class="appearance-actions">
-    <button type="submit">Done</button>
-  </form>
 </dialog>
 """
 

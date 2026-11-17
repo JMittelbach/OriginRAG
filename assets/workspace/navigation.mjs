@@ -1,6 +1,6 @@
 import {requestJSON} from './request.mjs';
 import {getAppProfile} from './profile.mjs';
-import {openModels} from './models.mjs';
+import {openModels} from './models-launcher.mjs';
 
 const $ = id => document.getElementById(id);
 const navigation = $('globalNavigation') || $('applicationHeader');
@@ -22,12 +22,13 @@ async function loadProfile() {
   $('globalAccountDetails').textContent = 'Loading account…';
   try {
     const profile = await getAppProfile();
-    $('globalModels').hidden = !profile.features.rag;
+    $('globalModels').hidden = !profile.features.rag && !profile.features.write;
     for (const item of navigation.querySelectorAll('[data-feature]')) item.hidden = !profile.features[item.dataset.feature];
     for (const item of startPage.querySelectorAll('[data-feature]')) item.disabled = !profile.features[item.dataset.feature];
     document.querySelector('.origin-brand').href = profile.home;
     const routes = [...startPage.options].filter(option => !option.disabled).map(option => option.value);
     startPage.value = routes.includes(settings.startPage) ? settings.startPage : profile.home;
+    $('globalAccount').hidden = profile.authenticated !== true;
     $('globalAccount').textContent = profile.user?.display_name || profile.user?.username || 'Account';
     $('globalAccountDetails').textContent = profile.user ? `${profile.user.display_name || profile.user.username} (@${profile.user.username})` : 'Local workspace · no sign-in required';
     $('globalSignOut').hidden = !profile.authenticated;
@@ -48,6 +49,7 @@ for (const item of navigation.querySelectorAll('nav a')) {
 }
 $('globalSettings').onclick = () => $('globalSettingsDialog').showModal();
 $('globalModels').onclick = openModels;
+$('chatModels')?.addEventListener('click', openModels);
 $('globalAccount').onclick = () => $('globalAccountDialog').showModal();
 $('globalAccountRetry').onclick = loadProfile;
 $('globalReduceMotion').checked = Boolean(settings.reduceMotion);

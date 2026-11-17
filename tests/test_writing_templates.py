@@ -2,6 +2,7 @@ import base64
 import hashlib
 import os
 from pathlib import Path
+import unicodedata
 import zipfile
 
 import pytest
@@ -35,6 +36,9 @@ def test_complete_template_projects(template_id):
         assert 'quillthesis.sty' in files and 'scrbook' in files[main]
         assert '\\ThesisDegree' in files['metadata.tex']
         assert '\\tableofcontents' in files[main] and '\\appendix' in files[main]
+        assert 'frontmatter/abbreviations.tex' in files
+        assert '\\addchap{List of abbreviations}' in files['frontmatter/abbreviations.tex']
+        assert files[main].index('\\input{frontmatter/abbreviations}') < files[main].index('\\mainmatter')
         assert '\\newcommand{\\ThesisUniversity}{}' in files['metadata.tex']
         source = '\n'.join(value for name, value in files.items() if name.endswith(('.tex', '.sty', '.cls')))
         assert not any(term in source.lower() for term in ('hamburg', 'tuhh', 'stsreprt', 'meinInstitut'.lower(), 'signature.png'))
@@ -78,6 +82,10 @@ def test_bundled_template_compiles_offline(template_id):
     with fitz.open(stream=result['pdf'], filetype='pdf') as document:
         assert len(document) >= 1
         assert 'Introduction' in ''.join(page.get_text() for page in document)
+        if template_id == 'thesis':
+            text = unicodedata.normalize('NFKC', ''.join(page.get_text() for page in document))
+            assert 'List of abbreviations' in text and 'Digital object identifier' in text
+            assert any('List of abbreviations' in entry[1] for entry in document.get_toc())
         if template_id in ('bioinformatics', 'g3'):
             assert document[0].rect.width == pytest.approx(595, abs=4)
             assert document[0].rect.height == pytest.approx(782, abs=4)

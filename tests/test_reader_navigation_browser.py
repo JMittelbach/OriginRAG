@@ -39,9 +39,10 @@ def test_reader_shared_navigation_matches_profile_and_links_work(reader_page, pr
     for _, path in expected_links:
         assert page.request.get(base + path).status == 200
     assert page.request.get(base + brand.get_attribute('href')).status == 200
-    for selector in ('#appearanceButton', '#globalSettings', '#globalAccount'):
+    for selector in ('#appearanceButton', '#globalSettings'):
         expect(header.locator(selector)).to_have_count(1)
         expect(header.locator(selector)).to_be_visible()
+    expect(header.locator('#globalAccount')).to_be_hidden()
     for name, path in [('Library', '/library'), ('Bookshelf', '/bookshelf')]:
         header.get_by_role('link', name=name, exact=True).click()
         page.wait_for_url(base + path)
@@ -78,8 +79,9 @@ def test_reader_focus_preserves_global_header_without_a_paper_title_row(reader_p
     expect(controls).to_be_visible()
     for name in ('OriginRAG', 'Bookshelf', 'Library', 'Quill'):
         expect(header.get_by_role('link', name=name, exact=True)).to_be_visible()
-    for selector in ('#appearanceButton', '#globalSettings', '#globalAccount'):
+    for selector in ('#appearanceButton', '#globalSettings'):
         expect(header.locator(selector)).to_be_visible()
+    expect(header.locator('#globalAccount')).to_be_hidden()
     assert header.bounding_box() == pytest.approx(header_box, abs=1)
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     page.locator('#globalSettings').click()
@@ -101,7 +103,6 @@ def test_reader_shared_dialogs_do_not_trigger_pdf_shortcuts(reader_page, width, 
     for button, dialog_id in [
         ('#appearanceButton', '#appearanceDialog'),
         ('#globalSettings', '#globalSettingsDialog'),
-        ('#globalAccount', '#globalAccountDialog'),
     ]:
         page.locator(button).click()
         dialog = page.locator(dialog_id)
@@ -121,9 +122,7 @@ def test_reader_shared_dialogs_do_not_trigger_pdf_shortcuts(reader_page, width, 
             assert json.loads(page.evaluate(
                 'localStorage.getItem("origin.workspace.settings.v1")'
             ))['startPage'] == '/library'
-        else:
-            expect(page.locator('#globalAccountDetails')).to_contain_text('Local workspace')
-        dialog.get_by_role('button', name='Close' if dialog_id == '#globalAccountDialog' else 'Done', exact=True).focus()
+        dialog.locator('.dialog-close').focus()
         for key in ('ArrowRight', 'Control+f', 'f', '?'):
             page.keyboard.press(key)
         expect(page.locator('#pageNumber')).to_have_value('1')

@@ -1,50 +1,76 @@
-export function openLanguageCheck({api, save, getProject, editor, enabled, reveal}) {
-  if (document.getElementById('languageDialog')) return;
-  const selected = editor.selection();
-  const dialog = document.createElement('dialog');
-  dialog.id = 'languageDialog'; dialog.className = 'writing-sharing';
-  const element = (tag, text) => { const node = document.createElement(tag); node.textContent = text; return node; };
-  const heading = element('h2', 'Check selected prose');
-  const about = element('p', 'Spelling and grammar suggestions from the configured Ollama model. Only the selected text is sent. Nothing is changed automatically. Suggestions can be wrong; scientific claims are not checked.');
-  about.className = 'sharing-muted';
-  const status = element('p', ''); status.setAttribute('role', 'status');
-  const results = element('div', '');
-  const run = element('button', 'Check language');
-  const close = element('button', 'Close'); close.onclick = () => dialog.close();
-  const valid = /\.tex$/i.test(selected.file) && selected.to > selected.from && selected.to - selected.from <= 3000;
-  if (!enabled) status.textContent = 'Language checking is not enabled on this host.';
-  else if (!valid) status.textContent = 'Select up to 3,000 characters of LaTeX prose first, then reopen this check.';
-  else status.textContent = `${selected.text.length} characters selected. English and German are supported.`;
-  run.disabled = !enabled || !valid;
-  run.onclick = async () => {
-    run.disabled = true; results.replaceChildren();
-    status.textContent = 'Saving and checking… This may take up to a minute.';
-    const originalSource = getProject().files[selected.file];
-    try {
-      await save();
-      const snapshot = getProject();
-      if (snapshot.files[selected.file] !== originalSource) throw new Error('The selected file changed. Close this window and select the passage again.');
-      const response = await api('/api/writing', {action: 'language_check', id: snapshot.id, revision: snapshot.revision, ...selected});
-      if (!dialog.isConnected) return;
-      const current = () => getProject().revision === response.revision && getProject().files[selected.file] === originalSource;
-      if (!current()) throw new Error('The manuscript changed during the check. Close this window and select the passage again.');
-      status.textContent = response.suggestions.length ? `${response.suggestions.length} suggestion(s). Review before editing.` : 'No usable suggestions returned. This does not guarantee error-free text.';
-      if (response.filtered) status.textContent += ' Unusable suggestions were omitted.';
-      for (const suggestion of response.suggestions) {
-        const item = element('section', ''); item.className = 'sharing-person';
-        const words = element('div', '');
-        words.append(element('p', `${suggestion.original} → ${suggestion.replacement}`), element('small', suggestion.reason));
-        const jump = element('button', `Line ${suggestion.line}`);
-        jump.onclick = () => {
-          if (!current()) { status.textContent = 'These suggestions are outdated. Select the passage again.'; return; }
-          dialog.close(); reveal(selected.file, suggestion.line);
-        };
-        item.append(words, jump); results.append(item);
-      }
-    } catch (error) { if (dialog.isConnected) status.textContent = error.message; }
-    finally { if (dialog.isConnected) run.disabled = true; }
+export async function streamWritingRequest(payload, signal, onEvent, maxBytes = 256000) {
+  const headers = {'Content-Type': 'application/json'};
+  const csrf = document.cookie.split('; ').find(value => value.startsWith('pfempire_csrf='))?.split('=')[1];
+  if (csrf) headers['X-CSRF-Token'] = decodeURIComponent(csrf);
+  const response = await fetch('/api/writing', {method: 'POST', headers,
+    body: JSON.stringify({...payload, stream: true}), signal});
+  if (!response.ok || response.redirected) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.error || 'The request could not start. Check your connection and sign-in, then retry.');
+  }
+  if (!response.headers.get('content-type')?.includes('application/x-ndjson') || !response.body) {
+    throw new Error('Live writing assistance is unavailable. Update or restart the web service, then retry.');
+  }
+  const reader = response.body.getReader(), decoder = new TextDecoder('utf-8', {fatal: true});
+  let buffer = '', total = 0, completed = false, result;
+  const event = line => {
+    if (!line.trim()) return;
+    const data = JSON.parse(line);
+    if (data.type === 'error') throw new Error(data.error || 'The request was interrupted. Nothing has been changed.');
+    if (completed) throw new Error('Unexpected response after the completed request.');
+    if (data.type === 'done') { completed = true; result = data; }
+    onEvent(data);
   };
-  dialog.append(heading, about, status, results, run, close);
-  dialog.addEventListener('close', () => dialog.remove(), {once: true});
-  document.body.append(dialog); dialog.showModal();
+  try {
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) { buffer += decoder.decode(); break; }
+      total += value.length;
+      if (total > maxBytes) throw new Error('The request exceeded its response limit. Nothing has been changed.');
+      buffer += decoder.decode(value, {stream: true});
+      let end;
+      while ((end = buffer.indexOf('\n')) !== -1) { event(buffer.slice(0, end)); buffer = buffer.slice(end + 1); }
+    }
+    if (buffer.trim()) event(buffer);
+    if (!completed) throw new Error('The request was interrupted before completion. Nothing has been changed.');
+    return result;
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+
+let disposeMenu;
+
+export function setupLanguageMenu(root, {getEditor, enabled, open}) {
+  disposeMenu?.();
+  const controller = new AbortController(), options = {signal: controller.signal};
+  let menu;
+  const close = () => { menu?.remove(); menu = null; };
+  root.addEventListener('contextmenu', event => {
+    const selected = getEditor().selection();
+    if (!enabled || !/\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i.test(selected.file) || !selected.text.trim() || selected.text.length > 8000) return;
+    event.preventDefault(); close();
+    menu = document.createElement('div'); menu.className = 'language-context-menu'; menu.setAttribute('role', 'menu');
+    const action = (label, handler) => {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+      button.setAttribute('role', 'menuitem'); button.onclick = handler; menu.append(button); return button;
+    };
+    const ask = action('Ask Quill…', () => { close(); open(selected); });
+    action('Copy selected text', async () => { try { await navigator.clipboard.writeText(selected.text); } catch {} finally { close(); } });
+    action('Cancel', close);
+    document.body.append(menu);
+    menu.style.left = `${Math.max(8, Math.min(event.clientX || root.getBoundingClientRect().left, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(event.clientY || root.getBoundingClientRect().top, innerHeight - menu.offsetHeight - 8))}px`;
+    menu.addEventListener('keydown', key => {
+      const items = [...menu.querySelectorAll('button')], index = items.indexOf(document.activeElement);
+      if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(key.key)) {
+        key.preventDefault();
+        items[key.key === 'Home' ? 0 : key.key === 'End' ? items.length - 1 : (index + (key.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+      }
+    });
+    ask.focus();
+  }, options);
+  document.addEventListener('pointerdown', event => { if (menu && !menu.contains(event.target)) close(); }, options);
+  document.addEventListener('keydown', event => { if (menu && event.key === 'Escape') { event.preventDefault(); close(); getEditor().focus(); } }, options);
+  window.addEventListener('blur', close, options);
+  disposeMenu = () => { close(); controller.abort(); };
+  return disposeMenu;
 }

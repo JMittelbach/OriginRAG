@@ -30,6 +30,8 @@ def test_real_code_editor_free_font_size_does_not_change_manuscript(workspace_se
         project_id = create_manuscript(page, base, 'Readable at any size')
         original = get_project(page, project_id)
         zoom = page.locator('#codeZoom')
+        assert zoom.input_value() == '11'
+        assert page.locator('#source .cm-editor').evaluate('e => getComputedStyle(e).fontSize') == '11px'
         for size in ['8', '9.5', '32', '72', '120']:
             zoom.fill(size)
             zoom.press('Enter')

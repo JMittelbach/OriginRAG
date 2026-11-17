@@ -368,7 +368,7 @@ def test_appearance_changes_ui_colors_and_print_keeps_white_paper(folio_browser)
     def choose_theme(theme):
         page.get_by_role('button', name='Appearance', exact=True).click()
         page.locator('#appearanceMode').select_option(theme)
-        page.locator('#appearanceDialog').get_by_role('button', name='Done', exact=True).click()
+        page.locator('#appearanceDialog').get_by_role('button', name='Close appearance', exact=True).click()
         expect(page.locator('html')).to_have_attribute('data-theme', theme)
         page.evaluate('''async () => {
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));

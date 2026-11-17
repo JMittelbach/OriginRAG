@@ -29,16 +29,17 @@ STYLE = """
 
 MARKUP = """
   <dialog class="guide-dialog" id="welcomeGuide" aria-labelledby="guideTitle" aria-describedby="guideText">
+    <button type="button" id="guideSkip" class="dialog-close" aria-label="Close tour" title="Close tour">×</button>
     <div class="guide-count" id="guideCount"></div>
     <h2 id="guideTitle"></h2>
     <p id="guideText" aria-live="polite"></p>
     <div class="guide-actions">
-      <button type="button" id="guideSkip">Skip tour</button>
       <button type="button" id="guideBack">Back</button>
       <button type="button" id="guideNext">Next</button>
     </div>
   </dialog>
   <dialog class="guide-dialog" id="discoveryDialog" aria-labelledby="discoveryTitle" aria-describedby="discoveryPrivacy">
+    <button type="button" id="discoveryClose" class="dialog-close" aria-label="Close paper search" title="Close paper search">×</button>
     <h2 id="discoveryTitle">Find papers</h2>
     <p id="discoveryPrivacy">Search across disciplines. Only the search terms and filters are sent to Crossref, not your library or chats.</p>
     <form id="discoveryForm">
@@ -67,7 +68,7 @@ MARKUP = """
         <div><label for="discoveryYear">Published since</label><input id="discoveryYear" type="number" min="1800" placeholder="Any year" /></div>
         <div><label for="discoveryOrder">Sort by</label><select id="discoveryOrder"><option value="relevance">Relevance</option><option value="newest">Newest first</option></select></div>
       </div>
-      <div class="guide-actions"><button type="submit" id="discoverySearch">Search papers</button><button type="button" id="discoveryClose">Close</button></div>
+      <div class="guide-actions"><button type="submit" id="discoverySearch">Search papers</button></div>
     </form>
     <p id="discoveryStatus" role="status"></p>
     <div id="discoveryResults"></div>

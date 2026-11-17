@@ -2,11 +2,58 @@
 
 ## Choose models in the web app
 
-Open **Settings → Models & runtimes** to see downloaded and loaded models,
-select a model, download a catalogue model, or run a short speed test.
+Open **Models** in the chat header or Quill editor, or **Settings → Models & runtimes**,
+to see downloaded and loaded models, select a model, download a catalogue model,
+or run a short speed test under a model's **Details**. The compact **Overview** shows
+installed models and a small set of suggestions. Hardware, runtime, access and
+configured-default settings are under **Advanced**. Completed jobs disappear;
+active downloads and errors remain visible. Filter **Installed** or
+**Downloads** to see the full corresponding list. **Selected** means
+chosen for future replies; **Installed** means weights are present in the configured
+runtime; **Running** is reported by that runtime and includes GPU/CPU placement
+when available. A configured default without installed weights is not shown as
+active or ready. An offline runtime is reported as unknown, not proof of absence.
+Opening the panel never downloads, loads or switches a model.
+
+The panel detects RAM and supported GPU memory on the web-service host. Apple
+Silicon uses one shared memory pool, never RAM plus a separate VRAM allowance.
+Available-memory estimates are refreshed periodically. Fit labels reserve memory
+for the system and estimate a range for one 16K-context request. Architecture,
+quantisation, runtime version, other processes and context/concurrency can change
+actual requirements. Unknown GPUs and remote Ollama servers receive no GPU-fit
+guarantee; Colibri's streamed models are not assessed from download size.
+Suggestions choose from a small general-purpose and coding shortlist, favouring
+models with current memory headroom. They are candidates, not measured quality or
+speed rankings. See the [Qwen3.5](https://ollama.com/library/qwen3.5) and
+[Qwen coding](https://ollama.com/library/qwen3-coder) model information.
+
+**Catalogue** searches the public Ollama catalogue as you type; an exact
+`model:tag` or `namespace/model:tag` can also be entered. In the **Installed** view,
+typing only filters local inventory and makes no catalogue request. Online search
+sends only your search text, never documents or conversations. Results verify a
+local-weight manifest and its size; this does not certify model quality, licence,
+task suitability or compatibility with your installed Ollama version. Downloads
+still need confirmation and the same account permissions as before. A changed
+manifest for a newly discovered model requires a fresh search and confirmation.
+Network failures leave installed models accessible. Cloud-only entries are not
+offered as local downloads.
+Quill also has a **Models** button on its start page. Inside **Project chat**,
+the model selector can override the model for a single request without changing
+the shared selection.
+
+The catalogue includes the optional Ollama
+[Qwen3-Coder 30B model](https://ollama.com/library/qwen3-coder:30b), a coding-focused
+model with a download of approximately 19 GB, plus inference memory. It is not
+required for prose rewriting or for the project-chat interface. Downloading and
+using it still require an explicit choice; the existing Qwen default is retained.
 Locally, no account is required. On a shared server, every signed-in user can
 inspect, select and test installed models or restore the configured default.
-Stopping app-managed runtimes requires administrator or model-manager access.
+Stopping app-managed runtimes and deleting unused downloads require administrator
+or model-manager access. **Delete download** asks for confirmation and removes
+only model weights, never papers or manuscripts. The active/default model,
+loaded models and externally managed Colibri services are protected. Downloads
+removed this way require downloading again; deletion cannot be undone. On a
+shared Ollama instance, deletion also affects clients outside OriginRAG.
 Hosts can restrict downloads to specific accounts with
 `ORIGINRAG_MODEL_DOWNLOAD_USERS=username1,username2` in `.env`. When set,
 only these accounts may start or cancel downloads, including accounts without
@@ -18,7 +65,7 @@ Hosts may additionally allow named accounts to manage runtimes with
 administrator privileges or download permission.
 **Model selection is shared across accounts**, not a per-user preference.
 Changes apply to new OriginRAG chat requests on that host, including paper
-summaries. Quill's editing tools and terminal configuration are unchanged.
+summaries, and Quill proofreading. Terminal configuration is unchanged.
 
 The selection survives a web-service restart. **Use configured default**
 restores the existing `.env` configuration. Active requests prevent model

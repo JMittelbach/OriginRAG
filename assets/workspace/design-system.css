@@ -100,6 +100,62 @@ dialog {
 dialog::backdrop {
   background: rgb(3 9 14 / .6);
 }
+dialog:has(.dialog-close),
+[role=dialog]:has(.dialog-close) {
+  padding-block-start: 56px !important;
+}
+[role=dialog]:has(.dialog-close):not(dialog) {
+  position: relative;
+}
+button.dialog-close {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 5;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  flex: 0 0 32px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 1px solid rgb(196 70 86 / .24) !important;
+  border-radius: 8px !important;
+  background: rgb(130 30 44 / .24) !important;
+  color: #ffb0b9 !important;
+  font: 400 23px/1 var(--ui-font) !important;
+  box-shadow: none;
+  cursor: pointer;
+}
+button.dialog-close:hover:not(:disabled) {
+  background: rgb(160 36 53 / .38) !important;
+  border-color: rgb(220 100 114 / .48) !important;
+}
+button.dialog-close:focus-visible {
+  outline: 2px solid #ed8d9c;
+  outline-offset: 3px;
+}
+:root[data-theme=light] button.dialog-close {
+  background: rgb(130 30 44 / .09) !important;
+  color: #9d3443 !important;
+}
+:root[data-theme=light] button.dialog-close:hover:not(:disabled) {
+  background: rgb(130 30 44 / .16) !important;
+}
+.dialog-dismiss-form {
+  margin: 0 !important;
+}
+@media (pointer: coarse) {
+  button.dialog-close {
+    width: 36px !important;
+    min-width: 36px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+  }
+}
 .appearance-panel::backdrop {
   backdrop-filter: none;
 }

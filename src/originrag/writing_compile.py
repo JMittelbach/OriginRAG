@@ -89,12 +89,17 @@ def mac_command(work, backend=None):
     return command, selected
 
 
-def diagnostics(log):
+def diagnostics(log, files=None):
     found = []
     for line in log.splitlines():
-        match = re.search(r'(?:^|\s)([^\s:]+\.tex):(\d+):\s*(.*)', line)
+        match = re.match(r'^\s*(?:(?:error|warning|note):\s*)?([^:]+):(\d{1,9}):\s*(.*)', line, re.IGNORECASE)
         if match:
-            found.append({'file': match[1].removeprefix('./'), 'line': int(match[2]), 'message': match[3]})
+            name = match[1].strip().removeprefix('[build]/source/').removeprefix('/source/').removeprefix('./')
+            if files is not None:
+                name = next((candidate for candidate in (name, name + '.tex') if candidate in files), '')
+            elif not name.endswith(('.tex', '.sty', '.cls', '.bib', '.bst')):
+                name = ''
+            found.append({'file': name, 'line': int(match[2]) if name else 0, 'message': match[3] if name else line})
         elif line.startswith('!') or 'warning:' in line.lower() or 'error:' in line.lower():
             found.append({'file': '', 'line': 0, 'message': line})
     return found[:100]
@@ -285,7 +290,7 @@ def compile_project(project):
             success = success and pdf_bytes.startswith(b'%PDF-')
             return {'ok': bool(success), 'exit_code': process.returncode, 'revision': project['revision'], 'seconds': round(time.monotonic() - started, 2), 'queue_seconds': queue_seconds,
                     'log': (reason + '\n' + log).strip(),
-                    'diagnostics': ([{'file': '', 'line': 0, 'message': reason}] if reason else []) + diagnostics(log),
+                    'diagnostics': ([{'file': '', 'line': 0, 'message': reason}] if reason else []) + diagnostics(log, project['files']),
                     'pdf': pdf_bytes if success else b''}
     except (OSError, subprocess.SubprocessError):
         message = 'The isolated compiler could not finish safely. Your source is saved. Please retry or ask the host to check the compiler setup.'

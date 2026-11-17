@@ -214,6 +214,8 @@ def test_library_catalog_stats_counts_categories_and_availability() -> None:
 
     assert stats == {
         "total": 3,
+        "falciparum_scope_count": 0,
+        "falciparum_topics": [],
         "searchable": 2,
         "local_pdf": 2,
         "categories": [

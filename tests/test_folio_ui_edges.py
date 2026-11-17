@@ -226,7 +226,7 @@ def test_contextual_picture_controls_are_readable_in_both_themes_and_narrow_dial
         page.set_viewport_size({'width': 1280, 'height': 900})
         page.get_by_role('button', name='Appearance', exact=True).click()
         page.locator('#appearanceMode').select_option(theme)
-        page.locator('#appearanceDialog').get_by_role('button', name='Done', exact=True).click()
+        page.locator('#appearanceDialog').get_by_role('button', name='Close appearance', exact=True).click()
         expect(page.locator('html')).to_have_attribute('data-theme', theme)
         editor.locator('img').click()
         page.get_by_role('tab', name='Picture', exact=True).click()

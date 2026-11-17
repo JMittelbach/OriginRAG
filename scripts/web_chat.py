@@ -1730,6 +1730,7 @@ def build_handler(
     paper_imports = PaperImports(library_manager)
     local_import_token = secrets.token_urlsafe(32)
     corpus_lock = library_manager.corpus_lock if library_manager else threading.RLock()
+    writing_slots = threading.BoundedSemaphore(2)
     turn_jobs = TurnJobManager(
         max_concurrent_turns,
         corpus_lock=corpus_lock,
@@ -1772,7 +1773,14 @@ def build_handler(
                     self.respond_json({"error": "Use a local browser or sign in."}, status=HTTPStatus.FORBIDDEN)
                     return
                 can_manage = bool(local or model_manage_allowed(user))
-                snapshot = manager_for(REPO_ROOT).snapshot(can_manage)
+                manager = manager_for(REPO_ROOT)
+                search = parse_qs(parsed.query).get('search', [None])[0]
+                try:
+                    search_rows = manager.search(search) if search is not None else None
+                    snapshot = manager.snapshot(can_manage, search_rows=search_rows)
+                except (ValueError, OSError) as exc:
+                    self.respond_json({'error': str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                    return
                 snapshot["can_use"] = bool(local or user)
                 snapshot["can_download"] = bool(local or model_download_allowed(user))
                 snapshot["local_token"] = local_import_token if local else ""
@@ -1792,14 +1800,14 @@ def build_handler(
                 self.respond_redirect(runtime_profile.home)
                 return
             if parsed.path in {"/", "/chat"}:
-                self.respond_text(navigation_for_profile(INDEX_HTML, runtime_profile), content_type="text/html; charset=utf-8")
+                self.respond_text(navigation_for_profile(INDEX_HTML, runtime_profile, accounts_enabled=bool(auth_store)), content_type="text/html; charset=utf-8")
                 return
             if parsed.path in {'/folio', '/api/folio', '/api/folio/export'}:
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
                     self.respond_json({'error': 'Use the local browser or sign in to open your documents.'}, status=HTTPStatus.FORBIDDEN)
                     return
                 if parsed.path == '/folio':
-                    self.respond_text(navigation_for_profile(FOLIO_HTML, runtime_profile), content_type='text/html; charset=utf-8')
+                    self.respond_text(navigation_for_profile(FOLIO_HTML, runtime_profile, accounts_enabled=bool(auth_store)), content_type='text/html; charset=utf-8')
                 else:
                     handle_folio(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir)
                 return
@@ -1808,7 +1816,7 @@ def build_handler(
                     self.respond_json({"error": "Use the local browser or sign in to open your workspace."}, status=HTTPStatus.FORBIDDEN)
                     return
                 if parsed.path in WORKSPACE_PAGES:
-                    self.respond_text(navigation_for_profile(WORKSPACE_HTML, runtime_profile), content_type="text/html; charset=utf-8")
+                    self.respond_text(navigation_for_profile(WORKSPACE_HTML, runtime_profile, accounts_enabled=bool(auth_store)), content_type="text/html; charset=utf-8")
                 else:
                     if not runtime_profile.write:
                         self.handle_collection_request(parsed, current_app)
@@ -1821,7 +1829,7 @@ def build_handler(
                     self.respond_json({"error": "Use the local browser or sign in to read papers."}, status=HTTPStatus.FORBIDDEN)
                     return
                 if parsed.path == "/reader":
-                    self.respond_text(navigation_for_profile(READER_HTML, runtime_profile), content_type="text/html; charset=utf-8")
+                    self.respond_text(navigation_for_profile(READER_HTML, runtime_profile, accounts_enabled=bool(auth_store)), content_type="text/html; charset=utf-8")
                     return
                 try:
                     notebook = parsed.path == "/api/reader/notebook"
@@ -2105,7 +2113,8 @@ def build_handler(
                     self.handle_collection_request(parsed, current_app, post=True)
                     return
                 handle_writing(self, parsed.path, parsed.query, REPO_ROOT / current_app.out_dir, library_catalog, post=True,
-                               collaboration=writing_collaboration, user=user, language_lock=corpus_lock)
+                               collaboration=writing_collaboration, user=user, language_lock=corpus_lock, chat_slots=writing_slots,
+                               model_manager=lambda: manager_for(REPO_ROOT), chunks_dir=REPO_ROOT / 'data/chunks')
                 return
             if parsed.path == "/api/job/cancel":
                 if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
@@ -5689,6 +5698,9 @@ INDEX_HTML = r"""<!doctype html>
     .header-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
     .header-actions {
       display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      min-width: 0;
       align-items: center;
       gap: 10px;
     }
@@ -6731,6 +6743,7 @@ INDEX_HTML = r"""<!doctype html>
           <button class="mobile-sidebar-toggle" id="sidebarToggle" type="button" title="Show sidebar" aria-label="Show sidebar" aria-controls="sidebar" aria-expanded="false">☰</button>
         </div>
         <div class="header-actions">
+          <button class="header-button" id="chatModels" type="button" aria-haspopup="dialog" aria-controls="modelDialog" title="Installed models, downloads and active model">Models</button>
           <button class="header-button" id="appearanceButton" type="button" aria-haspopup="dialog" aria-controls="appearanceDialog" aria-expanded="false">Appearance</button>
           <button class="header-button about-button" id="aboutButton" type="button" title="About OriginRAG" aria-label="About OriginRAG" aria-controls="aboutBackdrop" aria-expanded="false">?</button>
           <span class="connection-indicator" id="connectionIndicator" title="Offline" aria-label="Offline"><span class="connection-dot"></span></span>
@@ -6798,7 +6811,7 @@ INDEX_HTML = r"""<!doctype html>
       <p>Multiple papers may use the same study or dataset, so they are not automatically counted as independent evidence.</p>
       <p><strong>Independent studies: ?</strong> means that study overlap has not yet been sufficiently reviewed.</p>
       <p>Always check the cited paper before using extracted details in a publication.</p>
-      <div class="about-actions"><button id="aboutClose" type="button">Close</button></div>
+      <div class="about-actions"><button id="aboutClose" class="dialog-close" type="button" aria-label="Close about" title="Close about">×</button></div>
     </div>
   </div>
   <div class="profile-backdrop" id="profileBackdrop" aria-hidden="true">
@@ -6807,7 +6820,7 @@ INDEX_HTML = r"""<!doctype html>
       <p>Optional: choose Qwen's tone, length, or level of detail. Evidence, citation, and safety rules are unchanged.</p>
       <textarea id="profileText" placeholder="Example: Keep answers concise, use simple language, focus on mechanisms and concrete next analyses."></textarea>
       <div class="profile-actions">
-        <button id="profileClose" type="button">Cancel</button>
+        <button id="profileClose" class="dialog-close" type="button" aria-label="Close response profile" title="Close response profile">×</button>
         <button id="profileSave" type="button">Save profile</button>
       </div>
     </div>
@@ -6826,7 +6839,7 @@ INDEX_HTML = r"""<!doctype html>
         <input id="paperDoi" type="text" placeholder="10.xxxx/xxxxx" autocomplete="off" />
       </div>
       <div class="paper-upload-list" id="paperUploadList" aria-live="polite"></div>
-      <div class="paper-upload-actions"><button id="paperUploadClose" type="button">Close</button></div>
+      <button id="paperUploadClose" class="dialog-close" type="button" aria-label="Close paper upload" title="Close paper upload">×</button>
     </div>
   </div>
   <div class="library-browser-backdrop" id="libraryBrowserBackdrop" aria-hidden="true">
@@ -6835,7 +6848,7 @@ INDEX_HTML = r"""<!doctype html>
         <div>
           <h2 id="libraryBrowserTitle">Library</h2>
         </div>
-        <button id="libraryBrowserClose" type="button" aria-label="Close library">Close</button>
+        <button id="libraryBrowserClose" class="dialog-close" type="button" aria-label="Close library" title="Close library">×</button>
       </div>
       <label class="sr-only" for="librarySearch">Search the bibliography</label>
       <input class="library-search" id="librarySearch" type="search" placeholder="Search author, title, journal, year, or DOI…" autocomplete="off" />
@@ -6858,7 +6871,7 @@ INDEX_HTML = r"""<!doctype html>
       <div class="queue-detail-list" id="queueDetailList" aria-live="polite"></div>
       <div class="queue-actions">
         <button id="queueRefresh" type="button">Refresh</button>
-        <button id="queueClose" type="button">Close</button>
+        <button id="queueClose" class="dialog-close" type="button" aria-label="Close queue" title="Close queue">×</button>
       </div>
     </div>
   </div>
@@ -6867,9 +6880,7 @@ INDEX_HTML = r"""<!doctype html>
       <h2 id="studyAuditTitle">Study overlap details</h2>
       <p class="study-audit-intro">Shows the automatic study-overlap check for this result.</p>
       <div class="study-audit-result" id="studyAuditResult"></div>
-      <div class="study-audit-close-row">
-        <button id="studyAuditClose" type="button">Close</button>
-      </div>
+      <button id="studyAuditClose" class="dialog-close" type="button" aria-label="Close study overlap details" title="Close study overlap details">×</button>
     </div>
   </div>
   <script>
@@ -8366,7 +8377,7 @@ INDEX_HTML = r"""<!doctype html>
         pendingSubmission.remove();
         setSubmitting(false);
         if (queueSummary.textContent === "Submitting question") queueSummary.textContent = "Queue idle";
-        message.focus();
+        if (submittedSession === currentSessionDir && [message, send, document.body].includes(document.activeElement)) message.focus();
         if (sessionReconcilePending) scheduleVisibleSessionReconciliation();
       }
     });

@@ -3,13 +3,16 @@ import {openReferences} from './writing-references.mjs';
 import {createPDFPreview} from './pdf-preview.mjs';
 import {openLibraryImport} from './library-import.mjs';
 import {collaborationStyle, snapshotProject, rebaseDraft, openSharing, openProjectCitations} from './writing-collaboration.mjs';
-import {openLanguageCheck} from './writing-language.mjs';
+import {setupLanguageMenu} from './writing-language.mjs';
+import {setupProjectChat} from './writing-chat.mjs';
+import {openModels} from './models-launcher.mjs';
 import {setupProjectBackup} from './writing-backups.mjs';
 import {prepareProjectUploads} from './project-uploads.mjs';
 import {uploadCollectionPDFs} from './collection-drop.mjs';
 import {requestJSON} from './request.mjs';
 import {getAppProfile} from './profile.mjs';
 import {readingNavigation, renderReadingHistory} from './reading-history.mjs';
+import {addDialogClose} from './dialog-close.mjs';
 
 const $ = id => document.getElementById(id);
 const content = $('content');
@@ -57,6 +60,7 @@ function askName(title, action) {
   dialog.showModal(); $('newName').focus();
 }
 $('cancelCreate').onclick = () => $('createDialog').close();
+addDialogClose($('createDialog'), 'Close new project', {id: 'createClose'});
 for (const a of document.querySelectorAll('nav a')) a.classList.toggle('active', a.pathname === mode);
 
 function home() {
@@ -252,6 +256,7 @@ async function projects() {
   const h = node('div', undefined, 'write-heading'), title = node('div'), actions = node('div', undefined, 'desk-actions');
   title.append(node('p', 'YOUR WRITING DESK', 'eyebrow'), node('h1', 'Quill'), node('p', 'Your manuscripts, templates and personal libraries.', 'muted'));
   actions.append(button('+ New manuscript', () => newManuscript(), 'primary')); h.append(title, actions); content.append(h);
+  const models = button('Models', openModels); models.id = 'quillHomeModels'; actions.prepend(models);
   const upload = node('input'); upload.type = 'file'; upload.accept = '.zip'; upload.hidden = true; content.append(upload);
   actions.append(button('Import LaTeX ZIP', () => upload.click()));
   upload.onchange = async () => {
@@ -518,6 +523,8 @@ async function editor(id) {
       <a href="/write" class="button back-projects" title="Back to projects">← Projects</a>
       <div class="project-heading"><h1><span id="projectTitle"></span><span id="projectShared" class="sharing-badge" hidden>Shared</span></h1><span id="savedState" role="status">All changes saved</span><span id="syncState" role="status"></span><span id="bibliographyState" role="status"></span></div>
       <div class="writer-actions">
+        <button id="projectChat" title="Chat about this manuscript and review proposed edits" aria-controls="projectChatPanel" aria-expanded="false">Project chat</button>
+        <button id="quillModels" title="Choose the model for writing assistance">Models</button>
         <button id="shareProject">Share</button>
         <a id="exportZip" class="button">Download LaTeX ZIP</a>
         <button id="referenceButton" title="Personal library, citations and bibliography">References</button>
@@ -554,9 +561,9 @@ async function editor(id) {
           <button data-edit-command="bold" title="Bold selection" aria-label="Bold selection"><b>B</b></button><button data-edit-command="italic" title="Italic selection" aria-label="Italic selection"><i>I</i></button><button data-edit-command="comment" title="Toggle comment (Ctrl/Cmd+/)" aria-label="Toggle comment">%</button>
           <button data-edit-command="search" class="search-code" title="Find and replace (Ctrl/Cmd+F)" aria-label="Find and replace">⌕ <span>Find</span></button>
           <button id="insertCitation" title="Insert a citation from your library" aria-label="Insert citation">Cite</button>
-          <button id="languageCheck" title="Check spelling and grammar in selected prose" aria-label="Language check">Check</button>
+          <button id="languageCheck" title="Ask Quill about your selected text" aria-label="Ask Quill">Ask Quill</button>
           <span class="code-zoom"><button id="codeZoomOut" title="Smaller code" aria-label="Decrease code zoom">−</button>
-          <label class="code-zoom-value"><input id="codeZoom" type="number" inputmode="decimal" step="any" value="14" aria-label="Code font size" title="Any positive font size in pixels. Enter to apply; Escape to cancel."><span aria-hidden="true">px</span></label>
+          <label class="code-zoom-value"><input id="codeZoom" type="number" inputmode="decimal" step="any" value="11" aria-label="Code font size" title="Any positive font size in pixels. Enter to apply; Escape to cancel."><span aria-hidden="true">px</span></label>
           <button id="codeZoomIn" title="Larger code" aria-label="Increase code zoom">+</button></span>
           <button id="compileCode" title="Recompile (Ctrl/Cmd+Enter)" aria-label="Recompile manuscript">▶</button>
         </div>
@@ -628,9 +635,14 @@ async function editor(id) {
   }).catch(e => notice(e.message, true)); };
   $('referenceButton').onclick = $('insertCitation').onclick = $('updateBibliography').onclick = $('reviewBibliography').onclick = references;
   $('languageCheck').hidden = !state.language_check;
-  $('languageCheck').onclick = () => openLanguageCheck({api, save, getProject: () => project,
-    editor: sourceEditor, enabled: state.language_check,
+  $('quillModels').onclick = openModels;
+  const projectChat = setupProjectChat({api, save, getProject: () => project, getEditor: () => sourceEditor,
+    enabled: state.language_check, openModels, notify: notice,
     reveal: (file, line) => { selectFile(file); writerLayout.showCode(); sourceEditor.jump(line); }});
+  $('projectChat').onclick = projectChat.open;
+  $('languageCheck').onclick = () => projectChat.open({selection: sourceEditor.selection()});
+  setupLanguageMenu($('source'), {getEditor: () => sourceEditor, enabled: state.language_check,
+    open: selected => projectChat.open({selection: selected})});
   $('templateButton').onclick = () => openTemplateGallery(state.templates, item => newManuscript(item, project.collection));
   $('draft').onclick = () => download(JSON.stringify({name: project.name, main: project.main, files: project.files}, null, 2), 'quill-draft.json', 'application/json');
   const backup = setupProjectBackup({getProject: () => project, save: async () => { await save(); await synchronizeProject(true); await save(); }, notify: notice});

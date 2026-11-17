@@ -116,7 +116,7 @@ def test_authenticated_language_check_owner_editor_revision_and_revocation(works
         return result
     monkeypatch.setattr(language, 'check_language', revoke)
     call('POST', who='bob', payload=payload(p), status=404)
-    monkeypatch.delenv('ORIGINWRITE_LANGUAGE_CHECK')
+    monkeypatch.setenv('ORIGINWRITE_LANGUAGE_CHECK', '0')
     call('POST', payload=payload(p), status=503)
 
 
