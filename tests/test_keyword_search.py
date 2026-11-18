@@ -5,9 +5,11 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from originrag.retrieval.keyword import (
     _make_snippet,
-    _normalize_with_offsets,
+    _source_offset,
     infer_query_category_boosts,
     iter_chunk_records,
     normalize_text,
@@ -20,13 +22,31 @@ from originrag.retrieval.metadata import load_paper_metadata
 
 def test_linear_snippet_normalization_matches_retrieval_normalization() -> None:
     text = "  CIDRα1–EPCR, β-chain; ﬁnal ﬂow; cérébral!  "
-    normalized, offsets = _normalize_with_offsets(text)
-
-    assert normalized == normalize_text(text)
+    normalized = normalize_text(text)
+    offsets = [_source_offset(text, i) for i in range(len(normalized))]
     assert "cerebral" in normalized
-    assert len(offsets) == len(normalized)
     assert text[offsets[normalized.index("cidralpha1")]] == "C"
     assert text[offsets[normalized.index("cerebral")]] == "c"
+
+
+@pytest.mark.parametrize(("raw", "normalized", "offsets"), [
+    (" Ab--CD!", "ab cd", [1, 2, 3, 5, 6]),
+    ("e\u0301X", "ex", [0, 2]),
+    ("re\u00adcheck", "recheck", [0, 1, 3, 4, 5, 6, 7]),
+    ("β—ﬁ", "beta fi", [0, 0, 0, 0, 1, 2, 2]),
+    ("A½B", "a1 2b", [0, 1, 1, 1, 2]),
+    ("x😀\tY", "x y", [0, 1, 3]),
+])
+def test_snippet_positions_in_original_pdf_text(raw, normalized, offsets):
+    assert normalize_text(raw) == normalized
+    assert [_source_offset(raw, i) for i in range(len(normalized))] == offsets
+
+
+def test_snippet_finds_word_split_by_invisible_pdf_hyphen():
+    text = "Background notes. " * 60 + "The micro\u00adsensor measured the sample."
+    snippet = _make_snippet("microsensor", ["microsensor"], text, window=60)
+    assert snippet.startswith("...")
+    assert "micro\u00adsensor measured" in snippet
 
 
 def test_snippet_starts_near_normalized_greek_match() -> None:
@@ -407,6 +427,23 @@ def test_query_category_boost_prefers_sex_difference_papers(tmp_path: Path) -> N
 
     assert results[0]["paper_id"] == "SEX"
     assert results[0]["category_boost"] > 0
+
+
+@pytest.mark.parametrize("multi", [False, True])
+def test_category_alone_cannot_turn_unrelated_passage_into_evidence(tmp_path, multi):
+    rows = [
+        {"chunk_id": "A1", "paper_id": "A", "text": "Electrical resistance in thin films. " * 15},
+        {"chunk_id": "B1", "paper_id": "B", "text": "Independent samples were collected at noon. " * 15},
+    ]
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    (chunks / "sample.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tcategory\nA\tThin films\tother\nB\tSampling\tresistance_dx\n")
+    query = "electrical resistance"
+    results = (search_chunks_multi([("main", query)], chunks, papers) if multi
+               else search_chunks(query, chunks, papers))
+    assert [row["paper_id"] for row in results] == ["A"]
 
 
 def test_source_lookup_boost_prefers_matching_sample_size_context(tmp_path: Path) -> None:

@@ -194,7 +194,8 @@ def search_chunks(
         ):
             continue
 
-        raw_score = _score_text(normalized_query, query_terms, text)
+        normalized_text = normalize_text(text)
+        raw_score = _score_normalized_text(normalized_query, query_terms, normalized_text, raw_text=text)
         metadata_score = _metadata_match_score(
             normalized_query,
             query_terms,
@@ -206,8 +207,10 @@ def search_chunks(
         if preferred_sections:
             section_weight *= 1.12 if section in preferred_sections else 0.94
         quality_penalty = float(quality["quality_penalty"])
+        source_boost = _source_lookup_boost(normalized_query, normalized_text, paper_meta)
+        if not (raw_score or source_boost):
+            continue
         category_boost = _category_boost(paper_meta, category_boosts)
-        source_boost = _source_lookup_boost(query, text, paper_meta)
         score = max(
             0.0,
             (raw_score * section_weight)
@@ -360,8 +363,10 @@ def search_chunks_multi(
                 section,
                 raw_score,
             )
+            source_boost = _source_lookup_boost(plan["normalized_query"], normalized_text, paper_meta)
+            if not (raw_score or source_boost):
+                continue
             category_boost = _category_boost(paper_meta, plan["category_boosts"])
-            source_boost = _source_lookup_boost(plan["query"], text, paper_meta)
             score = max(
                 0.0,
                 (raw_score * section_weight)
@@ -533,29 +538,25 @@ def _cached_chunk_file_records(
     return tuple(records)
 
 
+_REPLACEMENTS = {
+    "α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta",
+    "–": "-", "—": "-", "\u00ad": "", "\ufb01": "fi", "\ufb02": "fl",
+}
+_NON_ASCII = re.compile(r"[^\x00-\x7f]+")
+_NON_WORD = re.compile(r"[^a-z0-9]+")
+
+
+def _drop_marks(match: re.Match[str]) -> str:
+    return "".join(c for c in match[0] if not unicodedata.combining(c))
+
+
 def normalize_text(value: str) -> str:
     value = (value or "").lower()
     if not value.isascii():
-        replacements = {
-            "α": "alpha",
-            "β": "beta",
-            "γ": "gamma",
-            "δ": "delta",
-            "–": "-",
-            "—": "-",
-            "\u00ad": "",
-            "\ufb01": "fi",
-            "\ufb02": "fl",
-        }
-        for source, target in replacements.items():
+        for source, target in _REPLACEMENTS.items():
             value = value.replace(source, target)
-        value = "".join(
-            character
-            for character in unicodedata.normalize("NFKD", value)
-            if not unicodedata.combining(character)
-        )
-    value = re.sub(r"[^a-z0-9]+", " ", value)
-    return re.sub(r"\s+", " ", value).strip()
+        value = _NON_ASCII.sub(_drop_marks, unicodedata.normalize("NFKD", value))
+    return _NON_WORD.sub(" ", value).strip()
 
 
 @lru_cache(maxsize=512)
@@ -783,12 +784,10 @@ def infer_query_category_boosts(query: str) -> dict[str, float]:
     return boosts
 
 
-def _source_lookup_boost(query: str, text: str, metadata: dict[str, str]) -> float:
-    normalized_query = normalize_text(query)
+def _source_lookup_boost(normalized_query: str, normalized_text: str, metadata: dict[str, str]) -> float:
     if not _looks_like_source_lookup(normalized_query):
         return 0.0
 
-    normalized_text = normalize_text(text)
     metadata_text = normalize_text(
         " ".join(
             str(metadata.get(field) or "")
@@ -1105,7 +1104,7 @@ def _content_term_set(text: str) -> set[str]:
 
 
 def _make_snippet(normalized_query: str, terms: list[str], text: str, window: int = 260) -> str:
-    normalized_text, normalized_to_original = _normalize_with_offsets(text)
+    normalized_text = normalize_text(text)
     normalized_index = normalized_text.find(normalized_query)
     if normalized_index < 0:
         term_positions = [
@@ -1115,7 +1114,7 @@ def _make_snippet(normalized_query: str, terms: list[str], text: str, window: in
         ]
         normalized_index = min((position for position, _ in term_positions), default=0)
 
-    original_index = normalized_to_original[min(normalized_index, len(normalized_to_original) - 1)] if normalized_to_original else 0
+    original_index = _source_offset(text, normalized_index) if normalized_text else 0
     start = max(0, original_index - window // 2)
     end = min(len(text), original_index + window)
     snippet = _clean_preview(text[start:end], limit=window + 80)
@@ -1126,46 +1125,49 @@ def _make_snippet(normalized_query: str, terms: list[str], text: str, window: in
     return snippet
 
 
-def _normalize_with_offsets(text: str) -> tuple[str, list[int]]:
-    """Normalize text and retain source offsets in one linear pass."""
-    replacements = {
-        "α": "alpha",
-        "β": "beta",
-        "γ": "gamma",
-        "δ": "delta",
-        "\u00ad": "",
-        "\ufb01": "fi",
-        "\ufb02": "fl",
-    }
-    normalized_chars: list[str] = []
-    offsets: list[int] = []
-    previous_was_space = True
-    for index, char in enumerate(text):
+_SOURCE_RUN = re.compile(r"([A-Za-z0-9]+)|.", re.DOTALL)
+
+
+def _source_offset(text: str, target: int) -> int:
+    """Map one position in normalize_text(text) back to the source, without an offset array."""
+    pos = 0
+    separator = None
+    for run in _SOURCE_RUN.finditer(text):
+        start = run.start()
+        if run[1] is not None:
+            if separator is not None and pos:
+                if target == pos:
+                    return separator
+                pos += 1
+            separator = None
+            length = run.end() - start
+            if target < pos + length:
+                return start + target - pos
+            pos += length
+            continue
+        char = run[0]
+        if char.isascii():
+            if separator is None:
+                separator = start
+            continue
         lowered = char.lower()
-        fragment = replacements.get(lowered, lowered)
-        fragment = "".join(
-            value
-            for value in unicodedata.normalize("NFKD", fragment)
-            if not unicodedata.combining(value)
-        )
-        normalized = "".join(
-            value
-            for value in fragment
-            if "a" <= value <= "z" or "0" <= value <= "9"
-        )
-        if normalized:
-            for value in normalized:
-                normalized_chars.append(value)
-                offsets.append(index)
-            previous_was_space = False
-        elif not previous_was_space:
-            normalized_chars.append(" ")
-            offsets.append(index)
-            previous_was_space = True
-    if normalized_chars and normalized_chars[-1] == " ":
-        normalized_chars.pop()
-        offsets.pop()
-    return "".join(normalized_chars), offsets
+        fragment = unicodedata.normalize("NFKD", _REPLACEMENTS.get(lowered, lowered))
+        for value in fragment:
+            if unicodedata.combining(value):
+                continue
+            if not ("a" <= value <= "z" or "0" <= value <= "9"):
+                if separator is None:
+                    separator = start
+                continue
+            if separator is not None and pos:
+                if target == pos:
+                    return separator
+                pos += 1
+            separator = None
+            if target == pos:
+                return start
+            pos += 1
+    return 0
 
 
 def _clean_preview(text: str, limit: int = 300) -> str:

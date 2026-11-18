@@ -4,9 +4,6 @@ from dataclasses import dataclass
 import json
 import re
 
-from originrag.retrieval.quick_list import paper_list_request
-
-
 VALID_CHAT_TASKS = {"auto", "answer", "gaps", "hypothesis", "sources"}
 
 FOLLOWUP_STARTS = (
@@ -184,6 +181,8 @@ def resolve_chat_task(
         raise ValueError(f"Unsupported chat task: {configured_task}")
     if task != "auto":
         return task
+
+    from originrag.retrieval.quick_list import paper_list_request
 
     lowered = question.lower()
     # The deliverable takes precedence over topic words such as "gap junctions".

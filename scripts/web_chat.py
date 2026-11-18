@@ -44,7 +44,6 @@ from originrag.model_runtime import manager_for, model_download_allowed, model_m
 from originrag.library_topics import assign_library_topics  # noqa: E402
 from originrag.library_presence import presence_answer, presence_language  # noqa: E402
 from originrag.analysis.chat_commands import controls, reading_selection, ReadingSelection  # noqa: E402
-from originrag.retrieval.quick_list import PaperList, indexed_list_ids, more_list_request, paper_list_request  # noqa: E402
 from originrag.personal_shelf import PersonalShelf  # noqa: E402
 from originrag.reading_history import ReadingHistory, reading_query  # noqa: E402
 from originrag.reader_notes import ReaderNotes, NoteConflict, document_key, notebook_paper_key, validate_notebook  # noqa: E402
@@ -313,6 +312,8 @@ class WebChatApp:
                 target_session,
                 infer_session_title(clean_message, resolved_task),
             )
+            from originrag.retrieval.quick_list import more_list_request, paper_list_request
+
             language = presence_language(clean_message)
             listing = paper_list_request(clean_message) if resolved_task == "sources" else None
             selection = reading_selection(clean_message)
@@ -1647,6 +1648,8 @@ def list_scope(settings):
 
 
 def resume_quick_list(more, saved_turns, settings):
+    from originrag.retrieval.quick_list import PaperList
+
     lang, count = more
     request = None
     seen = set()
@@ -1680,6 +1683,8 @@ def quick_paper_list(request, catalogue, settings, *, seen_ids=frozenset()):
     de = request.language == "de"
     scope = "Katalog" if de else "catalogue"
     if request.topic and len(rows) < request.limit:
+        from originrag.retrieval.quick_list import indexed_list_ids
+
         available = {p["paper_id"]: p for p in catalogue if p["searchable"] and p["paper_id"] not in ids}
         ranked = indexed_list_ids(request, REPO_ROOT / settings.retrieval_index, REPO_ROOT / settings.chunks_dir,
                                   REPO_ROOT / settings.papers, eligible=available, limit=request.limit - len(rows)) if available else None
