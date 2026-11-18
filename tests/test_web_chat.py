@@ -123,6 +123,35 @@ def synthetic_library(synthetic_library_resources, monkeypatch: pytest.MonkeyPat
     return catalogue
 
 
+@pytest.mark.parametrize("message,chunk_text,expected", [
+    ("Siehst du das Paper in meinem Korpus?", '{"text":"test"}\n', "Der Volltext ist durchsuchbar."),
+    ("Kannst du mein Paper sehen?", None, "noch nicht durchsuchbar"),
+    ("Can you see the paper I uploaded?", "", "not searchable yet"),
+])
+def test_chat_sees_single_paper_without_model(tmp_path, monkeypatch, message, chunk_text, expected):
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\nONLY\tSensor calibration\n", encoding="utf-8")
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    if chunk_text is not None:
+        (chunks / "ONLY.jsonl").write_text(chunk_text, encoding="utf-8")
+    monkeypatch.setattr(web_chat, "manager_for", lambda *a: pytest.fail("Catalogue status invoked model"))
+    app = WebChatApp(WebChatSettings(papers=str(papers), chunks_dir=str(chunks)), str(tmp_path / "sessions"))
+    result = app.run_turn(message, {})
+    assert result["task"] == "library_status"
+    assert "Sensor calibration" in result["answer"] and expected in result["answer"]
+    assert read_session_turns(app.session_dir)[0]["task"] == "library_status"
+
+
+def test_chat_presence_distinguishes_empty_and_ambiguous_catalogues():
+    assert "noch kein Paper" in web_chat.presence_answer([], "de")
+    answer = web_chat.presence_answer([{"searchable": True}, {"searchable": False}], "en")
+    assert "2 papers" in answer and "for 1" in answer and "Which title" in answer
+    for question in ("Can you see the paper on sensor calibration?", "Siehst du das Paper anders?",
+                     "Siehst du im Paper einen Unterschied?", "What does my paper conclude?"):
+        assert web_chat.presence_language(question) is None
+
+
 @pytest.mark.parametrize('failure', [BrokenPipeError, ConnectionResetError])
 @pytest.mark.parametrize('during_headers', [False, True])
 def test_disconnected_json_response_does_not_report_a_storage_failure(tmp_path, failure, during_headers):

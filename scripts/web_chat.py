@@ -42,6 +42,7 @@ from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env 
 from originrag.web_local_access import local_browser_request  # noqa: E402
 from originrag.model_runtime import manager_for, model_download_allowed, model_manage_allowed  # noqa: E402
 from originrag.library_topics import assign_library_topics  # noqa: E402
+from originrag.library_presence import presence_answer, presence_language  # noqa: E402
 from originrag.personal_shelf import PersonalShelf  # noqa: E402
 from originrag.reading_history import ReadingHistory, reading_query  # noqa: E402
 from originrag.reader_notes import ReaderNotes, NoteConflict, document_key, notebook_paper_key, validate_notebook  # noqa: E402
@@ -309,17 +310,29 @@ class WebChatApp:
                 target_session,
                 infer_session_title(clean_message, resolved_task),
             )
-            with manager_for(REPO_ROOT).session() as model_selection:
-                if model_selection:
-                    turn_args.answer_model = model_selection["model"]
-                    turn_args.planner_model = model_selection["model"]
-                result = ask_corpus.run_question(
-                    turn_args,
-                    turn_dir,
-                    progress_callback=progress_callback,
-                )
-                if model_selection:
-                    result["model_runtime"] = model_selection
+            language = presence_language(clean_message)
+            if language:
+                papers = REPO_ROOT / settings.papers
+                catalogue = library_catalog(str(papers.with_name("paper_registry.tsv")), str(papers),
+                                            chunks_dir=str(REPO_ROOT / settings.chunks_dir))
+                answer = presence_answer(catalogue, language)
+                turn_dir.mkdir(parents=True, exist_ok=True)
+                answer_path = turn_dir / "answer.md"
+                answer_path.write_text(answer, encoding="utf-8")
+                result = {"resolved_task": "library_status", "retrieval_question": clean_message,
+                          "answer": answer, "answer_path": answer_path}
+            else:
+                with manager_for(REPO_ROOT).session() as model_selection:
+                    if model_selection:
+                        turn_args.answer_model = model_selection["model"]
+                        turn_args.planner_model = model_selection["model"]
+                    result = ask_corpus.run_question(
+                        turn_args,
+                        turn_dir,
+                        progress_callback=progress_callback,
+                    )
+                    if model_selection:
+                        result["model_runtime"] = model_selection
             commit_answer()
             resolved_task = result.get("resolved_task", resolved_task)
             retrieval_question = result.get("retrieval_question", retrieval_question)
@@ -1512,7 +1525,11 @@ def library_catalog(
 
         if local_relpath and not pdf_exists:
             pdf_exists = (REPO_ROOT / "bib" / local_relpath).is_file()
-        searchable = (resolved_chunks_dir / f"{paper_id}.jsonl").is_file()
+        chunks = resolved_chunks_dir / f"{paper_id}.jsonl"
+        try:
+            searchable = chunks.is_file() and chunks.stat().st_size > 0
+        except FileNotFoundError:
+            searchable = False
         catalogue.append(
             {
                 "paper_id": paper_id,
@@ -2984,6 +3001,10 @@ def build_ask_args(
 def serialize_turn_result(
     result: dict, turn_dir: Path, retrieval_question: str, resolved_task: str
 ) -> dict:
+    if resolved_task == "library_status":
+        return {"task": resolved_task, "answer": result["answer"], "answer_state": "answered",
+                "answer_path": relative_path(result["answer_path"]), "output_dir": relative_path(turn_dir),
+                "retrieval_question": retrieval_question, "sources": [], "evidence_grade": "not_applicable"}
     if result.get("reading_card") is not None:
         card = result["reading_card"]
         sources = format_public_sources(result["pack"]["chunks"], source_role="summary_source")
@@ -7422,6 +7443,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function resultMeta(data) {
       const box = document.createElement("div");
+      if (data.task === "library_status") return box;
       box.className = "result-meta";
       const summary = document.createElement("div");
       summary.className = "result-summary";
