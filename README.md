@@ -11,18 +11,18 @@ study, cohort or dataset. Five papers do not necessarily mean five independent s
 
 ## Install and open
 
-Requires **macOS or Linux, Git, Bash and Python 3.11**. With Conda or Miniforge installed:
+On macOS or Linux, with Git, Bash, curl and an internet connection:
 
 ```bash
 git clone https://github.com/JMittelbach/OriginRAG.git
 cd OriginRAG
-./setup.sh --profile full
+./setup.sh
 ./web
 ```
 
 Open the address printed in the terminal, normally `http://127.0.0.1:8765`.
-Local use needs no account. Setup preserves existing settings and saves your
-chosen profile for the next launch.
+Local use needs no account. Setup installs the full workspace by default, using
+your Conda or a private Miniforge if needed. No activation, Node.js or sudo required.
 
 | Profile | Applications |
 | --- | --- |
@@ -30,14 +30,12 @@ chosen profile for the next launch.
 | `rag` | OriginRAG only |
 | `write` | Quill only, without RAG dependencies |
 
-All profiles include Library, Bookshelf and the PDF reader. Replace `full` in
-the setup command to choose a standalone installation.
-
-Setup does **not** download a model or install a TeX compiler. Search and writing
-work without a model; generated answers need [Ollama](https://ollama.com/) and a
-local text model. **Models** in the web app shows installed models, downloads
-and memory estimates. Quill's PDF preview needs an
-[isolated TeX compiler](docs/writing.md#configure-pdf-compilation).
+All profiles include Library, Bookshelf and the PDF reader. The first full setup
+also prepares Quill's offline PDF compiler and downloads a starter Qwen model
+(about 2.5 GB on a new install). Existing model settings are kept. Linux must
+allow unprivileged user namespaces or have a [configured TeX container](docs/writing.md#configure-pdf-compilation).
+For all apps without runtime downloads, use `./setup.sh --apps-only`.
+For a standalone app, use `./setup.sh --profile rag` or `--profile write`.
 
 See [Getting started](docs/getting_started.md) for virtual-environment setup,
 model configuration and troubleshooting. Clone the repository for the complete
@@ -46,7 +44,7 @@ web application; the Python wheel alone does not include the launchers or corpus
 **Updating an existing clone:** wait for edits to save, stop the app, run
 `git pull --ff-only`, then start `./web` again and reload the page. Ordinary
 code updates need no reinstall and leave your papers and manuscripts in place.
-If an update changes dependencies, rerun `./setup.sh` (it remembers your profile).
+If dependencies change, rerun setup; pass the same `--profile` for a standalone install.
 
 ## Add papers and ask questions
 

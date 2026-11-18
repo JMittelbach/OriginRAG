@@ -26,10 +26,17 @@ class CompilerBusy(ValueError):
     pass
 
 
+def tectonic_path():
+    managed = Path(__file__).resolve().parents[2] / 'runtime' / 'tools' / 'tectonic'
+    return shutil.which(os.environ.get('ORIGINWRITE_TECTONIC') or (
+        str(managed) if managed.is_file() else 'tectonic'))
+
+
 def rootless_tools():
     bubblewrap = shutil.which(os.environ.get('ORIGINWRITE_BWRAP', 'bwrap'))
-    tectonic = shutil.which(os.environ.get('ORIGINWRITE_TECTONIC', 'tectonic'))
-    cache = os.environ.get('ORIGINWRITE_TECTONIC_CACHE', '')
+    tectonic = tectonic_path()
+    cache = os.environ.get('ORIGINWRITE_TECTONIC_CACHE') or (
+        Path(__file__).resolve().parents[2] / 'runtime' / 'tex-cache')
     if sys.platform.startswith('linux') and bubblewrap and tectonic and cache and Path(cache).is_dir():
         resolved = Path(cache).resolve()
         if resolved in {Path('/'), Path.home(), Path.cwd()}:
@@ -45,7 +52,7 @@ def mac_cache_path():
 
 
 def select_compiler_backend():
-    tectonic = shutil.which('tectonic')
+    tectonic = tectonic_path()
     if sys.platform == 'darwin' and tectonic and Path('/usr/bin/sandbox-exec').exists():
         return {'kind': 'macos', 'executable': str(Path(tectonic).resolve()),
                 'sandbox': '/usr/bin/sandbox-exec', 'cache': str(mac_cache_path())}
@@ -82,6 +89,7 @@ def mac_command(work, backend=None):
              '(allow file-read-metadata)', '(allow file-read* (literal "/") (literal "/dev/null") (literal "/dev/urandom"))',
              '(allow file-write* (literal "/dev/null"))']
     rules += ['(allow file-read* (subpath ' + json.dumps(p) + '))' for p in read_roots]
+    rules += ['(allow file-read* (literal ' + json.dumps(executable) + '))']
     rules += ['(allow file-read* file-write* (subpath ' + json.dumps(str(work)) + '))']
     profile = work / 'compiler.sb'
     profile.write_text('\n'.join(rules))

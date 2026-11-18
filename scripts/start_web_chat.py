@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,6 +16,10 @@ import web_chat  # noqa: E402
 def main() -> int:
     web_chat.load_project_env(web_chat.REPO_ROOT / '.env')
     profile = web_chat.parse_args(sys.argv[1:]).profile
+    if profile != 'write' and (web_chat.REPO_ROOT / 'runtime/setup-ollama').is_file():
+        if subprocess.run([sys.executable, str(SCRIPTS_DIR / 'setup_workspace_runtimes.py'),
+                           '--start-only']).returncode:
+            print('Opening the workspace without local generation.', file=sys.stderr)
     defaults = [
         "--backend",
         "qwen",

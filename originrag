@@ -97,6 +97,15 @@ select_python_environment() {
     echo "Repair with: \"$ORIGINRAG_PYTHON\" -m pip install -e '.[write]' (or '.[rag]' / '.[full]')" >&2
     exit 1
   fi
+  if [ -s "$ROOT_DIR/runtime/setup-python" ] && [ -z "$requested_env" ]; then
+    IFS= read -r ORIGINRAG_PYTHON < "$ROOT_DIR/runtime/setup-python"
+    if [ ! -x "$ORIGINRAG_PYTHON" ]; then
+      echo "The installed workspace environment has moved. Rerun ./setup.sh." >&2
+      exit 1
+    fi
+    export PATH="$(dirname "$ORIGINRAG_PYTHON"):$PATH"
+    return
+  fi
   if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
     ORIGINRAG_PYTHON="$VIRTUAL_ENV/bin/python"
     if "$ORIGINRAG_PYTHON" -c 'import dotenv, fitz' >/dev/null 2>&1; then
@@ -153,7 +162,7 @@ preferred_model() {
   if [ -z "$model" ]; then
     model="$(read_env_value PFEMPIRE_QWEN_MODEL || true)"
   fi
-  echo "${model:-qwen3:30b}"
+  echo "${model:-qwen3:4b}"
 }
 
 installed_model() {
@@ -274,6 +283,10 @@ case "$cmd" in
     ;;
   web)
     select_python_environment
+    if [ -f runtime/setup-python ]; then
+      installed="$(env -u ORIGINRAG_APP_PROFILE "$ORIGINRAG_PYTHON" scripts/configure_app_profile.py --read)"
+      set -- --profile "$installed" "$@"
+    fi
     exec "$ORIGINRAG_PYTHON" scripts/start_web_chat.py "$@"
     ;;
   users)
@@ -292,6 +305,8 @@ case "$cmd" in
     exec "$ORIGINRAG_PYTHON" scripts/ask_corpus.py "$1" --backend qwen --preset pro --task answer "${@:2}"
     ;;
   setup-model|model)
+    if [ -s runtime/setup-python ]; then select_python_environment; fi
+    export ORIGINRAG_QWEN_MODEL="$(preferred_model)"
     exec bash scripts/setup_local_qwen.sh "$@"
     ;;
   sync-bib)

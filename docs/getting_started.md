@@ -13,11 +13,15 @@ is:
 ```bash
 git clone https://github.com/JMittelbach/OriginRAG.git
 cd OriginRAG
-./setup.sh --profile full
-conda activate originrag
+./setup.sh
+./web
 ```
 
-Choose `full` for OriginRAG and Quill, `rag` for OriginRAG, or `write`
+The full installation includes OriginRAG, Quill and Folio. Setup uses an existing
+Conda or installs a checksum-verified private Miniforge in `runtime/miniforge`.
+It installs or reuses Ollama and the configured model and verifies Quill with a
+real sandboxed PDF build. Use `--apps-only` to skip runtime provisioning.
+Choose `rag` for OriginRAG alone, or `write`
 for Quill. Library, Bookshelf, PDF Reader and accounts are shared in
 every profile. A new `write` installation contains only the shared Python
 dependencies (python-dotenv and PyMuPDF), not the retrieval/terminal dependencies
@@ -29,8 +33,8 @@ or a language model. A fresh full/rag installation adds those dependencies.
 ```
 
 Setup records `ORIGINRAG_APP_PROFILE` in `.env`, preserving other settings.
-Without `--profile`, an existing choice is reused; a fresh installation
-defaults to `full`. Updating a profile does not remove unrelated packages
+Without `--profile`, setup always selects `full`, including when repairing an
+older installation. Updating a profile does not remove unrelated packages
 or delete accounts, papers or manuscripts. To obtain a separate lean environment:
 
 ```bash
@@ -56,11 +60,12 @@ module later, install the corresponding extra and update the saved profile.
 `./web --profile write` selects a profile for just that process; it does not
 install dependencies or change the saved configuration.
 
-The launcher uses an active virtual environment, a local `.venv`, or the
-`originrag` Conda environment, in that order.
+After setup the launcher remembers this clone's interpreter and profile.
+With manual pip installations it uses an active virtual environment, a local
+`.venv`, or the `originrag` Conda environment.
 
-Quill editing and ZIP export are available immediately. PDF compilation
-requires a separately prepared, isolated TeX compiler and cached packages;
+Quill editing and ZIP export are available immediately. With a standalone,
+apps-only or manual pip installation, PDF compilation needs an isolated compiler;
 see [Quill setup](writing.md). There is no model requirement for writing,
 reference management or reading PDFs. Skip the model and RAG-indexing sections
 below when using the `write` profile.
@@ -72,13 +77,14 @@ For `rag` and `full` profiles only.
 Generated answers use Ollama, with Qwen as the default model family. Other
 Ollama text models are configurable. See [Choosing a model](models.md) for
 hardware starting points, supported backends and safe model switching.
-Install Ollama using its platform instructions, then run:
+A new full installation already has `qwen3:4b` configured with a 16K context.
+For a standalone installation, install Ollama and then run:
 
 ```bash
 ./originrag setup-model
 ```
 
-The default is `qwen3:30b` with a 65,536-token context, which is not suitable
+The manual `setup-model --long-context` preset selects `qwen3:30b` with a 65,536-token context, which is not suitable
 for every machine. The smaller profile selects `qwen3:14b` and requests a
 16,384-token context unless an existing context override takes precedence:
 
@@ -447,7 +453,7 @@ Before an update, let queued requests and imports finish, then stop the service:
 ```bash
 systemctl --user stop originrag.service
 git pull --ff-only
-# Only if dependencies changed: rerun ./setup.sh (for Conda installations).
+# Only if dependencies changed: rerun setup (pass --profile for a standalone installation).
 systemctl --user start originrag.service
 ```
 

@@ -111,14 +111,27 @@ def test_setup_write_is_lean_and_honours_custom_environment(tmp_path, monkeypatc
     assert config.read_profile(root) == 'write'
 
 
-def test_setup_reuses_profile_and_does_not_prune_other_packages(tmp_path, monkeypatch):
+@pytest.mark.parametrize('flags', [[], ['--profile', 'full']])
+def test_setup_repairs_partial_install_and_preserves_private_data(tmp_path, monkeypatch, flags):
     root, log = conda_fixture(tmp_path, monkeypatch, exists=True)
-    (root / '.env').write_text('SECRET=retained\nORIGINRAG_APP_PROFILE=write\n')
-    result = subprocess.run(['/bin/bash', 'setup.sh', '--no-checks'], cwd=root, text=True, capture_output=True)
+    (root / '.env').write_text('SECRET=retained\nORIGINRAG_APP_PROFILE=rag\n')
+    monkeypatch.setenv(config.KEY, 'rag')
+    result = subprocess.run(['/bin/bash', 'setup.sh', *flags], cwd=root, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
-    assert ['env', 'update', '-n', 'custom-workspace', '-f', 'environment-write.yml'] in commands(log)
+    assert ['env', 'update', '-n', 'custom-workspace', '-f', 'environment.yml'] in commands(log)
     assert not any('--prune' in call for call in commands(log))
     assert 'SECRET=retained' in (root / '.env').read_text()
+    assert 'ORIGINRAG_APP_PROFILE=full' in (root / '.env').read_text()
+    assert any('scripts/setup_workspace_runtimes.py' in call for call in commands(log))
+    assert any('scripts/verify_workspace_install.py' in call for call in commands(log))
+
+
+def test_apps_only_explicitly_skips_runtimes_without_disabling_apps(tmp_path, monkeypatch):
+    root, log = conda_fixture(tmp_path, monkeypatch)
+    result = subprocess.run(['/bin/bash', 'setup.sh', '--apps-only'], cwd=root)
+    assert result.returncode == 0
+    assert config.read_profile(root) == 'full'
+    assert not any('scripts/setup_workspace_runtimes.py' in call for call in commands(log))
 
 
 @pytest.mark.parametrize('profile', ['rag', 'full'])
@@ -136,7 +149,7 @@ def test_invalid_profile_does_not_start_environment_installation(tmp_path, monke
     root, log = conda_fixture(tmp_path, monkeypatch)
     result = subprocess.run(['/bin/bash', 'setup.sh', '--profile', 'not-a-profile'], cwd=root, text=True, capture_output=True)
     assert result.returncode != 0
-    assert not any(call[:2] in [['env', 'create'], ['env', 'update'], ['env', 'remove']] for call in commands(log))
+    assert not log.exists()
 
 
 @pytest.mark.parametrize('arguments', [['web', '--profile', 'write', '--auth'], []])
@@ -173,3 +186,20 @@ def test_dependency_profiles_keep_write_lean_and_dev_complete():
     assert 'pytest' in project['optional-dependencies']['dev']
     write_environment = (ROOT / 'environment-write.yml').read_text()
     assert 'pandas' not in write_environment and 'pydantic' not in write_environment
+
+
+@pytest.mark.parametrize('extra,expected', [([], 'full'), (['--profile', 'write'], 'write')])
+def test_web_uses_saved_full_profile_over_stale_shell_but_honours_cli(tmp_path, monkeypatch, extra, expected):
+    root = fixture_checkout(tmp_path)
+    (root / '.env').write_text('ORIGINRAG_APP_PROFILE=full\n')
+    (root / 'runtime').mkdir()
+    (root / 'runtime/setup-python').write_text(sys.executable + '\n')
+    (root / 'scripts/start_web_chat.py').write_text(
+        'import argparse\np = argparse.ArgumentParser()\np.add_argument("--profile")\nprint(p.parse_args().profile)\n')
+    monkeypatch.delenv('ORIGINRAG_PYTHON', raising=False)
+    monkeypatch.delenv('ORIGINRAG_CONDA_ENV', raising=False)
+    monkeypatch.setenv(config.KEY, 'rag')
+    monkeypatch.setenv('VIRTUAL_ENV', str(tmp_path / 'unrelated-venv'))
+    result = subprocess.run(['/bin/bash', 'originrag', 'web', *extra], cwd=root, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == expected

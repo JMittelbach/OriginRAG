@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-MODEL="${ORIGINRAG_QWEN_MODEL:-${PFEMPIRE_QWEN_MODEL:-qwen3:30b}}"
-NUM_CTX="${ORIGINRAG_OLLAMA_NUM_CTX:-${PFEMPIRE_OLLAMA_NUM_CTX:-65536}}"
+MODEL="${ORIGINRAG_QWEN_MODEL:-${PFEMPIRE_QWEN_MODEL:-qwen3:4b}}"
+NUM_CTX="${ORIGINRAG_OLLAMA_NUM_CTX:-${PFEMPIRE_OLLAMA_NUM_CTX:-16384}}"
 NUM_PREDICT="${ORIGINRAG_OLLAMA_NUM_PREDICT:-${PFEMPIRE_OLLAMA_NUM_PREDICT:-2200}}"
 PULL=1
 
@@ -14,8 +14,8 @@ usage() {
 Usage:
   ./scripts/setup_local_qwen.sh [--model MODEL] [--large] [--no-pull]
 
-Defaults to qwen3:30b, the preferred long-context RAG model for a 48 GB Apple
-Silicon Mac. Use --balanced for qwen3:14b, or --dense for qwen3:32b.
+Uses the configured model, or qwen3:4b on a new install. Use --balanced for
+qwen3:14b, --long-context for qwen3:30b or --dense for qwen3:32b.
 EOF
 }
 
@@ -114,6 +114,8 @@ fi
 set_env_key "ORIGINRAG_DOMAIN" "malaria"
 set_env_key "ORIGINRAG_OLLAMA_BASE_URL" "http://localhost:11434"
 set_env_key "ORIGINRAG_OLLAMA_MODEL" "$MODEL"
+set_env_key "ORIGINRAG_OLLAMA_PLANNER_MODEL" "$MODEL"
+set_env_key "ORIGINRAG_OLLAMA_ANSWER_MODEL" "$MODEL"
 set_env_key "ORIGINRAG_QWEN_BASE_URL" "http://localhost:11434"
 set_env_key "ORIGINRAG_QWEN_MODEL" "$MODEL"
 set_env_key "ORIGINRAG_QUEUE_MODEL" "$MODEL"

@@ -4,23 +4,23 @@ set -euo pipefail
 ENV_NAME="${ORIGINRAG_CONDA_ENV:-${PFEMPIRE_CONDA_ENV:-${HYPORAG_CONDA_ENV:-originrag}}}"
 RECREATE=0
 RUN_CHECKS=1
-APP_PROFILE=""
+APP_PROFILE=full
+RUNTIMES=1
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./setup.sh [--profile full|rag|write] [--recreate] [--no-checks]
+  ./setup.sh [--profile full|rag|write] [--apps-only] [--recreate] [--no-checks]
 
 Installs the selected modules and records the profile in .env. Existing private
-settings are preserved. Without --profile, the saved profile is reused (full
-for a new installation). No language model is downloaded by setup.
+settings are preserved. Without --profile, installs the full suite, including
+a local answer model and isolated PDF preview. --apps-only skips these runtimes.
 
-  full   OriginRAG + Quill, with shared Library, Bookshelf and Reader
+  full   OriginRAG + Quill + Folio, with shared Library, Bookshelf and Reader
   rag    OriginRAG, with shared Library, Bookshelf and Reader
   write  Quill, with shared Library, Bookshelf and Reader; no LLM required
 
-After setup, activate the environment with:
-  conda activate originrag
+After setup, run ./web. No environment activation is needed.
 EOF
 }
 
@@ -36,6 +36,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --profile=*)
       APP_PROFILE="${1#*=}"
+      ;;
+    --apps-only)
+      RUNTIMES=0
       ;;
     --recreate)
       RECREATE=1
@@ -59,16 +62,6 @@ done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
-if ! command -v conda >/dev/null 2>&1; then
-  echo "Conda was not found on PATH. Install Miniforge/Mambaforge or initialize conda first." >&2
-  exit 1
-fi
-
-if [ -n "$APP_PROFILE" ]; then
-  APP_PROFILE="$(conda run -n base python scripts/configure_app_profile.py --read --profile "$APP_PROFILE")"
-else
-  APP_PROFILE="$(conda run -n base python scripts/configure_app_profile.py --read)"
-fi
 case "$APP_PROFILE" in
   write) ENVIRONMENT_FILE=environment-write.yml ;;
   full|rag) ENVIRONMENT_FILE=environment.yml ;;
@@ -84,6 +77,12 @@ if [ ! -f "$ENVIRONMENT_FILE" ]; then
   echo "Missing $ENVIRONMENT_FILE in $REPO_ROOT" >&2
   exit 1
 fi
+
+if ! command -v conda >/dev/null 2>&1; then
+  bash scripts/bootstrap_miniforge.sh "$REPO_ROOT/runtime/miniforge"
+  export PATH="$REPO_ROOT/runtime/miniforge/bin:$PATH"
+fi
+echo "Installing application profile: $APP_PROFILE"
 
 env_exists() {
   conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"
@@ -108,7 +107,9 @@ fi
 
 echo "Installing OriginRAG as an editable local package."
 conda run -n "$ENV_NAME" python -m pip install -e ".[${APP_PROFILE}]" --no-deps
+conda run -n "$ENV_NAME" python -m pip check
 conda run -n "$ENV_NAME" python scripts/configure_app_profile.py --profile "$APP_PROFILE"
+conda run -n "$ENV_NAME" python scripts/verify_workspace_install.py "$APP_PROFILE"
 
 if [ "$APP_PROFILE" != write ]; then
   conda run -n "$ENV_NAME" python scripts/init_local_data.py
@@ -120,23 +121,14 @@ if [ "$RUN_CHECKS" -eq 1 ]; then
   if [ "$APP_PROFILE" = write ]; then
     conda run -n "$ENV_NAME" python -c 'from originrag.writing_compile import compiler_status; import fitz, dotenv; print("Quill installed."); print(compiler_status()["message"])'
   else
-    conda run -n "$ENV_NAME" python scripts/check_environment.py
     conda run -n "$ENV_NAME" python scripts/validate_metadata.py
+    if [ ! -f data/indexes/pfempire_fts.sqlite ]; then
+      echo "Full-text search starts when you add your own PDFs in the web app."
+    fi
   fi
 fi
 
-cat <<EOF
-
-Setup complete.
-
-Activate it in this terminal with:
-  conda activate $ENV_NAME
-
-Open the selected workspace:
-  ./web
-
-For generated answers (full/rag only), configure your model separately:
-  ./originrag setup-model
-
-Quill PDF compilation needs an isolated TeX compiler. See docs/writing.md.
-EOF
+if [ "$APP_PROFILE" = full ] && [ "$RUNTIMES" -eq 1 ]; then
+  conda run --no-capture-output -n "$ENV_NAME" python scripts/setup_workspace_runtimes.py
+fi
+echo "Setup complete ($APP_PROFILE). Start with: ./web"
