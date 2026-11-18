@@ -1,4 +1,4 @@
-"""Provision the full workspace's two non-Python runtimes, without sudo."""
+"""Provision the selected workspace's non-Python runtimes, without sudo."""
 from __future__ import annotations
 
 import argparse
@@ -158,12 +158,15 @@ def prepare_model(*, start_only=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--start-only', action='store_true')
+    parser.add_argument('--profile', choices=('full', 'write', 'rag'), default='full')
     args = parser.parse_args()
     load_project_env(ROOT / '.env')
     errors = []
-    steps = [('Ollama', lambda: prepare_model(start_only=args.start_only))]
-    if not args.start_only:
-        steps.insert(0, ('Quill PDF preview', prepare_tex))
+    steps = []
+    if not args.start_only and args.profile in ('full', 'write'):
+        steps.append(('Quill PDF preview', prepare_tex))
+    if args.profile in ('full', 'rag'):
+        steps.append(('Ollama', lambda: prepare_model(start_only=args.start_only)))
     for name, action in steps:
         try:
             action()
@@ -171,7 +174,7 @@ def main():
             print(f'{name}: {exc}', file=sys.stderr, flush=True)
             errors.append(name)
     if errors:
-        sys.exit('Not ready: ' + ', '.join(errors) + '. Apps remain installed; rerun ./setup.sh to retry.')
+        sys.exit('Not ready: ' + ', '.join(errors) + f'. Apps remain installed; rerun ./setup.sh --profile {args.profile} to retry.')
 
 
 if __name__ == '__main__':

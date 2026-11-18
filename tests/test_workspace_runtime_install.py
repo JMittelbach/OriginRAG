@@ -56,15 +56,35 @@ def test_full_install_verifies_bundled_editors_before_success(tmp_path):
     with pytest.raises(SystemExit, match='saved application profile'):
         verify_workspace_install.verify(tmp_path, 'full')
     (tmp_path / '.env').write_text('ORIGINRAG_APP_PROFILE=full\n')
-    for name in ['workspace/workspace.mjs', 'workspace/latex-editor.mjs', 'folio/editor.mjs']:
+    for name in ['workspace/workspace.mjs', 'workspace/latex-editor.mjs', 'folio/editor.mjs',
+                 'reader/reader.mjs', 'vendor/pdfjs/web/pdf_viewer.css',
+                 'vendor/pdfjs/legacy/build/pdf.min.mjs', 'vendor/pdfjs/legacy/build/pdf.worker.min.mjs']:
         asset = tmp_path / 'assets' / name
         asset.parent.mkdir(parents=True, exist_ok=True)
-        asset.touch()
+        asset.write_text('test asset')
     verify_workspace_install.verify(tmp_path, 'full')
     assert (tmp_path / 'runtime/setup-python').read_text().strip() == sys.executable
     (tmp_path / 'assets/folio/editor.mjs').unlink()
-    with pytest.raises(SystemExit, match='Missing bundled editor: folio'):
+    with pytest.raises(SystemExit, match='Missing bundled web asset: folio'):
         verify_workspace_install.verify(tmp_path, 'full')
+    (tmp_path / 'assets/vendor/pdfjs/legacy/build/pdf.worker.min.mjs').write_bytes(b'')
+    for profile in ('full', 'rag', 'write'):
+        (tmp_path / '.env').write_text(f'ORIGINRAG_APP_PROFILE={profile}\n')
+        with pytest.raises(SystemExit, match='pdf.worker.min.mjs'):
+            verify_workspace_install.verify(tmp_path, profile)
+
+
+@pytest.mark.parametrize(('profile', 'expected'), [
+    ('full', ['tex', 'model']), ('rag', ['model']), ('write', ['tex']),
+])
+def test_setup_prepares_the_selected_runtime_only(monkeypatch, profile, expected):
+    calls = []
+    monkeypatch.setattr(sys, 'argv', ['setup', '--profile', profile])
+    monkeypatch.setattr(setup, 'load_project_env', lambda *_: None)
+    monkeypatch.setattr(setup, 'prepare_tex', lambda: calls.append('tex'))
+    monkeypatch.setattr(setup, 'prepare_model', lambda *, start_only: calls.append('model'))
+    setup.main()
+    assert calls == expected
 
 
 def test_unavailable_compiler_is_not_reported_as_success(monkeypatch):

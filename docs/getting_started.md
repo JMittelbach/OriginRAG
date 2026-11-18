@@ -50,7 +50,9 @@ cd OriginRAG
 The full installation includes OriginRAG, Quill and Folio. Setup uses an existing
 Conda or installs a checksum-verified private Miniforge in `runtime/miniforge`.
 It installs or reuses Ollama and the configured model and verifies Quill with a
-real sandboxed PDF build. Use `--apps-only` to skip runtime provisioning.
+real sandboxed PDF build. Standalone profiles prepare their own runtime:
+`rag` installs the model without TeX, and `write` installs the compiler without
+a model. Add `--apps-only` to any profile to skip runtime provisioning.
 Choose `rag` for OriginRAG alone, or `write`
 for Quill. Library, Bookshelf, PDF Reader and accounts are shared in
 every profile. A new `write` installation contains only the shared Python
@@ -94,8 +96,8 @@ After setup the launcher remembers this clone's interpreter and profile.
 With manual pip installations it uses an active virtual environment, a local
 `.venv`, or the `originrag` Conda environment.
 
-Quill editing and ZIP export are available immediately. With a standalone,
-apps-only or manual pip installation, PDF compilation needs an isolated compiler;
+Quill editing and ZIP export are available immediately. With an apps-only
+or manual pip installation, PDF compilation needs a separately prepared isolated compiler;
 see [Quill setup](writing.md). There is no model requirement for writing,
 reference management or reading PDFs. Skip the model and RAG-indexing sections
 below when using the `write` profile.
@@ -107,8 +109,8 @@ For `rag` and `full` profiles only.
 Generated answers use Ollama, with Qwen as the default model family. Other
 Ollama text models are configurable. See [Choosing a model](models.md) for
 hardware starting points, supported backends and safe model switching.
-A new full installation already has `qwen3:4b` configured with a 16K context.
-For a standalone installation, install Ollama and then run:
+A new full or RAG installation already has `qwen3:4b` configured with a 16K context.
+For an apps-only or manual pip installation, install Ollama and then run:
 
 ```bash
 ./originrag setup-model

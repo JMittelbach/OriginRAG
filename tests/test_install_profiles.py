@@ -108,6 +108,7 @@ def test_setup_write_is_lean_and_honours_custom_environment(tmp_path, monkeypatc
     assert ['run', '-n', 'custom-workspace', 'python', '-m', 'pip', 'install', '-e', '.[write]', '--no-deps'] in calls
     assert not any('scripts/init_local_data.py' in call or 'scripts/validate_metadata.py' in call for call in calls)
     assert not any('setup_local_qwen.sh' in str(call) or 'ollama' in str(call) for call in calls)
+    assert any(call[-3:] == ['scripts/setup_workspace_runtimes.py', '--profile', 'write'] for call in calls)
     assert config.read_profile(root) == 'write'
 
 
@@ -143,6 +144,7 @@ def test_setup_rag_profiles_install_extra_and_initialise_catalogue(tmp_path, mon
     assert ['env', 'create', '-n', 'custom-workspace', '-f', 'environment.yml'] in calls
     assert any('scripts/init_local_data.py' in call for call in calls)
     assert any('.[' + profile + ']' in call for call in calls)
+    assert any(call[-3:] == ['scripts/setup_workspace_runtimes.py', '--profile', profile] for call in calls)
 
 
 def test_invalid_profile_does_not_start_environment_installation(tmp_path, monkeypatch):

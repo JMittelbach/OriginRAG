@@ -600,7 +600,9 @@ the PDF download contains all pages.
 Editing and ZIP export work without TeX. Compilation requires isolation and
 never falls back to unrestricted execution on the host. Compiler status describes
 configuration, not a guarantee that the engine and all required packages are ready.
-The following setup is for the person hosting the application, not each user.
+The full installer and `./setup.sh --profile write` prepare the bundled
+templates and test an isolated PDF build automatically. The steps below are for
+a host configuring a custom compiler, an apps-only install or extra TeX packages.
 
 With Tectonic installed, download the packages needed by the bundled templates
 once, using their trusted starter documents:

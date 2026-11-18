@@ -11,13 +11,36 @@ study, cohort or dataset. Five papers do not necessarily mean five independent s
 
 ## Install and open
 
-**Windows 11 or Windows 10 (build 19041+):** Install Ubuntu on WSL 2 once with
-`wsl --install -d Ubuntu` in an administrator PowerShell. Restart if prompted
-and open Ubuntu once to create your user. Then **double-click `OriginRAG.cmd`**
-in the cloned or extracted repository. The first launch installs the full suite;
-later launches open it in your Windows browser. [Windows details](docs/getting_started.md#windows)
+The default installation gives you **OriginRAG, Quill, Folio, Library, Bookshelf
+and the PDF reader**. The editors and PDF renderer ship in the repository.
+The first install needs internet: it sets up Python and its packages, prepares
+the TeX compiler and packages for the included templates, and installs or reuses
+Ollama and a local Qwen model (about 2.5 GB on a new install). You do not need
+to install Node.js, activate Conda or supply your own LaTeX installation.
 
-On macOS or Linux, with Git, Bash, curl and an internet connection:
+### Windows
+
+1. **In PowerShell as administrator**, run `wsl --install -d Ubuntu` if you
+   do not already have Ubuntu on WSL 2. Restart if prompted, then open **Ubuntu**
+   once to create your Linux user. This requires Windows 11 or Windows 10
+   build 19041 or later. [Microsoft's instructions](https://learn.microsoft.com/windows/wsl/install)
+2. **In Windows**, clone this repository or choose **Code → Download ZIP** on
+   GitHub and extract it. Double-click **`OriginRAG.cmd`** inside the folder.
+   If using the ZIP for a private repository, Ubuntu may ask you to sign in to GitHub.
+3. **In your Windows browser**, use the address printed in the launcher,
+   normally `http://localhost:8765`. Keep the terminal open. Next time, just
+   double-click the same file. Your working copy is `~/OriginRAG` **inside Ubuntu**.
+
+If you already work in a separate Ubuntu VM, use the Linux instructions **in
+that VM** to keep using its library. [More about Windows and WSL](docs/getting_started.md#windows)
+
+### macOS and Linux
+
+Open **Terminal on the Mac**, or a **terminal on the Linux machine** where your
+papers will live. You need Git, Bash and curl. If Git is missing on a Mac, run
+`xcode-select --install` first. On Ubuntu/Debian, if tools are missing, run
+`sudo apt update && sudo apt install git bash curl ca-certificates util-linux`.
+From the folder where you want to keep OriginRAG, run:
 
 ```bash
 git clone https://github.com/JMittelbach/OriginRAG.git
@@ -26,29 +49,33 @@ cd OriginRAG
 ./web
 ```
 
-Open the address printed in the terminal, normally `http://127.0.0.1:8765`.
-Local use needs no account. Setup installs the full workspace by default, using
-your Conda or a private Miniforge if needed. No activation, Node.js or sudo required.
+Open the printed address (normally `http://127.0.0.1:8765`) on that machine.
+Local use needs no account. Stop with **Ctrl+C**; next time, run `./web` from
+the same `OriginRAG` folder. On a remote Linux server, use the
+[SSH tunnel instructions](#run-on-a-private-server) instead.
 
-| Profile | Applications |
+### Install only what you need
+
+Run these commands **inside the repository in a macOS, Linux or Ubuntu/WSL
+terminal**. Start any profile with `./web`. All include Library, Bookshelf and
+the PDF reader. The Windows double-click launcher always selects the full suite.
+
+| Install command | What it prepares |
 | --- | --- |
-| `full` | OriginRAG, Quill and Folio |
-| `rag` | OriginRAG only |
-| `write` | Quill only, without RAG dependencies |
+| `./setup.sh` | Full suite, local model and PDF compilation |
+| `./setup.sh --profile rag` | OriginRAG with the local model; no TeX download |
+| `./setup.sh --profile write` | Quill with PDF compilation; no model download |
+| `./setup.sh --apps-only` | Full suite and Python dependencies, without provisioning Ollama, model weights or TeX |
 
-All profiles include Library, Bookshelf and the PDF reader. The first full setup
-also prepares Quill's offline PDF compiler and downloads a starter Qwen model
-(about 2.5 GB on a new install). Existing model settings are kept. Linux must
-allow unprivileged user namespaces or have a [configured TeX container](docs/writing.md#configure-pdf-compilation).
-For all apps without runtime downloads, use `./setup.sh --apps-only`.
-For a standalone app, use `./setup.sh --profile rag` or `--profile write`.
-
-See [Getting started](docs/getting_started.md) for virtual-environment setup,
-model configuration and troubleshooting. Clone the repository for the complete
-web application; the Python wheel alone does not include the launchers or corpus.
+Setup checks the bundled reader and editors. For Quill it also compiles a test
+PDF before reporting success, unless you chose `--apps-only`. Linux and WSL
+must permit the compiler sandbox or have a [configured TeX container](docs/writing.md#configure-pdf-compilation).
+If setup stops, fix the reported problem and rerun the same command; no need
+to delete your workspace. [Detailed installation guide](docs/getting_started.md)
 
 **Updating an existing clone:** wait for edits to save, stop the app, run
-`git pull --ff-only`, then start `./web` again and reload the page. Ordinary
+`git pull --ff-only` in the working copy (on Windows: `cd ~/OriginRAG` in
+Ubuntu), then start the app again and reload the page. Ordinary
 code updates need no reinstall and leave your papers and manuscripts in place.
 If dependencies change, rerun setup; pass the same `--profile` for a standalone install.
 
@@ -93,7 +120,8 @@ installations keep their own tools without the suite switcher. See the
 
 ## Run on a private server
 
-Install on the server, then start with account protection:
+In an SSH session **on the server**, follow the Linux installation above
+through `./setup.sh`. Instead of starting the local-only app, run:
 
 ```bash
 ORIGINRAG_WEB_OPEN=0 ./web --auth --strict-port

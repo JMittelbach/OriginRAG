@@ -14,7 +14,8 @@ def verify(root, name):
     if dotenv_values(root / '.env').get('ORIGINRAG_APP_PROFILE') != name:
         raise SystemExit(f'The saved application profile does not match the requested profile: {name}.')
     modules = ['dotenv', 'fitz', 'originrag.web_reader']
-    assets = ['workspace/workspace.mjs']
+    assets = ['workspace/workspace.mjs', 'reader/reader.mjs', 'vendor/pdfjs/web/pdf_viewer.css',
+              'vendor/pdfjs/legacy/build/pdf.min.mjs', 'vendor/pdfjs/legacy/build/pdf.worker.min.mjs']
     apps = ['Library', 'Bookshelf', 'PDF reader']
     if profile.rag:
         apps.insert(0, 'OriginRAG')
@@ -30,8 +31,9 @@ def verify(root, name):
     for module in modules:
         importlib.import_module(module)
     for asset in assets:
-        if not (root / 'assets' / asset).is_file():
-            raise SystemExit(f'Missing bundled editor: {asset}. Please check the clone.')
+        path = root / 'assets' / asset
+        if not path.is_file() or not path.stat().st_size:
+            raise SystemExit(f'Missing bundled web asset: {asset}. Please check the clone.')
     directory = root / 'runtime'
     directory.mkdir(exist_ok=True)
     with tempfile.NamedTemporaryFile('w', dir=directory, delete=False) as handle:

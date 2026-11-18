@@ -8,6 +8,10 @@ __pycache__/
 *.pyc
 *.egg-info/
 build/
+!/assets/vendor/pdfjs/legacy/build/
+/assets/vendor/pdfjs/legacy/build/*
+!/assets/vendor/pdfjs/legacy/build/pdf.min.mjs
+!/assets/vendor/pdfjs/legacy/build/pdf.worker.min.mjs
 dist/
 .DS_Store
 .ipynb_checkpoints/

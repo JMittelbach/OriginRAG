@@ -14,7 +14,8 @@ Usage:
 
 Installs the selected modules and records the profile in .env. Existing private
 settings are preserved. Without --profile, installs the full suite, including
-a local answer model and isolated PDF preview. --apps-only skips these runtimes.
+a local answer model and isolated PDF preview. The rag profile prepares only
+the model; write prepares only PDF compilation. --apps-only skips those steps.
 
   full   OriginRAG + Quill + Folio, with shared Library, Bookshelf and Reader
   rag    OriginRAG, with shared Library, Bookshelf and Reader
@@ -116,19 +117,15 @@ if [ "$APP_PROFILE" != write ]; then
 fi
 conda run -n "$ENV_NAME" python scripts/install_git_hooks.py
 
-if [ "$RUN_CHECKS" -eq 1 ]; then
+if [ "$RUN_CHECKS" -eq 1 ] && [ "$APP_PROFILE" != write ]; then
   echo "Running environment checks."
-  if [ "$APP_PROFILE" = write ]; then
-    conda run -n "$ENV_NAME" python -c 'from originrag.writing_compile import compiler_status; import fitz, dotenv; print("Quill installed."); print(compiler_status()["message"])'
-  else
-    conda run -n "$ENV_NAME" python scripts/validate_metadata.py
-    if [ ! -f data/indexes/pfempire_fts.sqlite ]; then
-      echo "Full-text search starts when you add your own PDFs in the web app."
-    fi
+  conda run -n "$ENV_NAME" python scripts/validate_metadata.py
+  if [ ! -f data/indexes/pfempire_fts.sqlite ]; then
+    echo "Full-text search starts when you add your own PDFs in the web app."
   fi
 fi
 
-if [ "$APP_PROFILE" = full ] && [ "$RUNTIMES" -eq 1 ]; then
-  conda run --no-capture-output -n "$ENV_NAME" python scripts/setup_workspace_runtimes.py
+if [ "$RUNTIMES" -eq 1 ]; then
+  conda run --no-capture-output -n "$ENV_NAME" python scripts/setup_workspace_runtimes.py --profile "$APP_PROFILE"
 fi
 echo "Setup complete ($APP_PROFILE). Start with: ./web"
