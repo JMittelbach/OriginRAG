@@ -542,12 +542,18 @@ Recent chats, unsent text and checked proposals are kept in that tab for this
 account and project, not in the shared manuscript. Up to 20 chats with 24 recent
 messages each are restored. Leaving interrupts a running request; resend its
 draft to continue. A proposal from an older manuscript revision is not restored.
+You can ask why an edit was suggested before accepting it: **Review earlier edit**
+reopens the suggestion if the manuscript is unchanged. If a reply stops, edit
+the question in the message box and send it again.
+When you follow a workspace link, Quill saves pending manuscript edits before
+leaving. If it cannot save, you stay in the editor with the draft intact.
 Only a bounded set of recent complete messages accompanies each request. The same
 **ORIGINWRITE_LANGUAGE_CHECK=0** switch disables both writing assistants.
 
 There is no fixed number of turns and no automatic summary or compaction of old
 messages. Each request includes at most the latest eight messages (usually four
 question/answer pairs), capped at 12,000 characters in total and 4,000 per message.
+Long replies are shortened for the next request; the displayed reply is unchanged.
 The project-context budget can reduce that further. Older messages remain visible
 in the panel but are no longer model context; repeat important instructions when
 needed. Project text is assembled afresh, independently of this conversation

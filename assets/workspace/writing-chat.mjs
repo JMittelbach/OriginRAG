@@ -1,6 +1,7 @@
 import {streamWritingRequest} from './writing-language.mjs';
 import {projectChatWindow} from './project-chat-window.mjs';
 import {projectChatList} from './project-chat-list.mjs';
+import {restoredChats} from './quill-session.mjs';
 
 let activeChat = null;
 
@@ -52,16 +53,21 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     thread.status = text;
     if (alive && thread === active) $('projectChatStatus').textContent = text;
   }
+  function composer() {
+    const input = $('projectChatInput');
+    $('projectChatSend').disabled = !alive || active.busy || reviewBusy || !enabled || !input.value.trim();
+    input.style.height = 'auto';
+    input.style.height = Math.max(64, Math.min(140, input.scrollHeight)) + 'px';
+  }
   function controls() {
-    $('projectChatSend').disabled = !alive || active.busy || reviewBusy || !enabled || !$('projectChatInput').value.trim();
+    composer();
     $('projectChatSend').hidden = active.busy;
     $('projectChatStop').hidden = !active.busy;
     $('projectChatInput').disabled = !alive || !enabled;
     $('projectChatRemoveSelection').disabled = active.busy;
     $('projectChatNew').disabled = !alive || reviewBusy;
     $('projectChatReview').hidden = !active.review || active.review.pending || !active.review.edits.length;
-    const input = $('projectChatInput'); input.style.height = 'auto';
-    input.style.height = Math.max(64, Math.min(140, input.scrollHeight)) + 'px';
+    $('projectChatReview').textContent = active.review?.earlier ? 'Review earlier edit' : 'Review in editor';
     list.render();
   }
   const current = base => {
@@ -72,9 +78,14 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
   };
   function recentHistory(thread) {
     const recent = []; let length = 0;
-    for (const item of [...thread.history].reverse()) {
-      if (recent.length === 8 || item.content.length > 4000 || length + item.content.length > 12000) break;
-      recent.unshift(item); length += item.content.length;
+    for (let i = thread.history.length - 1; i > 0 && recent.length < 8; i -= 2) {
+      const user = thread.history[i - 1], assistant = thread.history[i];
+      if (user.role !== 'user' || assistant.role !== 'assistant') break;
+      const room = Math.min(4000, 12000 - length - user.content.length);
+      if (room < 64 && assistant.content.length > room) break;
+      const content = assistant.content.length <= room ? assistant.content
+        : assistant.content.slice(0, room - 14).replace(/[\uD800-\uDBFF]$/, '') + '… [shortened]';
+      recent.unshift(user, {role: 'assistant', content}); length += user.content.length + content.length;
     }
     return recent;
   }
@@ -155,7 +166,7 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
       invalidated: text => {
         if (thread.review !== value) return;
         thread.review = null; shownReview = null; if (value.pending) thread.controller?.abort();
-        if (alive) status(thread, text);
+        if (alive) { status(thread, text); controls(); }
       }};
     if (!value.editor.showAssistantReview(value.edits, value.base.files, options)) {
       clearReview(thread); throw new Error('The draft changed. Ask again using the latest version.');
@@ -221,6 +232,7 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     const question = $('projectChatInput').value.trim();
     if (!question) return;
     const thread = active;
+    thread.previousReview = thread.review && !thread.review.pending ? thread.review : null;
     clearReview(thread); thread.busy = true;
     const epoch = ++thread.generation, requestSelection = thread.selection ? {...thread.selection} : null;
     const focusFile = getEditor().selection().file;
@@ -228,7 +240,7 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     if (!thread.renamed && thread.history.length === 0) thread.name = question.replace(/\s+/g, ' ').slice(0, 48);
     message(thread, 'user', question);
     const reply = message(thread, 'assistant', 'Thinking…');
-    let answerStarted = false;
+    let answerText = null;
     reply.item.setAttribute('aria-busy', 'true');
     const liveEdits = new Map();
     let previewUnavailable = false;
@@ -242,6 +254,15 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     let timedOut = false;
     const timeout = setTimeout(() => { timedOut = true; requestController.abort(); }, 380000);
     const valid = () => alive && !thread.deleted && epoch === thread.generation;
+    const restoreEarlierEdit = () => {
+      const earlier = thread.previousReview;
+      if (earlier && current(earlier.base) && getEditor() === earlier.editor) {
+        thread.review = {...earlier, epoch, earlier: true};
+        if (thread === active && !panel.hidden) {
+          try { paintReview(thread.review); } catch { clearReview(thread); }
+        }
+      }
+    };
     try {
       await save();
       if (!valid()) return;
@@ -253,15 +274,16 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
         message: question, history: conversation, auto_context: true, focus_file: focusFile,
         mode: 'edit', selection: requestSelection}, requestController.signal, event => {
         if (!valid() || requestController.signal.aborted) return;
+        if (event.type !== 'answer_delta' && event.type !== 'edit_preview' && event.type !== 'edit_delta' && event.type !== 'retrying') return;
         const messages = $('projectChatMessages');
         const follow = thread === active && messages.scrollHeight - messages.clientHeight - messages.scrollTop < 48;
         if (event.type === 'retrying') {
-          clearReview(thread); liveEdits.clear(); previewUnavailable = false; answerStarted = false;
+          clearReview(thread); liveEdits.clear(); previewUnavailable = false; answerText = null;
           reply.body.textContent = 'Checking the edit against your text…';
         }
         if (event.type === 'answer_delta' && event.text) {
-          if (!answerStarted) { reply.body.textContent = ''; answerStarted = true; }
-          reply.body.textContent += event.text;
+          if (!answerText) { answerText = reply.body.ownerDocument.createTextNode(''); reply.body.replaceChildren(answerText); }
+          answerText.appendData(event.text);
         }
         if (event.type === 'edit_preview') {
           if (!Number.isInteger(event.from) || !Number.isInteger(event.to) || typeof event.original !== 'string') return;
@@ -284,13 +306,15 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
       reply.body.textContent = result.answer;
       if (!Array.isArray(result.files) || !Array.isArray(result.edits) || result.edits.some(edit => !result.files.includes(edit.file))) throw new Error('The model returned unusable changes.');
       stageReview(thread, result.edits, base, epoch, false);
+      if (!result.edits.length) restoreEarlierEdit();
       if (result.filtered) reply.item.append(element('p', 'The proposed changes did not match your draft and were discarded.', 'project-chat-warning'));
       thread.history.push({role: 'assistant', content: result.answer});
       status(thread, '');
     } catch (error) {
       if (!valid()) return;
       if (thread.review?.epoch === epoch) clearReview(thread); thread.history.splice(historyStart);
-      if (answerStarted && reply.body.textContent) {
+      if (error.name === 'AbortError') restoreEarlierEdit();
+      if (answerText?.length) {
         const partial = element('details', '');
         partial.append(element('summary', 'Incomplete reply'), element('div', reply.body.textContent, 'project-chat-text'));
         reply.item.append(partial);
@@ -299,21 +323,14 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
       reply.item.append(element('p', error.name === 'AbortError' ? (timedOut ? 'The model took too long. Try a shorter passage. Nothing was applied.' : 'Request stopped. No changes applied.') : error.message, 'project-chat-warning'));
       if (valid()) {
         if (!thread.draft) { thread.draft = question; if (thread === active) $('projectChatInput').value = question; }
-        const retry = element('button', 'Retry'); retry.type = 'button';
-        retry.onclick = () => {
-          if (thread !== active || thread.deleted || thread.busy) return;
-          thread.draft = question; $('projectChatInput').value = question; setSelection(requestSelection); controls();
-          if (!$('projectChatSend').disabled) $('projectChatForm').requestSubmit();
-        };
-        reply.item.append(retry);
-        if (/model/i.test(error.message) && openModels) {
+        if (/choose an installed|open models|model is unavailable/i.test(error.message) && openModels) {
           const models = element('button', 'Models'); models.type = 'button';
           models.onclick = () => { window.focus(); openModels(); }; reply.item.append(models);
         }
       }
     } finally {
       clearTimeout(timeout); reply.item.removeAttribute('aria-busy');
-      if (valid()) { thread.controller = null; thread.busy = false; thread.unread = thread !== active; controls(); }
+      if (valid()) { thread.previousReview = null; thread.controller = null; thread.busy = false; thread.unread = thread !== active; controls(); }
     }
   };
   function setSelection(selected) {
@@ -330,7 +347,7 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     $('projectChatSelectionSummary').textContent = selection ? 'Selection · ' + selection.file : '';
     $('projectChatSelectionText').textContent = selection?.text || '';
   }
-  $('projectChatInput').oninput = () => { active.draft = $('projectChatInput').value; controls(); };
+  $('projectChatInput').oninput = () => { active.draft = $('projectChatInput').value; composer(); };
   $('projectChatInput').onkeydown = event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault(); if (!$('projectChatSend').disabled) $('projectChatForm').requestSubmit();
@@ -374,27 +391,32 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     const threads = [active, ...conversations.filter(t => t !== active).reverse()].slice(0, 20).map(thread => {
       const history = thread.history.slice(-24);
       if (thread.busy && history.at(-1)?.role === 'user') history.pop();
-      const value = thread.review;
+      const value = thread.review && !thread.review.pending ? thread.review : thread.previousReview;
       return {id: thread.id, name: thread.name, renamed: thread.renamed, history,
         draft: thread.draft || (thread.busy ? thread.question : ''), interrupted: thread.busy,
-        selection: thread.selection, review: value && !value.pending ? {revision: value.base.revision, edits: value.edits} : null};
+        selection: thread.selection, review: value ? {revision: value.base.revision, edits: value.edits,
+          earlier: Boolean(value.earlier || thread.busy)} : null};
     });
     session.write(sessionKey, {open: !panel.hidden, active: active.id, threads});
   }
-  const saved = session?.read(sessionKey);
-  if (Array.isArray(saved?.threads) && saved.threads.length) {
+  const saved = restoredChats(session?.read(sessionKey));
+  if (saved) {
     conversations.length = 0;
-    for (const row of saved.threads.slice(0, 20).sort((a,b) => a.id - b.id)) {
+    for (const row of saved.threads.sort((a,b) => a.id - b.id)) {
       const t = createChat(); t.id = row.id; t.name = row.name; t.renamed = row.renamed;
       t.draft = row.draft || ''; t.history = row.history || [];
       for (const item of t.history) message(t, item.role, item.content);
       if (row.interrupted) t.status = 'Your previous request stopped when you left. Send it again to continue.';
       const base = getProject(), sel = row.selection;
-      if (sel && base.files[sel.file]?.slice(sel.from, sel.to) === sel.text) t.selection = sel;
+      if (sel && typeof sel.file === 'string' && Object.hasOwn(base.files, sel.file) &&
+          typeof sel.text === 'string' && Number.isInteger(sel.from) && Number.isInteger(sel.to) &&
+          sel.from >= 0 && sel.to > sel.from && sel.text.length <= 8000 &&
+          base.files[sel.file].slice(sel.from, sel.to) === sel.text) t.selection = sel;
       if (row.review && row.review.revision === base.revision) {
         try {
           const edits = normalizeEdits(row.review.edits, base, 0);
-          if (edits.length) t.review = {thread:t, edits, base:{...base, files:{...base.files}}, epoch:0, pending:false, editor:getEditor()};
+          if (edits.length) t.review = {thread:t, edits, base:{...base, files:{...base.files}}, epoch:0, pending:false,
+            earlier: row.review.earlier === true, editor:getEditor()};
         } catch { /* A stale proposal is never applied. */ }
       } else if (row.review) t.status = 'The draft changed. Ask again for updated suggestions.';
     }

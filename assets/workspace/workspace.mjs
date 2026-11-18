@@ -719,6 +719,23 @@ async function editor(id) {
   if (!state.compiler.configured) notice(state.compiler.message);
   document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save().catch(e => notice(e.message, true)); } });
   document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && state.compiler.configured) { e.preventDefault(); compile(e.shiftKey).catch(e => notice(e.message, true)); } });
+  let leavingFor = '';
+  document.addEventListener('click', async event => {
+    const link = event.target.closest?.('#globalNavigation a, #applicationHeader a, a.back-projects');
+    if (!link || link.origin !== location.origin || (link.target && link.target !== '_self') ||
+        link.hasAttribute('download') || event.defaultPrevented || event.button !== 0 ||
+        event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (!leavingFor && !saving && editVersion === savedVersion && !sourceEditor.isComposing()) return;
+    event.preventDefault();
+    const pending = Boolean(leavingFor);
+    leavingFor = link.href;
+    if (pending) return;
+    try {
+      await finishComposition(); await save();
+      location.assign(leavingFor);
+    } catch { notice('Still in Quill: your draft could not be saved. Your edits are here.', true); }
+    finally { leavingFor = ''; }
+  });
   window.addEventListener('beforeunload', e => { if (editVersion !== savedVersion) { e.preventDefault(); e.returnValue = ''; } });
 }
 

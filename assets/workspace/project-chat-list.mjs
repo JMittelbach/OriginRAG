@@ -9,7 +9,7 @@ export function projectChatList(panel, {threads, current, choose, remove, blocke
   }
   function close() { list.hidden = true; toggle.setAttribute('aria-expanded', 'false'); editing = deleting = null; }
   function render() {
-    toggle.textContent = current().name + ' ▾'; toggle.title = 'Chats';
+    toggle.textContent = (threads().length === 1 ? current().name : 'Chats') + ' ▾'; toggle.title = 'Manage chats';
     const state = JSON.stringify([current().id, blocked(), threads().map(t => [t.id, t.name, t.busy, t.unread])]);
     if (state !== tabState) {
       tabState = state; tabs.hidden = threads().length < 2; tabs.replaceChildren();

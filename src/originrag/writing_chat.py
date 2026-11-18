@@ -324,11 +324,15 @@ def reply_schema(request):
 
 def chat(request, emit):
     started = time.monotonic()
+    next_heartbeat = started
     previous = ''
     last_preview = None
     def update(raw, model):
-        nonlocal previous, last_preview
-        emit({'type': 'progress', 'characters': len(raw), 'model': model})
+        nonlocal previous, last_preview, next_heartbeat
+        now = time.monotonic()
+        if now >= next_heartbeat:
+            emit({'type': 'progress', 'characters': len(raw), 'model': model})
+            next_heartbeat = now + 1
         answer = partial_answer(raw)
         if answer and answer.startswith(previous) and answer != previous:
             delta, previous = answer[len(previous):], answer
@@ -346,7 +350,7 @@ def chat(request, emit):
     def generate(prompt, schema, remaining):
         return generate_json_stream(prompt, update, num_ctx=request['context_tokens'],
                                     num_predict=OUTPUT_TOKENS, timeout=min(120, remaining),
-                                    total_timeout=remaining, schema=schema, max_chars=90000)
+                                    total_timeout=remaining, schema=schema, max_chars=90000, preview_interval=.075)
     schema = reply_schema(request)
     raw, model = generate(request['prompt'], schema, 360)
     result = parse_reply(raw, request)

@@ -36,6 +36,16 @@ def test_live_stream_emits_only_complete_validated_suggestions(monkeypatch):
     assert seen[0][1]['format'] == 'json' and seen[0][1]['keep_alive'] == '60s'
 
 
+def test_fast_project_stream_batches_previews_without_losing_the_tail(monkeypatch):
+    raw = json.dumps({'answer': 'abc' * 1000, 'edits': []})
+    install_stream(monkeypatch, [{'response': char} for char in raw] + [{'done': True}])
+    frames = []
+    text, _ = language.generate_json_stream('test', lambda prefix, model: frames.append(prefix), preview_interval=60)
+    assert text == raw == frames[-1] and frames[0] == raw[:1]
+    assert 2 <= len(frames) < 12
+    assert all(b.startswith(a) for a, b in zip(frames, frames[1:]))
+
+
 @pytest.mark.parametrize('chunks', [
     [{'response': '{"suggestions":[]}', 'done': False}],
     [{'response': '{"suggestions":[]}', 'done': True, 'done_reason': 'length'}],

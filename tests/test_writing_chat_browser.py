@@ -169,6 +169,7 @@ def test_missing_local_model_explains_download_and_does_not_send(model_list, mon
         playwright.expect(page.locator('#projectChatSend')).to_be_enabled()
         page.locator('#projectChatSend').click()
         playwright.expect(page.locator('.project-chat-message.assistant')).to_contain_text('Choose an installed model')
+        playwright.expect(page.locator('#projectChatInput')).to_have_value('Explain the LaTeX.')
         page.locator('#projectChatPanel').get_by_role('button', name='Models', exact=True).click()
         playwright.expect(page.locator('#modelDialog')).to_be_visible()
         browser.close()
@@ -192,8 +193,10 @@ def test_project_chat_stop_discards_incomplete_edits(model_list, monkeypatch):
             page.locator('#projectChatInput').fill('Rewrite the paragraphs.')
             page.locator('#projectChatSend').click()
             playwright.expect(page.locator('.project-chat-message.assistant')).to_contain_text('A provisional reply.')
+            page.locator('#projectChatInput').fill('A different follow-up that I have not sent.')
             page.locator('#projectChatStop').click()
             playwright.expect(page.locator('.project-chat-message.assistant')).to_contain_text('Request stopped')
+            playwright.expect(page.locator('#projectChatInput')).to_have_value('A different follow-up that I have not sent.')
             release.set()
             assert page.locator('.project-chat-apply').count() == 0
             assert get_project(page, key)['files'] == files

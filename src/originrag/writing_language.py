@@ -2,6 +2,7 @@ import json
 import os
 import re
 import threading
+import time
 import urllib.request
 
 from .app_profiles import lazy_function
@@ -161,7 +162,7 @@ def partial_suggestions(raw):
 
 
 def generate_json_stream(prompt, on_fragment, *, num_ctx=4096, num_predict=900, timeout=60,
-                         total_timeout=None, schema=None, max_chars=24000):
+                         total_timeout=None, schema=None, max_chars=24000, preview_interval=0):
     from .model_runtime import CURRENT_RUNTIME, ollama_model_urls
     runtime = CURRENT_RUNTIME.get()
     if runtime and runtime['provider'] != 'ollama':
@@ -182,6 +183,7 @@ def generate_json_stream(prompt, on_fragment, *, num_ctx=4096, num_predict=900, 
     timer.daemon = True
     timer.start()
     raw, final = '', None
+    last_preview_size, next_preview = 0, 0.0
     try:
         with cancellation_scope(cancellation):
             with urlopen(request, timeout=timeout) as response:
@@ -201,8 +203,11 @@ def generate_json_stream(prompt, on_fragment, *, num_ctx=4096, num_predict=900, 
                     raw += fragment
                     if len(raw) > max_chars:
                         raise LanguageUnavailable('The model response exceeded the proofreading limit.')
-                    if fragment:
+                    if fragment and (not preview_interval or len(raw) - last_preview_size >= 512
+                                     or time.monotonic() >= next_preview):
                         on_fragment(raw, model)
+                        last_preview_size = len(raw)
+                        next_preview = time.monotonic() + preview_interval
                     if item.get('done') is True:
                         final = item
                         break
@@ -210,6 +215,8 @@ def generate_json_stream(prompt, on_fragment, *, num_ctx=4096, num_predict=900, 
                 raise LanguageUnavailable('The model reached its output limit. Select a shorter passage or ask for one change at a time. Nothing was applied.')
             if final is None or final.get('done_reason') not in (None, 'stop'):
                 raise LanguageUnavailable('The model response was interrupted or incomplete. Nothing has been changed.')
+            if len(raw) > last_preview_size:
+                on_fragment(raw, model)
             duration, tokens = final.get('eval_duration'), final.get('eval_count')
             if runtime and runtime.get('manager') and type(duration) is int and duration > 0 and type(tokens) is int and tokens > 0:
                 runtime['manager'].record(runtime, tokens, duration / 1e9, 'decode')

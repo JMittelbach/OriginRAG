@@ -19,6 +19,38 @@ def get_project(page, project_id):
     return page.evaluate("async id => (await fetch('/api/writing?id=' + id)).json()", project_id)
 
 
+@pytest.mark.parametrize('save_fails', [False, True])
+def test_workspace_link_flushes_pending_text_before_leaving(workspace_server, save_fails):
+    pw = pytest.importorskip('playwright.sync_api')
+    base, _ = workspace_server
+    with pw.sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        page = browser.new_page()
+        key = create_manuscript(page, base)
+        before = get_project(page, key)['files']['main.tex']
+        saves = []
+        def handle(route):
+            if route.request.method == 'POST' and route.request.post_data_json.get('action') == 'save_project':
+                saves.append(1)
+                if save_fails:
+                    route.fulfill(status=503, content_type='application/json', body='{"error":"Temporarily offline"}')
+                    return
+            route.continue_()
+        page.route('**/api/writing', handle)
+        code = page.locator('#source .cm-content')
+        code.fill('Newest local manuscript text.')
+        page.evaluate("() => document.querySelector('nav a[href=\"/library\"]').click()")
+        if save_fails:
+            pw.expect(page.locator('#notice')).to_contain_text('Still in Quill')
+            pw.expect(code).to_have_text('Newest local manuscript text.')
+            assert get_project(page, key)['files']['main.tex'] == before
+        else:
+            pw.expect(page).to_have_url(base + '/library')
+            assert get_project(page, key)['files']['main.tex'] == 'Newest local manuscript text.'
+        assert len(saves) == 1
+        browser.close()
+
+
 def test_outline_exact_line_nested_titles_and_literal_examples(workspace_server):
     playwright = pytest.importorskip('playwright.sync_api')
     base, _ = workspace_server

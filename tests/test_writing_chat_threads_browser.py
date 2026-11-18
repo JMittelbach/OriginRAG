@@ -56,7 +56,8 @@ def test_named_chats_keep_separate_history_drafts_and_delete_only_the_selected_c
         assert calls[1]['conversation'] == []
         assert calls[2]['conversation'] == [
             {'role': 'user', 'content': 'First topic.'}, {'role': 'assistant', 'content': 'Reply to First topic.'}]
-        pw.expect(chat.locator('#projectChatListToggle')).to_have_text(name + ' ▾')
+        pw.expect(chat.locator('#projectChatListToggle')).to_have_text('Chats ▾')
+        pw.expect(chat.get_by_role('button', name='Switch to ' + name)).to_have_attribute('aria-pressed', 'true')
         delete_chat(chat, 'Second topic.')
         pw.expect(chat.locator('.project-chat-message')).to_have_count(4)
         chat.locator('#projectChatListToggle').click()
@@ -169,4 +170,78 @@ def test_tabs_and_checked_review_survive_library_round_trip(model_list, monkeypa
         pw.expect(page.locator('#savedState')).to_have_text('All changes saved')
         pw.expect(page.locator('#projectChatReview')).to_be_hidden()
         assert 'A clearer first sentence.' in get_project(page, key)['files']['main.tex']
+        browser.close()
+
+
+def test_asking_about_an_edit_keeps_it_reviewable_and_long_replies_keep_context(model_list, monkeypatch):
+    pw = pytest.importorskip('playwright.sync_api')
+    base, _, _ = model_list
+    calls = []
+    def reply(request, emit):
+        calls.append(json.loads(request['prompt'].split('\n')[-1])['conversation'])
+        return {'answer': ('A long explanation. ' * 300 if len(calls) == 1 else 'It is a wording change.'),
+                'edits': edits()[:1] if len(calls) == 1 else [], 'files': request['files']}
+    monkeypatch.setattr(writing_chat, 'chat', reply)
+    with pw.sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        page = browser.new_page(viewport={'width': 1440, 'height': 1000})
+        key, original = make_project(page, base)
+        page.locator('#projectChat').click()
+        send(page, 'Make the first sentence clearer.')
+        pw.expect(page.locator('#projectChatReview')).to_be_visible()
+        send(page, 'Why this wording?')
+        pw.expect(page.get_by_role('button', name='Review earlier edit')).to_be_visible()
+        assert get_project(page, key)['files'] == original
+        assert [m['role'] for m in calls[-1]] == ['user', 'assistant']
+        assert calls[-1][-1]['content'].endswith('[shortened]') and len(calls[-1][-1]['content']) <= 4000
+        page.locator('#projectChatReview').click()
+        page.locator('.cm-ai-accept').click()
+        pw.expect(page.locator('#projectChatReview')).to_be_hidden()
+        pw.expect(page.locator('#savedState')).to_have_text('All changes saved')
+        assert 'A clearer first sentence.' in get_project(page, key)['files']['main.tex']
+        browser.close()
+
+
+def test_one_broken_cached_chat_cannot_block_the_editor(model_list):
+    pw = pytest.importorskip('playwright.sync_api')
+    base, _, _ = model_list
+    with pw.sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        page = browser.new_page()
+        key, files = make_project(page, base)
+        page.goto(base + '/library')
+        page.evaluate("""id => sessionStorage.setItem('quill.tab.v1:local:chat:' + id,
+            JSON.stringify({open:true, active:2, threads:[null, {id:1,history:{}},
+              {id:2,name:'Continue',draft:'Keep me',history:[null],selection:{file:'constructor'}}]}))""", key)
+        page.goto(base + '/write?id=' + key)
+        pw.expect(page.locator('#projectChatInput')).to_have_value('Keep me')
+        pw.expect(page.get_by_role('button', name='Switch to Continue')).to_have_attribute('aria-pressed', 'true')
+        assert get_project(page, key)['files'] == files
+        browser.close()
+
+
+def test_storage_pressure_prioritises_active_chat_draft(model_list):
+    pw = pytest.importorskip('playwright.sync_api')
+    base, _, _ = model_list
+    with pw.sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        page = browser.new_page()
+        page.goto(base + '/library')
+        saved = page.evaluate("""async () => {
+          const {quillSession} = await import('/assets/workspace/quill-session.mjs');
+          const session = quillSession({authenticated:true, user:{user_id:'synthetic'}});
+          const original = Storage.prototype.setItem;
+          Storage.prototype.setItem = function(key, value) {
+            if (key.endsWith(':chat:quota') && value.length > 400) throw new DOMException('Full','QuotaExceededError');
+            return original.call(this, key, value);
+          };
+          try {
+            session.write('chat:quota', {open:true, active:2, threads:[
+              {id:1, history:[], draft:'a'.repeat(600)},
+              {id:2, history:[{role:'assistant',content:'x'.repeat(5000)}], draft:'My unsent question'}]});
+            return session.read('chat:quota');
+          } finally { Storage.prototype.setItem = original; }
+        }""")
+        assert saved['open'] and saved['threads'][0]['id'] == saved['active'] == 2
+        assert saved['threads'][0]['draft'] == 'My unsent question'
         browser.close()
