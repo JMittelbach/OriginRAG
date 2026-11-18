@@ -67,7 +67,12 @@ def test_exact_edit_proposals_are_bounded_to_included_files_and_warn_on_numbers(
         result = chat.parse_reply(json.dumps({'answer': 'Draft', 'edits': [edit, invalid]}), prepared)
         assert result['edits'] == [] and result['filtered']
     result = chat.parse_reply(json.dumps({'answer': 'Draft', 'edits': [edit, edit]}), prepared)
-    assert result['edits'] == [] and result['filtered'] == 1
+    assert len(result['edits']) == 1 and not result['filtered']
+    noop = {**edit, 'replacement': edit['original']}
+    result = chat.parse_reply(json.dumps({'answer': 'Draft', 'edits': [noop, edit]}), prepared)
+    assert len(result['edits']) == 1 and not result['filtered']
+    result = chat.parse_reply(json.dumps({'answer': 'Draft', 'edits': [edit, {**edit, 'replacement': '14 observations'}]}), prepared)
+    assert not result['edits'] and result['filtered']
 
 
 @pytest.mark.parametrize('raw', ['wrong', '{}', '{"answer":"x","edits":null}', '{"answer":"\\ud83d","edits":[]}'])

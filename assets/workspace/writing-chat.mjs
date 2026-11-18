@@ -307,7 +307,6 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
       if (!Array.isArray(result.files) || !Array.isArray(result.edits) || result.edits.some(edit => !result.files.includes(edit.file))) throw new Error('The model returned unusable changes.');
       stageReview(thread, result.edits, base, epoch, false);
       if (!result.edits.length) restoreEarlierEdit();
-      if (result.filtered) reply.item.append(element('p', 'The proposed changes did not match your draft and were discarded.', 'project-chat-warning'));
       thread.history.push({role: 'assistant', content: result.answer});
       status(thread, '');
     } catch (error) {

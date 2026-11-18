@@ -1,5 +1,6 @@
 import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +8,51 @@ from originrag import writing_chat
 from test_writing import workspace_server as workspace_server
 from test_writing_chat_browser import make_project, get_project
 from test_writing_language_browser import select_line, ask_selection
+
+
+@pytest.mark.parametrize('use_template,literal', [(False, True), (True, True), (True, False)],
+                         ids=['titlepage-environment', 'thesis-template', 'named-heading-without-code'])
+@pytest.mark.skipif(not os.environ.get('ORIGINRAG_TEST_LOCAL_MODEL'), reason='Opt-in: requires local Ollama')
+def test_real_titlepage_insertion_survives_accept_and_reload(workspace_server, monkeypatch, use_template, literal):
+    pw = pytest.importorskip('playwright.sync_api')
+    base, _ = workspace_server
+    model = os.environ['ORIGINRAG_TEST_LOCAL_MODEL']
+    monkeypatch.setenv('ORIGINWRITE_LANGUAGE_CHECK', '1')
+    monkeypatch.setenv('ORIGINRAG_OLLAMA_ANSWER_MODEL', model)
+    monkeypatch.setenv('ORIGINRAG_OLLAMA_MODEL', model)
+    heading = r'\section{Hello World}'
+    anchor = r'\makethesistitle' if use_template else r'\end{titlepage}'
+    with pw.sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        page = browser.new_page(viewport={'width': 1500, 'height': 1050})
+        key, files = make_project(page, base)
+        if use_template:
+            root = Path(__file__).resolve().parents[1] / 'assets/writing_templates/thesis'
+            files = {p.relative_to(root).as_posix(): p.read_text() for p in root.rglob('*') if p.suffix in {'.tex', '.sty'}}
+        else:
+            files['main.tex'] = '\n'.join([r'\documentclass{book}', r'\begin{document}', r'\frontmatter',
+                r'\begin{titlepage}', 'Example thesis', anchor, r'\chapter*{Abstract}', 'A short abstract.', r'\end{document}'])
+        response = page.request.post(base + '/api/writing', data={**get_project(page, key), 'action': 'save_project', 'files': files})
+        assert response.ok
+        page.reload()
+        page.locator('#source .cm-content').wait_for()
+        page.locator('#projectChat').click()
+        location = 'dem Titelblatt' if use_template else anchor
+        prompt = (f'Füge {heading} in main.tex direkt nach {location} ein.' if literal else
+                  'Füge in main.tex direkt nach dem Titelblatt eine neue Section mit dem Titel Hello World ein, vor dem Abstract.')
+        page.locator('#projectChatInput').fill(prompt)
+        page.locator('#projectChatSend').click()
+        page.wait_for_function("() => document.querySelector('.project-chat-message.assistant') && document.querySelector('#projectChatStop').hidden", timeout=150000)
+        assert page.locator('.cm-ai-accept').is_visible(), page.locator('.project-chat-message.assistant').inner_text()
+        assert get_project(page, key)['files'] == files
+        page.locator('.cm-ai-accept').click()
+        pw.expect(page.locator('.cm-ai-review')).to_have_count(0)
+        pw.expect(page.locator('#savedState')).to_have_text('All changes saved')
+        expected = {**files, 'main.tex': files['main.tex'].replace(anchor, anchor + '\n' + heading, 1)}
+        page.reload()
+        pw.expect(page.locator('#source .cm-content')).to_contain_text(heading)
+        assert get_project(page, key)['files'] == expected
+        browser.close()
 
 
 @pytest.mark.skipif(not os.environ.get('ORIGINRAG_TEST_LOCAL_MODEL'), reason='Opt-in: requires an already installed local Ollama model')
