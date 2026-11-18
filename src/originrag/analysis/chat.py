@@ -126,6 +126,8 @@ SOURCE_LOOKUP_PATTERNS = (
 )
 
 SYNTHESIS_REQUEST_PATTERNS = (
+    r"\b(?:et|puis)\s+(?:dis[- ]moi|explique\w*|résume\w*|compare\w*|indique\w*)\b",
+    r"\b(?:y|luego)\s+(?:dime|expl[ií]ca\w*|resume\w*|compara\w*|indica\w*)\b",
     r"^(?:(?:what|which) (?:funders?|funding sources?|sponsors?|sample sizes?|methods?|outcomes?|results?)|who (?:funded|sponsored))\b",
     r"^(?:wer (?:finanzierte|förderte)|welche(?:r|n)? (?:geldgeber|sponsoren|stichprobengrößen|methoden|ergebnisse))\b",
     r"\b(?:and|then)\s+(?:(?:please|also)\s+)*(?:tell me|extract|explain|give me (?:their|the) (?:findings|results|sample sizes?|funders?))\b",
@@ -219,6 +221,19 @@ def resolve_chat_task(
     ):
         return "sources"
     return "answer"
+
+
+def model_requests_bibliography(record):
+    """A model label alone must never downgrade a question about findings to a list."""
+    if record.get("status") != "ready" or record.get("deliverable") != "paper_list":
+        return False
+    normalized = str(record.get("normalized_question", "")).strip().casefold()
+    if any(re.search(p, normalized) for p in SYNTHESIS_REQUEST_PATTERNS):
+        return False
+    return bool(re.match(
+        r"^(?:(?:which|what) (?:are (?:the |some )?)?|(?:please )?(?:list|find|identify|show|recommend) "
+        r"(?:(?:me|some|the|relevant|primary|recent|\d+) )*)(?:research )?"
+        r"(?:publications?|papers?|articles?|studies|references?|sources?)\b", normalized))
 
 
 def build_chat_retrieval_question(

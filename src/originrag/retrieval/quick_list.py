@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import re
 import sqlite3
-
+from originrag.analysis.chat_commands import controls
 
 
 @dataclass(frozen=True)
@@ -15,17 +15,27 @@ class PaperList:
 
 _COUNTS = dict(zip("one two three four five six seven eight nine ten".split(), range(1, 11)))
 _COUNTS.update(zip("ein zwei drei vier fünf sechs sieben acht neun zehn".split(), range(1, 11)))
+for numbers in ("un deux trois quatre cinq six sept huit neuf dix", "un dos tres cuatro cinco seis siete ocho nueve diez"):
+    _COUNTS.update(zip(numbers.split(), range(1, 11)))
 _COUNT = r"(?:(?P<count>[1-9]\d?|100|" + "|".join(_COUNTS) + r")\s+)?"
 _REQUESTS = {
     "en": re.compile(r"(?:(?:hey[, ]+)?(?:(?:can|could|would) you )?(?:please )?(?:give|show|find|list|suggest|recommend)(?: me)? )?"
                      + _COUNT + r"(?:papers?|articles?|studies) (?:on|about|covering) (?P<topic>.+)", re.I),
     "de": re.compile(r"(?:(?:hey[, ]+)?(?:kannst du )?(?:bitte )?(?:gib|gibst du|zeig[e]?|finde|liste|nenn[e]?)(?: mir)? (?:bitte )?)?"
                      + _COUNT + r"(?:papers?|artikel|studien) (?:zu[mr]?|über|ueber) (?P<topic>.+)", re.I),
+    "fr": re.compile(r"(?:(?:montre|donne|trouve)(?:-moi| moi)? )?" + _COUNT
+                     + r"(?:articles?|études?|papers?) sur (?P<topic>.+)", re.I),
+    "es": re.compile(r"(?:(?:dame|busca|muéstrame|muestra)(?:me)? )?" + _COUNT
+                     + r"(?:artículos?|articulos?|estudios?|papers?) sobre (?P<topic>.+)", re.I),
 }
 
 
 def paper_list_request(message):
     text = " ".join(message.strip(" \r\n\t.?!").split())
+    # Correct the command prefix only. The topic is an untouched slice of the message.
+    divider = re.search(r"\s(?:on|about|covering|zu[mr]?|über|ueber|sur|sobre)\s", text, re.I)
+    if divider and not any(pattern.fullmatch(text) for pattern in _REQUESTS.values()):
+        text = controls(text[:divider.start()]) + text[divider.start():]
     if re.fullmatch(r"(?:which|what) (?:papers|articles) (?:can you see|do i have|are (?:there )?in (?:my|the) (?:library|corpus))"
                     r"(?: in (?:my|the) (?:library|corpus))?|(?:please )?(?:show|list)(?: me)? my papers", text, re.I):
         return PaperList("", 10, "en")
@@ -43,7 +53,9 @@ def paper_list_request(message):
                     r"\b(?:and then|then|tell|give|explain|compare|extract|summari[sz]e|report|list|what|why|how|"
                     r"that|which|using|published|since|before|after|without|excluding|only|not|except|or|"
                     r"assess|evaluate|identify|describe|interpret|include|their (?:main |key )?(?:findings|methods|results)|from \d{4}|"
-                    r"sag|gib|erklär\w*|vergleich\w*|fass\w*|nenne|welche\w*|ohne|seit|vor|nach|nur)\b", topic, re.I)):
+                    r"sag|gib|erklär\w*|vergleich\w*|fass\w*|nenne|welche\w*|ohne|seit|vor|nach|nur|"
+                    r"puis|ensuite|dis|indique\w*|qui|dont|résum\w*|explique\w*|compare\w*|sans|sauf|depuis|avant|après|"
+                    r"luego|después|dime|indica\w*|que|resum\w*|explica\w*|compara\w*|sin|excepto|desde|antes|no|ni|pas)\b", topic, re.I)):
             return None
         count = (match["count"] or "10").casefold()
         return PaperList(topic, int(count) if count.isdecimal() else _COUNTS[count], language)

@@ -43,6 +43,7 @@ from originrag.web_local_access import local_browser_request  # noqa: E402
 from originrag.model_runtime import manager_for, model_download_allowed, model_manage_allowed  # noqa: E402
 from originrag.library_topics import assign_library_topics  # noqa: E402
 from originrag.library_presence import presence_answer, presence_language  # noqa: E402
+from originrag.analysis.chat_commands import controls, reading_selection, ReadingSelection  # noqa: E402
 from originrag.retrieval.quick_list import indexed_list_ids, paper_list_request  # noqa: E402
 from originrag.personal_shelf import PersonalShelf  # noqa: E402
 from originrag.reading_history import ReadingHistory, reading_query  # noqa: E402
@@ -314,20 +315,44 @@ class WebChatApp:
             )
             language = presence_language(clean_message)
             listing = paper_list_request(clean_message) if resolved_task == "sources" else None
+            selection = reading_selection(clean_message)
+            command = controls(clean_message)
             relative = re.fullmatch(
                 r"(?:(?:can|could|would) you )?(?:please )?summari[sz]e (?:my|this|the|that|the first|the second) (?:paper|article)"
                 r"|(?:bitte )?fass(?:e)? (?:mir )?(?:bitte )?(?:mein|dieses|das|das erste|das zweite) paper zusammen",
-                clean_message.rstrip(".!?"), re.I)
+                command, re.I)
             direct = None
             group = re.fullmatch(
                 r"(?:(?:can|could|would) you )?(?:please )?summari[sz]e (?:these|those|both|the first two) (?:papers|articles|studies)"
                 r"|(?:bitte )?fass(?:e)? (?:mir )?(?:bitte )?(?:diese|beide|die beiden|die ersten zwei) (?:papers?|artikel|studien) zusammen",
-                clean_message.rstrip(".!?"), re.I)
+                command, re.I)
+            go_ahead = command.replace(", ", " ") in {"do that", "go ahead", "yes do that", "mach das", "ja mach das", "vas-y", "hazlo"}
+            affirmative = go_ahead or command in {"yes", "yep", "ja", "oui", "sí"}
+            prior = saved_turn_result(saved_turns[-1]) if saved_turns and (relative or group or selection or affirmative) else {}
+            # A correction refers to the displayed list, not the one-item summary of it.
+            last_list = prior.get("reading_choices") or prior.get("sources") or []
+            pending = prior.get("confirm_reading") if affirmative else None
+            confirm_reading = None
+            if pending and prior.get("task") == "library_status":
+                selection = ReadingSelection(pending["number"], pending["language"])
+            elif go_ahead:
+                direct = {"resolved_task": "library_status", "answer":
+                          "What would you like me to do: find papers, summarize a paper, or answer a question about the studies?"}
+            if selection and selection.correction and not (
+                prior.get("task") in {"paper_summary", "paper_summaries"} or prior.get("reading_choices")
+            ):
+                if 1 <= selection.number <= len(last_list):
+                    confirm_reading = {"number": selection.number, "language": selection.language}
+                    title = last_list[selection.number - 1].get("title", "")
+                    answer = (f"Soll ich Paper {selection.number} zusammenfassen: „{title}“?" if selection.language == "de"
+                              else f"Should I summarize paper {selection.number}: “{title}”?")
+                else:
+                    answer = "Which paper should I summarize? Give me a title, DOI, or a number from the last list."
+                direct = {"resolved_task": "library_status", "sources": last_list, "answer": answer}
             if group:
-                prior = saved_turn_result(saved_turns[-1]) if saved_turns else {}
                 refs = prior.get("sources") or []
                 if re.search(r"first two|ersten zwei", group[0], re.I):
-                    refs = refs[:2]
+                    refs = last_list[:2]
                 if (not 1 <= len(refs) <= 3 or not all(p.get("paper_id") for p in refs)
                     or (re.search(r"\b(both|beide|beiden|two|zwei)\b", group[0], re.I) and len(refs) != 2)):
                     direct = {"resolved_task": "library_status", "sources": refs, "answer":
@@ -335,7 +360,7 @@ class WebChatApp:
                               "for example: “Summarize the first two papers.”"}
                 else:
                     turn_args.reading_group = [(p["paper_id"], "de" if "zusammen" in group[0].lower() else "en") for p in refs]
-            if language or listing or relative:
+            if direct is None and (language or listing or relative or selection):
                 papers = REPO_ROOT / settings.papers
                 catalogue = library_catalog(str(papers.with_name("paper_registry.tsv")), str(papers),
                                             chunks_dir=str(REPO_ROOT / settings.chunks_dir))
@@ -344,17 +369,17 @@ class WebChatApp:
                 elif listing:
                     direct = quick_paper_list(listing, catalogue, settings)
                 else:
-                    prior = saved_turn_result(saved_turns[-1]) if saved_turns else {}
-                    refs = prior.get("sources") or []
-                    ordinal = re.search(r"\b(first|second|erste|zweite)\b", relative[0], re.I)
-                    n = int(bool(ordinal and ordinal[1].casefold() in {"second", "zweite"}))
-                    choices = refs if refs else catalogue if len(catalogue) == 1 else ()
-                    if n < len(choices) and (ordinal or len(choices) == 1) and choices[n].get("paper_id"):
-                        lang = "de" if re.search(r"\bfass", relative[0], re.I) else "en"
+                    refs = last_list if selection else prior.get("sources") or []
+                    n = selection.number - 1 if selection else 0
+                    choices = refs if refs else catalogue if len(catalogue) == 1 and not prior else ()
+                    if 0 <= n < len(choices) and (selection or len(choices) == 1) and choices[n].get("paper_id"):
+                        lang = selection.language if selection else "de" if "zusammen" in command else "en"
                         turn_args.reading_request = (choices[n]["paper_id"], lang)
+                        last_list = choices
                     else:
                         direct = {"resolved_task": "library_status", "sources": refs, "answer":
-                                  "Which paper should I summarize? Give me its title or DOI."}
+                                  (f"The list has {len(refs)} papers, not a paper #{n+1}. Choose a listed number or give its title or DOI."
+                                   if refs and selection else "Which paper should I summarize? Give me its title or DOI.")}
             if direct is not None:
                 turn_dir.mkdir(parents=True, exist_ok=True)
                 answer_path = turn_dir / "answer.md"
@@ -390,6 +415,12 @@ class WebChatApp:
                 resolved_task=resolved_task,
             )
             public_result["elapsed_seconds"] = round(time.monotonic() - started_at, 3)
+            if confirm_reading:
+                public_result["confirm_reading"] = confirm_reading
+            if last_list and (selection or relative or group):
+                public_result["reading_choices"] = [
+                    {"paper_id": p["paper_id"], "title": p.get("title", "")}
+                    for p in last_list[:100] if p.get("paper_id")]
             if public_result.get("claim_source_chains"):
                 trace_path = turn_dir / "automatic_claim_source_trace.json"
                 write_json(
@@ -1614,6 +1645,12 @@ def quick_paper_list(request, catalogue, settings):
     answer = (f"{count} Treffer zu „{request.topic}“" if de else
               f"{count} {'match' if count == 1 else 'matches'} for “{request.topic}”")
     if request.topic:
+        if request.language == "fr":
+            answer = f"{count} résultat{'s' if count != 1 else ''} pour « {request.topic} »"
+            scope = "catalogue et index du texte intégral" if "+" in scope else "catalogue"
+        elif request.language == "es":
+            answer = f"{count} resultado{'s' if count != 1 else ''} para «{request.topic}»"
+            scope = "catálogo e índice de texto completo" if "+" in scope else "catálogo"
         answer += f" ({scope}):" if count else f" ({scope})."
     else:
         total = page["total"]
@@ -3029,6 +3066,8 @@ def build_ask_args(
         backend=answer_backend,
         configured_answer_backend=settings.backend,
         understand_question=True,
+        auto_chat_routing=settings.task == "auto",
+        allow_reading_excerpt=True,
         require_searchable_fulltext=True,
         planner_backend=planner_backend,
         configured_planner_backend=settings.planner_backend,
@@ -3088,6 +3127,7 @@ def serialize_turn_result(
                 "sources": sources, "n_unique_papers": 1, "n_chunks": len(passages),
                 "retrieval_question": retrieval_question, "evidence_grade": "not_applicable",
                 "reading_card": {"coverage": card["inputs"]["coverage"], "cache_hit": card["cache_hit"],
+                                 "excerpt_only": card.get("verification") == "source_excerpt_only",
                                  "omitted_claims": card["omitted_claims"],
                                  "passages": [{"section": passages[c["source"]]["section"],
                                                 "page_start": passages[c["source"]]["page_start"],
@@ -7553,6 +7593,7 @@ INDEX_HTML = r"""<!doctype html>
       summary.className = "result-summary";
       if (data.task === "paper_summary") {
         const card = data.reading_card || {};
+        if (card.excerpt_only) return box;
         const coverage = card.coverage || {};
         summary.appendChild(makePill(coverage.basis === "abstract_only" ? "Paper summary · abstract only" : "Paper summary · selected passages"));
         if (card.cache_hit) summary.appendChild(makePill("Saved summary"));

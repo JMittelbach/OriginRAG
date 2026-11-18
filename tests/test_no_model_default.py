@@ -4614,6 +4614,27 @@ def test_malformed_planner_output_does_not_block_answer_retrieval(tmp_path, monk
     assert args.planner_backend == "ollama"
 
 
+@pytest.mark.parametrize("auto,normalized,expected", [
+    (True, "What publications are available on temperature monitoring?", "sources"),
+    (False, "What publications are available on temperature monitoring?", "answer"),
+    (True, "Which sensors did papers on temperature monitoring use?", "answer"),
+])
+def test_validated_model_understanding_can_route_only_a_bibliography(tmp_path, monkeypatch, auto, normalized, expected):
+    question = "Mi indichi qualche pubblicazione sul monitoraggio della temperatura?"
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tdoi\nP1\tTemperature monitoring\t10.1000/test\n")
+    (tmp_path / "P1.jsonl").write_text(json.dumps({"paper_id":"P1", "chunk_id":"P1_1",
+        "text":"Sensors were used for temperature monitoring in a laboratory. " * 10}) + "\n")
+    args = make_args(question, str(tmp_path), str(papers), "none")
+    args.auto_chat_routing, args.understand_question, args.configured_answer_backend = auto, True, "qwen"
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **kw: dict(
+        status="ready", normalized_question=normalized, original_question=question,
+        deliverable="paper_list", language="it", model="test", search_queries=["temperature monitoring"], intent="question"))
+    monkeypatch.setattr(ask_corpus, "explain_paper_search_matches", lambda *a, **kw: pytest.fail("Unnecessary model call"))
+    result = ask_corpus.run_question(args, tmp_path / "run")
+    assert result["resolved_task"] == expected
+
+
 def make_args(question: str, chunks_dir: str, papers: str, backend: str) -> SimpleNamespace:
     return SimpleNamespace(
         question=question,

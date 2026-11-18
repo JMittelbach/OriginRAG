@@ -179,12 +179,27 @@ def test_quick_lists_and_reading_followup(tmp_path, monkeypatch):
     from contextlib import nullcontext
     from types import SimpleNamespace
     monkeypatch.setattr(web_chat, "manager_for", lambda *a: SimpleNamespace(session=lambda: nullcontext(None)))
+    calls = []
     def read_card(args, turn_dir, progress_callback=None):
-        assert args.reading_request == ("P01", "en")
+        calls.append(args.reading_request)
         turn_dir.mkdir()
         return {"resolved_task": "library_status", "answer": "test", "answer_path": turn_dir / "answer.md"}
     monkeypatch.setattr(web_chat.ask_corpus, "run_question", read_card)
     app.run_turn("Can you summarize the second paper?", {})
+    app.run_turn("Nee, den dritten!", {})
+    app.run_turn("Résume le quatrième article", {})
+    assert calls == [("P01", "en"), ("P02", "de"), ("P03", "fr")]
+    result = app.run_turn("Actually, the 20th one", {})
+    assert "10 papers" in result["answer"] and len(calls) == 3
+    app.reset()
+    result = app.run_turn("Nee, den dritten!", {})
+    assert result["task"] == "library_status" and not result["sources"] and len(calls) == 3
+    assert app.run_turn("Ey, mach das", {})["task"] == "library_status" and len(calls) == 3
+    app.run_turn("Give me three papers on thermal calibration", {})
+    confirmation = app.run_turn("Nee, den dritten!", {})
+    assert confirmation["confirm_reading"]["number"] == 3 and "P02" == confirmation["sources"][2]["paper_id"]
+    app.run_turn("Ja mach das", {})
+    assert calls[-1] == ("P02", "de") and len(calls) == 4
 
 
 @pytest.mark.parametrize('failure', [BrokenPipeError, ConnectionResetError])

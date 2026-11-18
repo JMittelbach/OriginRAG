@@ -188,6 +188,14 @@ def test_unsupported_finding_is_removed_not_rewritten_as_a_fact(tmp_path, monkey
     assert "were omitted" in rc.card_markdown(card)
 
 
+def test_web_can_show_labelled_source_excerpt_but_never_cache_an_unverified_summary(tmp_path, monkeypatch):
+    fake_model(monkeypatch, supported=[])
+    card = rc.create_card(PAPER, CHUNKS, model="test", language="de", cache_dir=tmp_path, allow_excerpt=True)
+    assert card["verification"] == "source_excerpt_only" and not card["claims"]
+    assert TEXT in rc.card_markdown(card) and "Auszug" in rc.card_markdown(card)
+    assert not list(tmp_path.glob("*.json"))
+
+
 def test_structured_abstract_is_not_described_as_full_text():
     _, coverage = rc.select_passages([dict(CHUNKS[0], section="Structured Abstract")])
     assert coverage["basis"] == "abstract_only"

@@ -23,6 +23,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from originrag.analysis.answer_format import normalize_answer_format  # noqa: E402
+from originrag.analysis.chat import model_requests_bibliography  # noqa: E402
 from originrag.analysis.question_understanding import understand_question, understanding_plan  # noqa: E402
 from originrag.analysis.corpus_inventory import extract_inventory  # noqa: E402
 from originrag.summaries.reading_card import summary_request, load_paper, create_card, card_markdown  # noqa: E402
@@ -459,7 +460,8 @@ def run_paper_reading_card(args, output_dir: Path, request: tuple[str, str], pro
     progress("Opening the selected paper")
     paper, chunks = load_paper(target, resolve_repo_path(args.papers), resolve_repo_path(args.chunks_dir))
     card = create_card(paper, chunks, model=getattr(args, "answer_model", None), language=language,
-                       cache_dir=REPO_ROOT / "runtime/reading_cards", progress=progress)
+                       cache_dir=REPO_ROOT / "runtime/reading_cards", progress=progress,
+                       allow_excerpt=getattr(args, "allow_reading_excerpt", False))
     output_dir.mkdir(parents=True, exist_ok=True)
     answer = card_markdown(card)
     answer_path = output_dir / "answer.md"
@@ -558,6 +560,12 @@ def run_question(
             args.retrieval_question = retrieval_question
             inventory_mode = (exclusive_report_doi is None and understanding["intent"] == "corpus_inventory"
                               and task in {"answer", "sources"})
+            if (task == "answer" and getattr(args, "auto_chat_routing", False)
+                    and exclusive_report_doi is None and not inventory_mode
+                    and model_requests_bibliography(understanding)):
+                task = args.task = "sources"
+                args.evidence_selector = "current"
+                args.paper_search_mode = classify_paper_search_mode(answer_question)
         elif not understanding.get("fallback"):
             if understanding["status"] == "unavailable":
                 model = understanding.get("model") or "selected model"
@@ -1020,6 +1028,8 @@ def run_question(
             and paper_search_mode != "targeted_lookup"
             and not inventory_mode
             and not understanding.get("fallback")
+            and not (getattr(args, "auto_chat_routing", False) and model_requests_bibliography(understanding)
+                     and not paper_search_detail_fields)
         ):
             progress("Explaining why each paper matches the question")
             explanation_args = {
