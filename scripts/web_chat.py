@@ -44,7 +44,7 @@ from originrag.model_runtime import manager_for, model_download_allowed, model_m
 from originrag.library_topics import assign_library_topics  # noqa: E402
 from originrag.library_presence import presence_answer, presence_language  # noqa: E402
 from originrag.analysis.chat_commands import controls, reading_selection, ReadingSelection  # noqa: E402
-from originrag.retrieval.quick_list import indexed_list_ids, paper_list_request  # noqa: E402
+from originrag.retrieval.quick_list import PaperList, indexed_list_ids, more_list_request, paper_list_request  # noqa: E402
 from originrag.personal_shelf import PersonalShelf  # noqa: E402
 from originrag.reading_history import ReadingHistory, reading_query  # noqa: E402
 from originrag.reader_notes import ReaderNotes, NoteConflict, document_key, notebook_paper_key, validate_notebook  # noqa: E402
@@ -322,6 +322,17 @@ class WebChatApp:
                 r"|(?:bitte )?fass(?:e)? (?:mir )?(?:bitte )?(?:mein|dieses|das|das erste|das zweite) paper zusammen",
                 command, re.I)
             direct = None
+            seen_ids = set()
+            more = more_list_request(clean_message) if settings.task in {"auto", "sources"} else None
+            if more:
+                listing, seen_ids = resume_quick_list(more, saved_turns, settings)
+                if listing is None and command not in {"more", "mehr"}:
+                    direct = {"resolved_task": "library_status", "answer": {
+                        "en": "Which topic should I find more papers on?",
+                        "de": "Zu welchem Thema soll ich weitere Paper suchen?",
+                        "fr": "Sur quel sujet voulez-vous d’autres articles ?",
+                        "es": "¿Sobre qué tema buscas más artículos?",
+                    }[more[0]]}
             group = re.fullmatch(
                 r"(?:(?:can|could|would) you )?(?:please )?summari[sz]e (?:these|those|both|the first two) (?:papers|articles|studies)"
                 r"|(?:bitte )?fass(?:e)? (?:mir )?(?:bitte )?(?:diese|beide|die beiden|die ersten zwei) (?:papers?|artikel|studien) zusammen",
@@ -367,7 +378,9 @@ class WebChatApp:
                 if language:
                     direct = {"resolved_task": "library_status", "answer": presence_answer(catalogue, language)}
                 elif listing:
-                    direct = quick_paper_list(listing, catalogue, settings)
+                    direct = quick_paper_list(listing, catalogue, settings, seen_ids=seen_ids)
+                    direct["list_page"] = {"topic": listing.topic, "limit": listing.limit,
+                                           "scope": list_scope(settings), "first": not more}
                 else:
                     refs = last_list if selection else prior.get("sources") or []
                     n = selection.number - 1 if selection else 0
@@ -415,6 +428,8 @@ class WebChatApp:
                 resolved_task=resolved_task,
             )
             public_result["elapsed_seconds"] = round(time.monotonic() - started_at, 3)
+            if result.get("list_page"):
+                public_result["list_page"] = result["list_page"]
             if confirm_reading:
                 public_result["confirm_reading"] = confirm_reading
             if last_list and (selection or relative or group):
@@ -1626,21 +1641,51 @@ def library_catalog(
     )
 
 
-def quick_paper_list(request, catalogue, settings):
+def list_scope(settings):
+    fields = (settings.papers, settings.chunks_dir, settings.retrieval_index, settings.category)
+    return hashlib.sha256(json.dumps(fields, default=str).encode()).hexdigest()
+
+
+def resume_quick_list(more, saved_turns, settings):
+    lang, count = more
+    request = None
+    seen = set()
+    scope = list_scope(settings)
+    for turn in reversed(saved_turns):
+        if turn.get("task") != "sources":
+            break
+        result = saved_turn_result(turn)
+        page = result.get("list_page")
+        if not result.get("quick_list") or not page or page.get("scope") != scope:
+            break
+        if request is None:
+            request = PaperList(page["topic"], count or page["limit"], lang)
+        if page["topic"] != request.topic:
+            break
+        seen.update(p["paper_id"] for p in result["sources"])
+        if page["first"]:
+            return request, seen
+    return None, set()
+
+
+def quick_paper_list(request, catalogue, settings, *, seen_ids=frozenset()):
     if settings.category:
         catalogue = tuple(p for p in catalogue if p.get("category") == settings.category)
+    total_catalogue = len(catalogue)
+    if seen_ids:
+        catalogue = tuple(p for p in catalogue if p["paper_id"] not in seen_ids)
     page = search_library_catalog(request.topic, limit=request.limit, catalogue=catalogue)
     rows = page["items"]
     ids = {p["paper_id"] for p in rows}
     de = request.language == "de"
     scope = "Katalog" if de else "catalogue"
     if request.topic and len(rows) < request.limit:
+        available = {p["paper_id"]: p for p in catalogue if p["searchable"] and p["paper_id"] not in ids}
         ranked = indexed_list_ids(request, REPO_ROOT / settings.retrieval_index, REPO_ROOT / settings.chunks_dir,
-                                  REPO_ROOT / settings.papers)
+                                  REPO_ROOT / settings.papers, eligible=available, limit=request.limit - len(rows)) if available else None
         if ranked is not None:
             scope = "Katalog und Volltextindex" if de else "catalogue + full-text index"
-            available = {p["paper_id"]: p for p in catalogue if p["searchable"]}
-            rows.extend([available[k] for k in ranked if k in available and k not in ids][:request.limit - len(rows)])
+            rows.extend(available[k] for k in ranked)
     count = len(rows)
     answer = (f"{count} Treffer zu „{request.topic}“" if de else
               f"{count} {'match' if count == 1 else 'matches'} for “{request.topic}”")
@@ -1653,9 +1698,14 @@ def quick_paper_list(request, catalogue, settings):
             scope = "catálogo e índice de texto completo" if "+" in scope else "catálogo"
         answer += f" ({scope}):" if count else f" ({scope})."
     else:
-        total = page["total"]
+        total = total_catalogue
         answer = (f"Dein Katalog enthält {total} Paper. Hier siehst du {count}." if de else
                   f"Your catalogue contains {total} {'paper' if total == 1 else 'papers'}. Showing {count}.")
+    if seen_ids and count == 0:
+        answer = {"de": f"Keine weiteren Treffer in dieser Suche ({scope}).",
+                  "en": f"No more matches in this search ({scope}).",
+                  "fr": f"Aucun autre résultat pour cette recherche ({scope}).",
+                  "es": f"No hay más resultados para esta búsqueda ({scope})."}[request.language]
     answer += "".join(f"\n- {p['title']}" + (f" ({p['year']})" if p.get("year") else "") for p in rows)
     return {"resolved_task": "sources", "quick_list": True, "answer": answer,
             "sources": [{k: p.get(k) for k in ("paper_id", "title", "year", "doi", "local_pdf")} for p in rows]}
@@ -1684,7 +1734,7 @@ def search_library_catalog(
             if str(item.get("falciparum_topic") or "").casefold() == topic_key
         )
 
-    def score(item: dict[str, object]) -> tuple[int, str, str]:
+    def match_score(item):
         title = str(item.get("title") or "").casefold()
         author = str(item.get("author") or "").casefold()
         other = " ".join(
@@ -1694,6 +1744,9 @@ def search_library_catalog(
                 "topic_label", "falciparum_topic", "falciparum_topic_label",
             )
         )
+        searchable_text = " ".join((title, author, other))
+        if not all(token in searchable_text for token in query_tokens):
+            return None
         rank = 0
         if clean_query == title or clean_query == author:
             rank += 1000
@@ -1711,32 +1764,9 @@ def search_library_catalog(
         return (-rank, author or "~", title)
 
     if clean_query:
-        matches = [
-            item
-            for item in source
-            if all(
-                token
-                in " ".join(
-                    str(item.get(field) or "").casefold()
-                    for field in (
-                        "title",
-                        "author",
-                        "journal",
-                        "year",
-                        "doi",
-                        "paper_id",
-                        "category",
-                        "collection",
-                        "topic",
-                        "topic_label",
-                        "falciparum_topic",
-                        "falciparum_topic_label",
-                    )
-                )
-                for token in query_tokens
-            )
-        ]
-        matches.sort(key=score)
+        ranked = [(score, item) for item in source if (score := match_score(item)) is not None]
+        ranked.sort(key=lambda row: row[0])
+        matches = [item for _, item in ranked]
     else:
         matches = list(source)
     safe_offset = max(0, int(offset))

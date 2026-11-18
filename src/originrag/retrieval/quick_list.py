@@ -18,6 +18,34 @@ _COUNTS.update(zip("ein zwei drei vier fünf sechs sieben acht neun zehn".split(
 for numbers in ("un deux trois quatre cinq six sept huit neuf dix", "un dos tres cuatro cinco seis siete ocho nueve diez"):
     _COUNTS.update(zip(numbers.split(), range(1, 11)))
 _COUNT = r"(?:(?P<count>[1-9]\d?|100|" + "|".join(_COUNTS) + r")\s+)?"
+_MORE = {
+    "en": r"(?:(?:(?:can|could) you )?(?:please )?(?:show|give|find)(?: me)? )?(?:the )?" + _COUNT + r"more(?: (?:papers|articles|studies))?",
+    "de": r"(?:(?:zeig[e]?|gib|nenn[e]?)(?: mir)? )?(?:bitte )?(?:noch )?" + _COUNT + r"(?:weitere|mehr)(?: (?:papers?|artikel|studien))?",
+    "fr": r"(?:(?:donne|montre)(?:-moi)? )?" + _COUNT + r"(?:autres|de plus)(?: articles)?",
+    "es": r"(?:dame )?" + _COUNT + r"(?:artículos |estudios )?más",
+}
+
+
+def more_list_request(message):
+    """Only a standalone continuation, never 'tell me more about …'."""
+    text = message.casefold().strip(" \t\r\n.!?¿¡")
+    text = re.sub(r"(?:,?\s+)(?:please|bitte|por favor|merci)$", "", text)
+    for lang, pattern in _MORE.items():
+        match = re.fullmatch(pattern, text)
+        if match:
+            count = match["count"]
+            return lang, (int(count) if count and count.isdecimal() else _COUNTS.get(count))
+    # Allow "another five" and "noch fünf" without interpreting an ordinal
+    # like "the fifth" as a request for a new page.
+    for lang, prefix, noun in (("en", r"(?:(?:show|give) me )?another", r"papers|articles|studies"),
+                               ("de", r"(?:(?:zeig[e]?|gib) mir )?noch", r"papers?|artikel|studien")):
+        match = re.fullmatch(prefix + r" (\w+)(?: (?:" + noun + r"))?", text)
+        if match:
+            word = match[1]
+            count = int(word) if re.fullmatch(r"[1-9]\d?|100", word) else _COUNTS.get(word)
+            if count:
+                return lang, count
+    return None
 _REQUESTS = {
     "en": re.compile(r"(?:(?:hey[, ]+)?(?:(?:can|could|would) you )?(?:please )?(?:give|show|find|list|suggest|recommend)(?: me)? )?"
                      + _COUNT + r"(?:papers?|articles?|studies) (?:on|about|covering) (?P<topic>.+)", re.I),
@@ -62,7 +90,7 @@ def paper_list_request(message):
     return None
 
 
-def indexed_list_ids(request, index, chunks, papers):
+def indexed_list_ids(request, index, chunks, papers, *, eligible, limit):
     """Return ranked distinct IDs; None means full text could not be searched."""
     from originrag.retrieval.fts_index import RetrievalIndexError, ensure_current_index
     from originrag.retrieval.index_cache import RetrievalIndexCacheError, resolve_read_bundle
@@ -77,10 +105,16 @@ def indexed_list_ids(request, index, chunks, papers):
         db = sqlite3.connect(bundle.index_path.resolve().as_uri() + "?mode=ro", uri=True)
         try:
             matches = db.execute(
-                "SELECT DISTINCT paper_id FROM chunk_fts WHERE chunk_fts MATCH ? ORDER BY rank LIMIT ?",
-                (" AND ".join(f'"{w}"' for w in terms), max(200, request.limit * 20)),
+                "SELECT DISTINCT paper_id FROM chunk_fts WHERE chunk_fts MATCH ? ORDER BY rank",
+                (" AND ".join(f'"{w}"' for w in terms),),
             )
-            return list(dict.fromkeys(row[0] for row in matches))
+            selected = []
+            for (paper_id,) in matches:
+                if paper_id in eligible:
+                    selected.append(paper_id)
+                    if len(selected) == limit:
+                        break
+            return selected
         finally:
             db.close()
     except (OSError, sqlite3.Error, RetrievalIndexError, RetrievalIndexCacheError):

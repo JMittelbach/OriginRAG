@@ -93,6 +93,8 @@ They become searchable when the update finishes; uncertain imports are flagged
 for review. Catalogue-only entries are not full-text papers.
 
 Ask a question in chat, open the cited passages and inspect the evidence status.
+For a reading list, try “Show me five papers on microscopy”, then “Five more”.
+The next list skips papers already shown in that search.
 Questions can be in German; replies default to English. Ask for German explicitly
 if you prefer it. Quill keeps the manuscript’s language when suggesting edits.
 Use **Stop** to cancel your request. **Summarize** creates a reading card for one

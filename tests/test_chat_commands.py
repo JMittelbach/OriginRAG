@@ -5,7 +5,19 @@ from originrag.analysis.chat import resolve_chat_task
 from originrag.analysis.chat import model_requests_bibliography
 from originrag.summaries.reading_card import summary_request
 from originrag.library_presence import presence_language
-from originrag.retrieval.quick_list import paper_list_request
+from originrag.retrieval.quick_list import more_list_request, paper_list_request
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Five more", ("en", 5)), ("Show me 7 more papers, please", ("en", 7)),
+    ("Zeig mir fünf weitere", ("de", 5)), ("Noch mehr!", ("de", None)),
+    ("Dame dos más", ("es", 2)), ("Trois autres articles", ("fr", 3)),
+    ("Gib mir noch fünf", ("de", 5)), ("Another 12 papers", ("en", 12)),
+    ("Tell me more", None), ("five more recent papers", None),
+    ("Find more papers on a different topic", None), ("give me 0 more", None),
+])
+def test_more_only_means_pagination_for_a_standalone_request(text, expected):
+    assert more_list_request(text) == expected
 
 
 @pytest.mark.parametrize("message,topic,n,lang", [

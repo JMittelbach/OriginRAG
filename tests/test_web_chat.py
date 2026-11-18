@@ -152,6 +152,48 @@ def test_chat_presence_distinguishes_empty_and_ambiguous_catalogues():
         assert web_chat.presence_language(question) is None
 
 
+def test_consecutive_paper_lists_survive_reopen_and_do_not_repeat(tmp_path, monkeypatch):
+    from originrag.retrieval.fts_index import build_fts_index
+    monkeypatch.setattr(web_chat, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(web_chat, "manager_for", lambda *a: pytest.fail("Pagination contacted a model"))
+    papers = tmp_path / "papers.tsv"
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    papers.write_text("paper_id\ttitle\n" + "".join(
+        f"P{i}\t{'Microscopy' if i < 3 else 'Instruments'} {i}\n" for i in range(8)))
+    for i in range(8):
+        (chunks / f"P{i}.jsonl").write_text(json.dumps({
+            "paper_id": f"P{i}", "chunk_id": f"P{i}_1",
+            "text": "Microscopy" if 3 <= i < 7 else "Measurement"}) + "\n")
+    index = tmp_path / "index.sqlite"
+    build_fts_index(chunks, papers, index)
+    settings = WebChatSettings(papers=str(papers), chunks_dir=str(chunks), retrieval_index=str(index))
+    sessions = str(tmp_path / "sessions")
+    app = WebChatApp(settings, sessions)
+    def ids(result):
+        return [p["paper_id"] for p in result["sources"]]
+    first = app.run_turn("Show me two papers on microscopy", {})
+    assert ids(first) == ["P0", "P1"]
+    session = app.session_dir
+    app = WebChatApp(settings, sessions)
+    app.load_session(str(session))
+    second = app.run_turn("Zeig mir drei weitere", {})
+    third = app.run_turn("More", {})
+    assert len(ids(second)) == 3 and len(ids(third)) == 2
+    shown = ids(first) + ids(second) + ids(third)
+    assert len(shown) == len(set(shown)) == 7 and "P7" not in shown
+    assert "No more matches" in app.run_turn("Five more", {})["answer"]
+    # A fresh search in the same chat starts its own series.
+    assert len(ids(app.run_turn("List one paper on instruments", {}))) == 1
+    assert len(ids(app.run_turn("Five more", {}))) == 4
+    assert ids(app.run_turn("Show me two papers on microscopy", {})) == ids(first)
+    assert not ids(app.run_turn("Five more", {"category": "another field"}))
+    app.run_turn("Can you see my paper?", {})
+    assert "Which topic" in app.run_turn("Five more", {})["answer"]
+    app.reset()
+    assert "Which topic" in app.run_turn("Five more", {})["answer"]
+
+
 def test_quick_lists_and_reading_followup(tmp_path, monkeypatch):
     from originrag.retrieval.fts_index import build_fts_index
     monkeypatch.setattr(web_chat, "REPO_ROOT", tmp_path)
