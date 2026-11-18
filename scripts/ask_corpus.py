@@ -501,6 +501,11 @@ def run_question(
     progress("Planning a focused literature search")
     chunks_dir_source = resolve_repo_path(args.chunks_dir)
     papers_tsv_source = resolve_repo_path(args.papers)
+    if getattr(args, "require_searchable_fulltext", False) and not getattr(args, "candidate_pool", None):
+        if (not chunks_dir_source.exists() or (getattr(args, "task", "answer") != "sources" and
+                not any(p.is_file() and p.stat().st_size for p in chunks_dir_source.glob("*.jsonl")))):
+            raise ValueError("No indexed full text is ready for chat. Use Add papers to import a PDF, "
+                             "or wait for indexing to finish. You can browse catalogue entries in Library.")
     validate_corpus_inputs(chunks_dir_source, papers_tsv_source)
     chunks_dir = chunks_dir_source
     papers_tsv = papers_tsv_source
@@ -528,21 +533,49 @@ def run_question(
                 args, model=getattr(args, "planner_model", None),
             ),
         )
+        reason = str(understanding.get("error") or "")
+        malformed = reason.startswith(("planner_output_not_json", "planner_output_invalid_json:", "invalid_unclear_flag",
+                                       "invalid_normalized_question", "invalid_search_queries", "invalid_search_query",
+                                       "invalid_intent", "invalid_language", "ollama_returned_empty_response",
+                                       "ollama_incomplete_response"))
+        if understanding["status"] != "ready" and (malformed or (task == "sources" and understanding["status"] == "unavailable")):
+            understanding["fallback"] = "rule_based_original_query"
+            args.planner_backend = "rule_based"
+            progress("Searching with your original wording")
         write_json(output_dir / "question_understanding.json", understanding)
-        if understanding["status"] != "ready":
-            raise ValueError(
-                "The search question could not be prepared reliably. Try again or rephrase the search term. "
-                "This does not mean that the library has no relevant papers."
-            )
-        answer_question = understanding["normalized_question"]
-        retrieval_question = answer_question
-        args.question = answer_question
-        args.retrieval_question = retrieval_question
-        inventory_mode = (
-            exclusive_report_doi is None
-            and understanding["intent"] == "corpus_inventory"
-            and task in {"answer", "sources"}
-        )
+        if understanding["status"] == "ready":
+            answer_question = understanding["normalized_question"]
+            retrieval_question = answer_question
+            args.question = answer_question
+            args.retrieval_question = retrieval_question
+            inventory_mode = (exclusive_report_doi is None and understanding["intent"] == "corpus_inventory"
+                              and task in {"answer", "sources"})
+        elif not understanding.get("fallback"):
+            if understanding["status"] == "unavailable":
+                model = understanding.get("model") or "selected model"
+                cause = reason.lower()
+                if "model" in cause and "not found" in cause:
+                    raise ValueError(f"The model service could not find '{model}'. Open Models and select "
+                                     "an installed model, or download this one.")
+                if "connection refused" in cause or "winerror 10061" in cause:
+                    raise ValueError(f"The model service refused the connection for '{model}'. "
+                                     "Start the model service on the host that runs OriginRAG, then retry.")
+                if "timed out" in cause or "timeout" in cause:
+                    raise ValueError(f"The model ({model}) timed out before the paper search began. "
+                                     "Retry when the host is idle or select a smaller installed model in Models.")
+                raise ValueError(f"The model ({model}) could not prepare the search. Open Models, check that it is "
+                                 "installed and selected, and make sure its model service is running.")
+            detail = {
+                "question_needs_clarification": "Please specify the topic or term you want to look up.",
+                "invalid_query_plan": "The model did not produce usable search terms. Try naming the topic explicitly.",
+                "normalization_lost_negation": "The model dropped a negation when rewriting the question.",
+                "normalization_changed_numeric_comparison": "The model changed a numeric comparison in the question.",
+                "normalization_changed_percentage_units": "The model changed a percentage in the question.",
+                "normalization_lost_comparison": "The model dropped a comparison in the question.",
+                "normalization_changed_identifiers_or_numbers": "The model changed an identifier or number.",
+                "search_queries_lost_identifiers_or_numbers": "The generated search terms omitted an identifier or number.",
+            }.get(reason, "The model could not reliably interpret this question.")
+            raise ValueError(f"{detail} The library has not been searched.")
         if inventory_mode:
             task = args.task = "sources"
             args.evidence_selector = "current"
@@ -978,6 +1011,7 @@ def run_question(
             and configured_answer_backend != "none"
             and paper_search_mode != "targeted_lookup"
             and not inventory_mode
+            and not understanding.get("fallback")
         ):
             progress("Explaining why each paper matches the question")
             explanation_args = {

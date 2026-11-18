@@ -328,7 +328,9 @@ def understand_question(question: str, *, context: str = "", model: str | None =
     try:
         payload = parse_json_object(result.text)
         normalized = payload.get("normalized_question")
-        if payload.get("unclear") is not False:
+        if type(payload.get("unclear")) is not bool:
+            raise ValueError("invalid_unclear_flag")
+        if payload["unclear"]:
             raise ValueError("question_needs_clarification")
         if not isinstance(normalized, str) or not 5 <= len(normalized) <= 1800:
             raise ValueError("invalid_normalized_question")

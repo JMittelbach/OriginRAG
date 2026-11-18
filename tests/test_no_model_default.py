@@ -4538,10 +4538,9 @@ def test_invalid_preparation_fails_before_retrieval_or_evidence_decision(
 
     with pytest.raises(ValueError) as exc:
         ask_corpus.run_question(args, tmp_path / "run")
-    assert str(exc.value) == (
-        "The search question could not be prepared reliably. Try again or rephrase the search term. "
-        "This does not mean that the library has no relevant papers."
-    )
+    assert str(exc.value).endswith("The library has not been searched.")
+    assert {"invalid_query_plan": "usable search terms", "normalization_changed_numeric_comparison": "numeric comparison",
+            "normalization_lost_negation": "negation"}[error] in str(exc.value)
 
     saved = json.loads((tmp_path / "run" / "question_understanding.json").read_text())
     assert saved["status"] == "needs_clarification"
@@ -4550,6 +4549,69 @@ def test_invalid_preparation_fails_before_retrieval_or_evidence_decision(
     assert not (tmp_path / "run" / "query_plan.json").exists()
     assert not (tmp_path / "run" / "answer_withheld.md").exists()
     assert not (tmp_path / "run" / "run_config.json").exists()
+
+
+@pytest.mark.parametrize("failure,expected", [
+    ("HTTP 404: model not found", "Open Models"),
+    ("<urlopen error [Errno 111] Connection refused>", "Start the model service"),
+    ("ollama_timeout: timed out", "timed out"),
+])
+def test_chat_identifies_unavailable_model_before_retrieval(tmp_path, monkeypatch, failure, expected):
+    args = make_args("How does sensor calibration work?", str(tmp_path), str(tmp_path / "papers.tsv"), "qwen")
+    (tmp_path / "papers.tsv").write_text("paper_id\ttitle\n")
+    args.understand_question = True
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **k: {
+        "status": "unavailable", "model": "test-model", "error": failure})
+    with pytest.raises(ValueError, match=expected) as exc:
+        ask_corpus.run_question(args, tmp_path / "run")
+    assert "test-model" in str(exc.value)
+
+
+def test_empty_chat_library_does_not_call_planner(tmp_path, monkeypatch):
+    args = make_args("How does sensor calibration work?", str(tmp_path), str(tmp_path / "papers.tsv"), "qwen")
+    args.require_searchable_fulltext = args.understand_question = True
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **k: pytest.fail("Empty library called model"))
+    with pytest.raises(ValueError, match="No indexed full text"):
+        ask_corpus.run_question(args, tmp_path / "run")
+
+
+@pytest.mark.parametrize("status,reason", [("needs_clarification", "planner_output_not_json"),
+                                          ("unavailable", "connection refused")])
+def test_source_search_continues_without_model_rewrite(tmp_path, monkeypatch, status, reason):
+    question = "Which calibration methods are used for thermal sensors?"
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tdoi\nP1\tCalibration methods for thermal sensors\t10.1000/test\n")
+    (tmp_path / "P1.jsonl").write_text(json.dumps({"paper_id": "P1", "chunk_id": "P1_1", "section": "Results",
+        "text": "Calibration methods for thermal sensors were compared in the laboratory. " * 10}) + "\n")
+    args = make_args(question, str(tmp_path), str(papers), "none")
+    args.task, args.configured_answer_backend = "sources", "qwen"
+    args.understand_question = True
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **k: {
+        "status": status, "error": reason, "normalized_question": "Wrong topic"})
+    monkeypatch.setattr(ask_corpus, "explain_paper_search_matches", lambda *a, **k: pytest.fail("Unexpected model call"))
+    result = ask_corpus.run_question(args, tmp_path / "run")
+    assert result["resolved_task"] == "sources"
+    assert result["retrieval_question"] == question
+    assert result["pack"]["question_understanding"]["fallback"] == "rule_based_original_query"
+    assert any(row["paper_id"] == "P1" for row in result["results"])
+
+
+def test_malformed_planner_output_does_not_block_answer_retrieval(tmp_path, monkeypatch):
+    question = "Which calibration methods are used for thermal sensors?"
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tdoi\nP1\tThermal sensor calibration\t10.1000/test\n")
+    (tmp_path / "P1.jsonl").write_text(json.dumps({"paper_id": "P1", "chunk_id": "P1_1",
+        "text": "Thermal sensors were calibrated using two temperature standards. " * 10}) + "\n")
+    args = make_args(question, str(tmp_path), str(papers), "none")
+    args.understand_question, args.require_searchable_fulltext = True, True
+    args.configured_answer_backend, args.planner_backend = "qwen", "ollama"
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **k: {
+        "status": "needs_clarification", "error": "invalid_search_queries"})
+    result = ask_corpus.run_question(args, tmp_path / "run")
+    assert result["resolved_task"] == "answer"
+    assert result["retrieval_question"] == question
+    assert any(row["paper_id"] == "P1" for row in result["results"])
+    assert args.planner_backend == "ollama"
 
 
 def make_args(question: str, chunks_dir: str, papers: str, backend: str) -> SimpleNamespace:

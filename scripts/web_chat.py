@@ -2947,6 +2947,7 @@ def build_ask_args(
         backend=answer_backend,
         configured_answer_backend=settings.backend,
         understand_question=True,
+        require_searchable_fulltext=True,
         planner_backend=planner_backend,
         configured_planner_backend=settings.planner_backend,
         planner_model=settings.planner_model,
