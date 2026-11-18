@@ -18,7 +18,7 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 
-from .folio import DEFAULT_PAGE, MAX_IMPORT_BYTES, MAX_NOTES, MAX_NOTE_TEXT, _image_dimensions, clean_text, image_data, safe_link, validate_content, validate_page, validate_comments
+from .folio import DEFAULT_PAGE, MAX_IMPORT_BYTES, MAX_NOTES, MAX_NOTE_TEXT, SHAPES, _image_dimensions, clean_text, image_data, safe_link, validate_content, validate_page, validate_comments
 
 NS = {
     'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
@@ -26,6 +26,8 @@ NS = {
     'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
     'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing',
     'pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture',
+    'wps': 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape',
+    'mc': 'http://schemas.openxmlformats.org/markup-compatibility/2006',
 }
 REL = 'http://schemas.openxmlformats.org/package/2006/relationships'
 CT = 'http://schemas.openxmlformats.org/package/2006/content-types'
@@ -95,6 +97,7 @@ def export_docx(document):
     numbering_instances = [(1, 1, 1, 0)]
     notes = {'footnote': [], 'endnote': []}
     bookmark_count = 0
+    drawing_id = 0
 
     def relationship(kind, target, external=False):
         key = 'rId' + str(len(relationships) + 1)
@@ -167,6 +170,31 @@ def export_docx(document):
                 text = sub(element, 'w:t', text=part)
                 text.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
 
+    def graphic_data(parent, cx, cy, name, uri, **extra):
+        nonlocal drawing_id
+        drawing_id += 1
+        inline = sub(sub(sub(parent, 'w:r'), 'w:drawing'), 'wp:inline', {'distT': 0, 'distB': 0, 'distL': 0, 'distR': 0})
+        sub(inline, 'wp:extent', {'cx': cx, 'cy': cy})
+        sub(inline, 'wp:docPr', {'id': drawing_id, 'name': name, **extra})
+        return sub(sub(inline, 'a:graphic'), 'a:graphicData', {'uri': NS[uri]})
+
+    def draw_shape(parent, attrs):
+        cx, cy = attrs['width'] * 9525, attrs['height'] * 9525
+        shape = sub(graphic_data(parent, cx, cy, SHAPES[attrs['geometry']], 'wps'), 'wps:wsp')
+        sub(shape, 'wps:cNvSpPr')
+        props = sub(shape, 'wps:spPr')
+        transform = sub(props, 'a:xfrm')
+        sub(transform, 'a:off', {'x': 0, 'y': 0})
+        sub(transform, 'a:ext', {'cx': cx, 'cy': cy})
+        sub(sub(props, 'a:prstGeom', {'prst': attrs['geometry']}), 'a:avLst')
+        for key in ('fill', 'stroke'):
+            target = props if key == 'fill' else sub(props, 'a:ln', {'w': attrs['weight'] * 9525})
+            if attrs[key] == 'none':
+                sub(target, 'a:noFill')
+            else:
+                sub(sub(target, 'a:solidFill'), 'a:srgbClr', {'val': attrs[key][1:].upper()})
+        sub(shape, 'wps:bodyPr')
+
     def picture(parent, node):
         attrs = node['attrs']
         kind, raw = image_data(attrs['src'])
@@ -190,10 +218,7 @@ def export_docx(document):
         scale = min(1, 2400 / width, 2400 / height)
         width, height = max(1, round(width * scale)), max(1, round(height * scale))
         cx, cy = width * 9525, height * 9525
-        inline = sub(sub(sub(parent, 'w:r'), 'w:drawing'), 'wp:inline', {'distT': 0, 'distB': 0, 'distL': 0, 'distR': 0})
-        sub(inline, 'wp:extent', {'cx': cx, 'cy': cy})
-        sub(inline, 'wp:docPr', {'id': len(media), 'name': name, 'descr': attrs.get('alt', ''), 'title': attrs.get('title', '')})
-        graphic = sub(sub(inline, 'a:graphic'), 'a:graphicData', {'uri': NS['pic']})
+        graphic = graphic_data(parent, cx, cy, name, 'pic', descr=attrs.get('alt', ''), title=attrs.get('title', ''))
         pic = sub(graphic, 'pic:pic')
         nonvisual = sub(pic, 'pic:nvPicPr')
         sub(nonvisual, 'pic:cNvPr', {'id': len(media), 'name': name})
@@ -269,6 +294,8 @@ def export_docx(document):
                 sub(border, 'w:bottom', {'w:val': 'single', 'w:sz': 6, 'w:color': 'A0AAB5'})
             elif kind == 'image':
                 picture(sub(parent, 'w:p'), node)
+            elif kind == 'shape':
+                draw_shape(sub(parent, 'w:p'), attrs)
             elif kind == 'table':
                 table = sub(parent, 'w:tbl')
                 props = sub(table, 'w:tblPr')
@@ -529,6 +556,29 @@ def _parse_xml(raw):
     return parser.root
 
 
+def _shape_from_word(drawing, shape):
+    geom = shape.find('wps:spPr/a:prstGeom', NS)
+    extent = drawing.find('wp:inline/wp:extent', NS)
+    if geom is None or geom.get('prst') not in SHAPES or extent is None or shape.find('wps:txbx', NS) is not None:
+        return None
+    def pixels(text, maximum, fallback):
+        return min(maximum, max(1, round(int(text) / 9525))) if re.fullmatch(r'[0-9]{1,14}', text) else fallback
+    attrs = {'geometry': geom.get('prst'), 'width': pixels(extent.get('cx', ''), 2400, 160),
+             'height': pixels(extent.get('cy', ''), 2400, 90)}
+    for key, path in [('fill', 'wps:spPr'), ('stroke', 'wps:spPr/a:ln')]:
+        target = shape.find(path, NS)
+        if target is None:
+            continue
+        shade = target.find('a:solidFill/a:srgbClr', NS)
+        if target.find('a:noFill', NS) is not None:
+            attrs[key] = 'none'
+        elif shade is not None and re.fullmatch('[0-9a-fA-F]{6}', shade.get('val', '')):
+            attrs[key] = '#' + shade.get('val').lower()
+        if key == 'stroke':
+            attrs['weight'] = pixels(target.get('w', ''), 16, 2)
+    return attrs
+
+
 def import_docx(raw):
     files = _read_archive(raw)
     root = _parse_xml(files['word/document.xml'])
@@ -746,6 +796,12 @@ def import_docx(raw):
             elif child.tag == tag('w:r'):
                 marks = marks_for(child, base_props) + ([inherited] if inherited else [])
                 for element in child:
+                    if element.tag == tag('mc:AlternateContent'):
+                        drawing = element.find('mc:Choice/w:drawing', NS)
+                        if drawing is None:
+                            warn('An unsupported alternate drawing was not imported.')
+                            continue
+                        element = drawing
                     if element.tag in {tag('w:footnoteReference'), tag('w:endnoteReference')}:
                         kind = 'footnote' if element.tag == tag('w:footnoteReference') else 'endnote'
                         key = element.get(tag('w:id'), '')
@@ -772,6 +828,13 @@ def import_docx(raw):
                     elif element.tag == tag('w:cr'):
                         result.append({'type': 'hardBreak', **({'marks': marks} if marks else {})})
                     elif element.tag == tag('w:drawing'):
+                        shape = element.find('wp:inline/a:graphic/a:graphicData/wps:wsp', NS)
+                        if shape is not None:
+                            attrs = _shape_from_word(element, shape)
+                            if attrs:
+                                result.append({'type': 'shape', 'attrs': attrs})
+                                warn('Basic shape geometry, size and solid colours were imported; other Word shape styling is not retained.')
+                                continue
                         if not element.findall('.//a:blip', NS):
                             warn('A chart, shape or drawing without a supported embedded raster image was not imported.')
                         if element.find('.//a:srcRect', NS) is not None or any(
@@ -869,7 +932,7 @@ def import_docx(raw):
         if props is not None and props.find('w:pageBreakBefore', NS) is not None and val(props, 'w:pageBreakBefore', '1') not in {'0', 'false', 'off'}:
             nodes.append({'type': 'pageBreak'})
         for item in stream:
-            if item['type'] in {'image', 'pageBreak'}:
+            if item['type'] in {'image', 'shape', 'pageBreak'}:
                 flush()
                 nodes.append(item)
             else:
@@ -924,7 +987,7 @@ def import_docx(raw):
             return {'type': 'tableCell', 'attrs': attrs, 'content': [{'type': 'paragraph'}]}
 
         def visible(nodes):
-            return any(n['type'] in {'image', 'table', 'pageBreak', 'horizontalRule', 'footnote'} or
+            return any(n['type'] in {'image', 'shape', 'table', 'pageBreak', 'horizontalRule', 'footnote'} or
                        n.get('text', '').strip() or visible(n.get('content', [])) for n in nodes)
 
         rows, active_merges = [], {}

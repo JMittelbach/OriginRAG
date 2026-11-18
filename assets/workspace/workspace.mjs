@@ -13,6 +13,7 @@ import {requestJSON} from './request.mjs';
 import {getAppProfile} from './profile.mjs';
 import {readingNavigation, renderReadingHistory} from './reading-history.mjs';
 import {addDialogClose} from './dialog-close.mjs';
+import {latexOutline} from './latex-outline.mjs';
 
 const $ = id => document.getElementById(id);
 const content = $('content');
@@ -327,17 +328,26 @@ async function projects() {
   show('manuscripts');
 }
 function bytes64(buffer) { const bytes = new Uint8Array(buffer); let raw = ''; for (let i = 0; i < bytes.length; i += 8192) raw += String.fromCharCode(...bytes.subarray(i, i + 8192)); return btoa(raw); }
+let previousOutline = null;
 function outline() {
-  $('outline').replaceChildren();
-  const text = textTypes.test(activeFile) ? project.files[activeFile] : '';
-  const pattern = /^\s*\\(part|chapter|section|subsection|subsubsection|paragraph)\*?(?:\[[^\]\n]*\])?\{([^}\n]+)\}/gm;
-  let match, count = 0;
-  while ((match = pattern.exec(text)) && count++ < 200) {
-    const line = text.slice(0, match.index).split('\n').length;
-    const b = button(match[2], () => { writerLayout.showCode(); sourceEditor.jump(line); });
-    b.className = 'outline-item ' + match[1]; b.title = `Line ${line}`; $('outline').append(b);
-  }
-  if (!count) $('outline').append(node('p', 'Sections in this file appear here.', 'hint'));
+  const pane = $('outline');
+  if (!pane) return;
+  const source = /\.(tex|sty|cls)$/i.test(activeFile) ? project.files[activeFile] || '' : '';
+  if (previousOutline?.pane === pane && previousOutline.source === source) return;
+  const entries = latexOutline(source);
+  const same = previousOutline?.pane === pane && entries.length === previousOutline.entries.length &&
+    entries.every(({kind, title, line}, i) => {
+      const old = previousOutline.entries[i];
+      return kind === old.kind && title === old.title && line === old.line;
+    });
+  previousOutline = {pane, source, entries};
+  if (same) return;
+  const buttons = entries.map(({kind, title, line}) => {
+    const b = button(title, () => { writerLayout.showCode(); sourceEditor.jump(line); });
+    b.className = 'outline-item ' + kind; b.title = 'Line ' + line;
+    return b;
+  });
+  pane.replaceChildren(...(buttons.length ? buttons : [node('p', 'Sections in this file appear here.', 'hint')]));
 }
 function changed() {
   editVersion++; $('savedState').textContent = 'Unsaved changes'; $('previewState').textContent = 'Source changed · preview needs recompiling';

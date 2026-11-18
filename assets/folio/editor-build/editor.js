@@ -8,10 +8,14 @@ import {TaskList, TaskItem, OrderedList} from '@tiptap/extension-list';
 import {TableKit, TableCell, TableHeader} from '@tiptap/extension-table';
 import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
-import {Selection, Plugin, PluginKey} from '@tiptap/pm/state';
+import {Selection, NodeSelection, Plugin, PluginKey} from '@tiptap/pm/state';
 import {Decoration, DecorationSet} from '@tiptap/pm/view';
 import {Fragment, Slice} from '@tiptap/pm/model';
 import {closeHistory} from '@tiptap/pm/history';
+import {FolioSearch} from './search.js';
+import {FolioShape} from './shape.js';
+export {NodeSelection};
+export {folioSearchState} from './search.js';
 export {closeHistory};
 
 export function safeLink(value) {
@@ -409,10 +413,16 @@ export function createFolioEditor(element, content, callbacks = {}) {
       SafeHighlight.configure({multicolor: true}), EmbeddedImage.configure({allowBase64: true}),
       TableKit.configure({table: {resizable: true}, tableCell: false, tableHeader: false}),
       boundedCell(TableCell), boundedCell(TableHeader), TaskList, TaskItem.configure({nested: true}),
-      Subscript, Superscript, ParagraphLayout, TableAppearance, PageBreak, FolioNote,
+      Subscript, Superscript, ParagraphLayout, TableAppearance, PageBreak, FolioNote, FolioSearch, FolioShape,
     ],
     editorProps: {
       attributes: {role: 'textbox', 'aria-label': 'Document content', 'aria-multiline': 'true', spellcheck: 'true', tabindex: '0'},
+      handleClickOn(view, _pos, node, nodePos, event, direct) {
+        if (!direct || !['image', 'shape'].includes(node.type.name) || event.button !== 0) return false;
+        view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, nodePos)));
+        view.focus();
+        return true;
+      },
       handlePaste(_view, event) {
         const files = [...(event.clipboardData?.files || [])];
         if (!files.length) return false;

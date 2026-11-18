@@ -1,5 +1,8 @@
 const NS = 'http://www.w3.org/2000/svg';
 const paths = {
+  paint: ['M5 3h14v7H5z', 'M8 10v4h5v7h4v-9h-5v-2'],
+  growFont: ['M3 20 8 6l5 14M5 15h6', 'M18 4v8M14 8h8'],
+  shrinkFont: ['M3 20 8 6l5 14M5 15h6', 'M15 8h7'],
   document: ['M5 3h10l4 4v14H5z', 'M15 3v5h4', 'M8 12h8M8 15h8M8 18h5'],
   new: ['M5 3h10l4 4v6M5 3v18h7', 'M15 3v5h4', 'M18 15v6M15 18h6'],
   save: ['M4 3h14l3 3v15H3V3z', 'M7 3v6h10V3M7 21v-8h10v8'],
@@ -13,6 +16,7 @@ const paths = {
   redo: ['m16 4 5 5-5 5', 'M21 9H11a7 7 0 0 0 0 14'],
   table: ['M3 4h18v16H3z', 'M3 9h18M3 14h18M9 4v16M15 4v16'],
   image: ['M3 4h18v16H3z', 'm3 17 6-6 4 4 3-3 5 5', 'M17 8h.01'],
+  shapes: ['M3 3h11v11H3z', 'M16 9a6 6 0 1 1-6 7'],
   size: ['M5 3H3v2M19 3h2v2M3 19v2h2M21 19v2h-2', 'M7 7h10v10H7z', 'm7 13 4-4m-4 0h4v4'],
   reset: ['M4 9a8 8 0 1 1-.1 6M4 3v6h6'],
   link: ['m10 14 4-4', 'm8 16-2 2a4 4 0 0 1-6-6l6-6a4 4 0 0 1 6 0', 'm16 8 2-2a4 4 0 0 1 6 6l-6 6a4 4 0 0 1-6 0'],
@@ -60,12 +64,16 @@ const paths = {
   orientation: ['M3 9h14v12H3zM9 9V3h12v14h-4', 'm6 15 3-3 3 3M9 12v6'],
 };
 const letters = {
+  paragraph: ['¶', {size: '20'}],
   bold: ['B', {weight: '750'}], italic: ['I', {style: 'italic'}],
   underline: ['U', {line: true}], strike: ['S', {strike: true}],
   subscript: ['x₂', {}], superscript: ['x²', {}], numbers: ['1≡', {}],
   symbol: ['Ω', {}], case: ['Aa', {size: '15'}], zoom: ['1:1', {size: '12'}],
 };
 const controls = {
+  'Format painter': ['paint', 'Format painter'],
+  'Increase font size': ['growFont', 'Grow font'], 'Decrease font size': ['shrinkFont', 'Shrink font'],
+  'Show paragraph marks': ['paragraph', 'Paragraph marks'],
   'New document': ['new', 'New'], 'Import document': ['import', 'Open'],
   'Save document': ['save', 'Save'], 'Save as…': ['saveAs', 'Save as…'],
   'Save a copy': ['copy', 'Save a copy'], 'Download recovery JSON': ['save', 'Recovery copy'],
@@ -88,6 +96,7 @@ const controls = {
   'Insert picture caption': ['caption', 'Caption'], 'Insert table caption': ['caption', 'Caption'],
   'Insert caption': ['caption', 'Insert caption'], 'Remove picture': ['delete', 'Remove picture'],
   'Reset picture size': ['reset', 'Original size'],
+  'Fit picture to page': ['fit', 'Page width'], 'Half-page picture': ['size', 'Half page'],
   'Add row above': ['rowAbove', 'Insert above'], 'Add row below': ['rowBelow', 'Insert below'],
   'Add column before': ['colBefore', 'Insert left'], 'Add column after': ['colAfter', 'Insert right'],
   'Delete row': ['delete', 'Delete row'], 'Delete column': ['delete', 'Delete column'],
@@ -101,6 +110,7 @@ const controls = {
   'Close sidebar': ['closeSidebar', 'Close sidebar'], '100% zoom': ['zoom', '100%'],
   'Fit page width': ['fit', 'Page width'], 'Focus mode': ['focus', 'Focus'],
   Draw: ['pen', 'Draw'], 'Insert drawing': ['pen', 'Drawing'], Pen: ['pen', 'Pen'],
+  Shapes: ['shapes', 'Shapes'], 'Format Shape': ['shapes', 'Format Shape'], 'Format Picture': ['image', 'Format Picture'],
   Highlighter: ['highlighter', 'Highlighter'], Eraser: ['erase', 'Eraser'],
   'Table of contents': ['toc', 'Table of contents'],
   'Update table of contents': ['reset', 'Update table'],
@@ -113,7 +123,7 @@ const controls = {
   Bookmark: ['bookmark', 'Bookmark'], 'Insert bookmark': ['bookmark', 'Bookmark'],
   'Cross-reference': ['crossref', 'Cross-reference'], 'Insert cross-reference': ['crossref', 'Cross-reference'],
 };
-const compact = new Set(['Undo', 'Redo', 'Bold', 'Italic', 'Underline', 'Strikethrough', 'Subscript', 'Superscript', 'Clear formatting', 'Align left', 'Align center', 'Align right', 'Align justify', 'Bulleted list', 'Numbered list', 'Increase indent', 'Decrease indent', 'Change case']);
+const compact = new Set(['Undo', 'Redo', 'Bold', 'Italic', 'Underline', 'Strikethrough', 'Subscript', 'Superscript', 'Clear formatting', 'Align left', 'Align center', 'Align right', 'Align justify', 'Bulleted list', 'Numbered list', 'Increase indent', 'Decrease indent', 'Change case', 'Increase font size', 'Decrease font size', 'Show paragraph marks']);
 const accent = new Set(['table', 'image', 'calendar', 'comment', 'addComment', 'caption', 'header', 'bookmark', 'design', 'pen', 'highlighter']);
 
 function svgElement(tag, attributes = {}) {

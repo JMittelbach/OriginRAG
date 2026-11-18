@@ -1,6 +1,8 @@
 import { requestJSON } from "../workspace/request.mjs";
 import {addDialogClose} from '../workspace/dialog-close.mjs';
-import { createFolioEditor, safeLink, collectFolioNotes } from "./editor.mjs";
+import { createFolioEditor, safeLink, collectFolioNotes, folioSearchState, closeHistory } from "./editor.mjs";
+import {captureFormatting, applyFormatting, fontSizePoints, applyFontSize} from './editing-tools.mjs';
+import {installFormatTools} from './format-pane.mjs';
 import { icon, decorateRibbon } from './icons.mjs';
 import { openDrawing, drawingIcon } from './drawing.mjs';
 import { STYLE_SETS, applyStyleSet, documentHeadings, updateContents, insertCrossReference } from './document-tools.mjs';
@@ -9,7 +11,11 @@ const app = document.getElementById("folioApp");
 const noticeElement = document.getElementById("folioNotice");
 const state = { doc: null, editor: null, version: 0, saved: 0, saving: null, copying: false, paused: false, timer: null, tab: "Home", sidebar: "", zoom: 100, list: [], viewTimer: null };
 const $ = (id) => document.getElementById(id);
+const tabId = name => 'folioTab' + name.replaceAll(' ', '');
 const bookmarks = new Set();
+let formatBrush = null, findRefresh = null, paragraphMarks = false, formatTools = null;
+const wordTotals = new WeakMap();
+let countTimer;
 function rememberSelection() {
   const saved = {editor: state.editor, bookmark: state.editor.state.selection.getBookmark()};
   bookmarks.add(saved);
@@ -21,10 +27,12 @@ function restoreSelection(saved) {
   state.editor.view.dispatch(state.editor.state.tr.setSelection(selection));
 }
 function editorTransaction({transaction}) {
+  if (transaction.docChanged || transaction.selectionSet) scheduleWordCount();
   if (transaction.docChanged) {
     for (const saved of bookmarks) {
       if (saved.editor === state.editor) saved.bookmark = saved.bookmark.map(transaction.mapping);
     }
+    findRefresh?.();
   }
   updateToolbar();
 }
@@ -172,6 +180,8 @@ document.addEventListener("click", (event) => {
   flush().then(() => location.assign(anchor.href)).catch((error) => notice(error.message, true));
 }, true);
 document.addEventListener("keydown", (event) => {
+  if (event.isComposing) return;
+  if (event.key === 'Escape' && formatBrush) { formatBrush = null; updateToolbar(); notice(''); }
   if (app.inert) { if ((event.ctrlKey || event.metaKey) && ['s', 'f'].includes(event.key.toLowerCase())) event.preventDefault(); return; }
   if (event.key === 'Escape') app.classList.remove('folio-focus');
   if (state.editor && !event.defaultPrevented && !event.target.closest('input, textarea, select, dialog')) {
@@ -182,7 +192,7 @@ document.addEventListener("keydown", (event) => {
       event.preventDefault(); showSidebar('comments', true); return;
     }
     if (event.altKey && event.key === 'F10') {
-      event.preventDefault(); $(`folioTab${state.tab}`)?.focus(); return;
+      event.preventDefault(); $(tabId(state.tab))?.focus(); return;
     }
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
@@ -193,7 +203,7 @@ document.addEventListener("keydown", (event) => {
     }
     flush().catch((error) => notice(error.message, true));
   }
-  if (state.editor && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+  if (state.editor && !event.defaultPrevented && !document.querySelector('dialog[open]') && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
     event.preventDefault();
     showSidebar("find");
   }
@@ -324,7 +334,9 @@ async function openDocument(doc, push = true) {
   await flush();
   if (typeof doc === "string") doc = await api(void 0, `/api/folio?id=${encodeURIComponent(doc)}`);
   await flush();
+  formatTools?.destroy(); formatTools = null;
   state.editor?.destroy();
+  formatBrush = null; findRefresh = null;
   clearTimeout(state.viewTimer);
   state.doc = doc;
   state.version = 0;
@@ -341,6 +353,7 @@ async function dashboard(push = true) {
   await flush();
   const data = await api();
   await flush();
+  formatTools?.destroy(); formatTools = null;
   state.editor?.destroy();
   state.editor = null;
   state.doc = null;
@@ -451,13 +464,13 @@ function renderEditor() {
   const tabs = el("div", void 0, "folio-tabs");
   tabs.setAttribute("role", "tablist");
   tabs.setAttribute("aria-label", "Document ribbon");
-  for (const name of ["File", "Home", "Insert", "Draw", "Design", "Layout", "References", "Review", "View", "Table", "Picture"]) {
+  for (const name of ["File", "Home", "Insert", "Draw", "Design", "Layout", "References", "Review", "View", "Table", "Picture", "Shape Format"]) {
     const b = btn(name, () => {
       state.tab = name;
       renderRibbon();
     }, "folio-tab");
     b.setAttribute("role", "tab");
-    b.id = `folioTab${name}`;
+    b.id = tabId(name);
     b.setAttribute('aria-controls', 'folioRibbon');
     b.dataset.tab = name;
     b.addEventListener('keydown', event => {
@@ -485,15 +498,21 @@ function renderEditor() {
   paper.id = "folioPaper";
   const editorHost = el("div");
   editorHost.id = "folioEditor";
+  editorHost.classList.toggle('folio-paragraph-marks', paragraphMarks);
   paper.append(editorHost);
   canvas.append(ruler, paper);
   const sidebar = el("aside", void 0, "folio-sidebar");
   sidebar.id = "folioSidebar";
   sidebar.hidden = true;
+  sidebar.addEventListener('keydown', event => {
+    if (!event.isComposing && event.key === 'Escape' && ['find', 'format'].includes(state.sidebar)) {
+      event.preventDefault(); event.stopPropagation(); showSidebar(''); state.editor.view.focus();
+    }
+  });
   work.append(canvas, sidebar);
   app.append(work);
   const statusbar = el("div", void 0, "folio-statusbar");
-  const stats = el("span", "0 words");
+  const stats = btn("Document statistics", wordCountDialog, "folio-count", "0 words");
   stats.id = "folioWordCount";
   statusbar.append(stats, el("span", "Spelling: browser", "folio-muted"));
   const zoom = el("div", void 0, "folio-zoom");
@@ -512,7 +531,28 @@ function renderEditor() {
   zoom.append(slider, btn("Zoom in", () => setZoom(state.zoom + 10), "folio-tool", "+"), zoomLabel);
   statusbar.append(zoom);
   app.append(statusbar);
-  state.editor = createFolioEditor(editorHost, state.doc.content, { onUpdate: changed, onSelection: updateToolbar, onTransaction: editorTransaction, onImage: (file) => insertImage(file).catch((error) => notice(error.message, true)), onError: message => notice(message, true) });
+  state.editor = createFolioEditor(editorHost, state.doc.content, { onUpdate: changed, onTransaction: editorTransaction, onImage: (file) => insertImage(file).catch((error) => notice(error.message, true)), onError: message => notice(message, true) });
+  const paintSelection = event => {
+    if (event.isComposing || !formatBrush) return;
+    if (event.type === 'keyup' && event.shiftKey) return;
+    if (event.type === 'keyup' && !event.key.startsWith('Arrow') && event.key !== 'Shift') return;
+    if (state.editor.state.selection.node) return;
+    const view = state.editor.view, native = view.dom.ownerDocument.getSelection();
+    if ('$cursor' in state.editor.state.selection) {
+      if (!native?.rangeCount || !view.dom.contains(native.anchorNode) || !view.dom.contains(native.focusNode)) return;
+      try {
+        const from = view.posAtDOM(native.anchorNode, native.anchorOffset), to = view.posAtDOM(native.focusNode, native.focusOffset);
+        state.editor.commands.setTextSelection({from, to});
+      } catch { return; }
+    }
+    if (state.editor.state.selection.empty) return;
+    if (applyFormatting(state.editor, formatBrush)) { formatBrush = null; updateToolbar(); notice('Formatting applied.'); }
+  };
+  editorHost.addEventListener('pointerup', event => {
+    if (event.button !== 0) return;
+    requestAnimationFrame(() => { if (editorHost.isConnected) paintSelection({type: 'pointerup'}); });
+  });
+  editorHost.addEventListener('keyup', paintSelection);
   editorHost.addEventListener('click', event => {
     const note = event.target.closest('[data-folio-note-id]');
     if (note) { event.preventDefault(); noteDialog(undefined, note.dataset.folioNoteId); return; }
@@ -523,13 +563,8 @@ function renderEditor() {
       anchor?.scrollIntoView({block: 'center'});
       return;
     }
-    const picture = event.target.closest('img');
-    if (picture && editorHost.contains(picture)) {
-      const position = state.editor.view.posAtDOM(picture, 0);
-      state.editor.chain().focus().setNodeSelection(position).run();
-    }
   });
-  editorHost.addEventListener('dblclick', event => { if (event.target.closest('img') && objectAtSelection('image')) pictureDialog(); });
+  formatTools = installFormatTools({editor: state.editor, host: editorHost, header: sidebarHeader, open: () => showSidebar('format')});
   renderRibbon();
   applyPage();
   refreshDocumentInfo();
@@ -545,18 +580,36 @@ function renderRibbon() {
     tab.setAttribute("aria-selected", String(active));
     tab.tabIndex = active ? 0 : -1;
   }
-  ribbon.setAttribute('aria-labelledby', `folioTab${state.tab}`);
+  ribbon.setAttribute('aria-labelledby', tabId(state.tab));
   ribbon.dataset.tab = state.tab;
   const editor = () => state.editor;
   if (state.tab === "Home") {
     ribbon.append(group("History", command("Undo", "undo", void 0, "↶"), command("Redo", "redo", void 0, "↷")));
+    const painter = btn('Format painter', () => {
+      formatBrush = formatBrush ? null : captureFormatting(state.editor);
+      notice(formatBrush ? 'Select text in the document to apply this formatting. Escape cancels.' : '');
+    }, 'folio-tool');
+    painter.id = 'folioFormatPainter';
+    ribbon.append(group('Clipboard', painter));
     const font = select("Font family", [["Arial", "Arial"], ["Calibri", "Calibri"], ["Georgia", "Georgia"], ["Times New Roman", "Times New Roman"], ["Verdana", "Verdana"], ["Courier New", "Courier New"]], "Arial", (value) => editor().chain().focus().setFontFamily(value).run());
     font.id = "folioFont";
-    const size = select("Font size", [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72].map((x) => [`${x}pt`, String(x)]), "11pt", (value) => editor().chain().focus().setFontSize(value).run());
+    const size = el('input'); size.type = 'number'; size.min = '6'; size.max = '96'; size.step = '0.5';
+    size.setAttribute('aria-label', 'Font size'); size.title = 'Font size in points'; size.setAttribute('list', 'folioFontSizes');
+    const sizes = el('datalist'); sizes.id = 'folioFontSizes';
+    for (const value of [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72, 96]) { const item = el('option'); item.value = value; sizes.append(item); }
+    const commitSize = () => { try { applyFontSize(editor(), size.value); notice(''); } catch (error) { notice(error.message, true); } };
+    size.onchange = commitSize;
+    size.onkeydown = event => {
+      if (event.isComposing) return;
+      if (event.key === 'Enter') { event.preventDefault(); commitSize(); }
+      if (event.key === 'Escape') { event.preventDefault(); size.value = fontSizePoints(editor()); editor().commands.focus(); }
+    };
     size.id = "folioFontSize";
     const fontControls = el("div", void 0, "folio-font-controls");
     const fontRow = el("div", void 0, "folio-control-row");
-    fontRow.append(font, size);
+    fontRow.append(font, size, sizes,
+      btn('Increase font size', () => applyFontSize(editor(), Math.min(96, fontSizePoints(editor()) + 1)), 'folio-tool'),
+      btn('Decrease font size', () => applyFontSize(editor(), Math.max(6, fontSizePoints(editor()) - 1)), 'folio-tool'));
     const marks = el("div", void 0, "folio-control-row");
     marks.append(command("Bold", "toggleBold", void 0, "B"), command("Italic", "toggleItalic", void 0, "I"), command("Underline", "toggleUnderline", void 0, "U"), command("Strikethrough", "toggleStrike", void 0, "S"), command("Subscript", "toggleSubscript", void 0, "x₂"), command("Superscript", "toggleSuperscript", void 0, "x²"));
     const color = el("input");
@@ -584,6 +637,9 @@ function renderRibbon() {
     const lists = el("div", void 0, "folio-control-row");
     lists.append(command("Bulleted list", "toggleBulletList", void 0, "• ≡"), command("Numbered list", "toggleOrderedList", void 0, "1. ≡"), command("Decrease indent", "changeIndent", -1, "⇤"), command("Increase indent", "changeIndent", 1, "⇥"));
     lists.append(select("Line spacing", [["1", "1.0"], ["1.15", "1.15"], ["1.5", "1.5"], ["2", "2.0"], ["2.5", "2.5"], ["3", "3.0"]], "1.5", (value) => editor().chain().focus().setParagraphSpacing(value).run()));
+    const marksButton = btn('Show paragraph marks', () => {
+      paragraphMarks = !paragraphMarks; $('folioEditor').classList.toggle('folio-paragraph-marks', paragraphMarks);
+    }, 'folio-tool'); marksButton.id = 'folioParagraphMarks'; lists.append(marksButton);
     paragraph.append(align, lists);
     ribbon.append(group("Paragraph", paragraph));
     const styles = el("div", void 0, "folio-style-gallery");
@@ -601,7 +657,8 @@ function renderRibbon() {
     ribbon.append(group("Download", ...["docx", "html", "txt", "json"].map((format) => btn(`Download ${format === "txt" ? "text" : format.toUpperCase()}`, () => download(format), "folio-tool"))), group("Print & recovery", btn("Print or save PDF", printDocument, "folio-tool"), btn("Download recovery JSON", recovery, "folio-tool")));
   } else if (state.tab === "Insert") {
     ribbon.append(group("Pages", command("Page break", "insertContent", { type: "pageBreak" }, "Page break"), command("Horizontal line", "setHorizontalRule", void 0, "Horizontal line")), group("Content", btn("Insert table", tableDialog, "folio-tool", "▦ Table"), btn("Insert image", imageDialog, "folio-tool", "▧ Image"), btn("Insert link", linkDialog, "folio-tool", "↗ Link"), btn("Insert date", () => editor().chain().focus().insertContent((/* @__PURE__ */ new Date()).toLocaleDateString()).run(), "folio-tool", "Date")), group("Table tools", command("Add row below", "addRowAfter", void 0, "＋ Row"), command("Add column after", "addColumnAfter", void 0, "＋ Column"), command("Delete row", "deleteRow", void 0, "− Row"), command("Delete column", "deleteColumn", void 0, "− Column"), command("Merge cells", "mergeCells", void 0, "Merge"), command("Split cell", "splitCell", void 0, "Split"), command("Delete table", "deleteTable", void 0, "Delete table")));
-    ribbon.append(group('Illustrations', btn('Insert drawing', drawingDialog, 'folio-tool')), group('Symbols', btn('Insert symbol', symbolDialog, 'folio-tool')));
+    const shapes = btn('Shapes', () => formatTools.shapes(shapes), 'folio-tool');
+    ribbon.append(group('Illustrations', shapes, btn('Insert drawing', drawingDialog, 'folio-tool')), group('Symbols', btn('Insert symbol', symbolDialog, 'folio-tool')));
   } else if (state.tab === 'Draw') {
     const pens = el('div', undefined, 'folio-pen-gallery');
     for (const [label, initialTool, initialColour, initialWidth] of [
@@ -633,9 +690,12 @@ function renderRibbon() {
     ribbon.append(group('Table of contents', btn('Table of contents', () => { updateContents(state.editor); notice('Linked contents added at the start. Use Update table after changing headings.'); }, 'folio-tool'), btn('Update table of contents', () => { updateContents(state.editor, true); notice('Contents updated from the current headings.'); }, 'folio-tool')),
       group('Footnotes', btn('Insert footnote', () => noteDialog('footnote'), 'folio-tool'), btn('Insert endnote', () => noteDialog('endnote'), 'folio-tool'), btn('Next note', nextNote, 'folio-tool')),
       group('References', btn('Insert cross-reference', crossReferenceDialog, 'folio-tool'), btn('Insert caption', () => captionDialog(objectAtSelection('image') ? 'image' : 'table'), 'folio-tool')));
+  } else if (state.tab === 'Shape Format') {
+    ribbon.append(group('Shape', btn('Format Shape', () => formatTools.openPane(), 'folio-tool'), btn('Remove shape', () => state.editor.chain().focus().deleteSelection().run(), 'folio-tool')));
   } else if (state.tab === 'Picture') {
-    ribbon.append(group('Picture', btn('Picture size and description', pictureDialog, 'folio-tool', 'Size & description'), btn('Insert picture caption', () => captionDialog('image'), 'folio-tool', 'Caption'), btn('Remove picture', () => state.editor.chain().focus().deleteSelection().run(), 'folio-tool')),
-      group('Display', btn('Reset picture size', () => state.editor.chain().focus().updateAttributes('image', {width: null, height: null}).run(), 'folio-tool', 'Original size'),
+    ribbon.append(group('Picture', btn('Format Picture', () => formatTools.openPane(), 'folio-tool'), btn('Picture size and description', pictureDialog, 'folio-tool', 'Size & description'), btn('Insert picture caption', () => captionDialog('image'), 'folio-tool', 'Caption'), btn('Remove picture', () => state.editor.chain().focus().deleteSelection().run(), 'folio-tool')),
+      group('Display', btn('Fit picture to page', () => fitPicture(1), 'folio-tool'), btn('Half-page picture', () => fitPicture(0.5), 'folio-tool'),
+        btn('Reset picture size', () => state.editor.chain().focus().updateAttributes('image', {width: null, height: null}).run(), 'folio-tool', 'Original size'),
         el('p', 'Pictures stay in the text flow. Double-click a picture to edit its size and description.', 'folio-ribbon-hint')));
   } else if (state.tab === 'Table') {
     const fill = el('input'); fill.type = 'color'; fill.value = '#e8eff9'; fill.setAttribute('aria-label', 'Cell fill color'); fill.title = 'Cell fill color';
@@ -663,8 +723,9 @@ function renderRibbon() {
 }
 function updateToolbar() {
   if (!state.editor || state.editor.isDestroyed) return;
-  const contextual = {Picture: !!objectAtSelection('image'), Table: !!objectAtSelection('table')};
-  for (const [name, active] of Object.entries(contextual)) if ($(`folioTab${name}`)) $(`folioTab${name}`).hidden = !active;
+  if (state.sidebar === 'format') formatTools?.sync();
+  const contextual = {Picture: !!objectAtSelection('image'), Table: !!objectAtSelection('table'), 'Shape Format': !!objectAtSelection('shape')};
+  for (const [name, active] of Object.entries(contextual)) if ($(tabId(name))) $(tabId(name)).hidden = !active;
   if (state.tab in contextual && !contextual[state.tab]) { state.tab = 'Home'; renderRibbon(); return; }
   const marks = { toggleBold: "bold", toggleItalic: "italic", toggleUnderline: "underline", toggleStrike: "strike", toggleSubscript: "subscript", toggleSuperscript: "superscript", toggleBulletList: "bulletList", toggleOrderedList: "orderedList" };
   for (const b of app.querySelectorAll("[data-command]")) {
@@ -681,7 +742,10 @@ function updateToolbar() {
   }
   const textStyle = state.editor.getAttributes("textStyle");
   if ($("folioFont")) $("folioFont").value = textStyle.fontFamily || "Arial";
-  if ($("folioFontSize")) $("folioFontSize").value = textStyle.fontSize || "11pt";
+  if ($("folioFontSize") && document.activeElement !== $('folioFontSize')) $("folioFontSize").value = fontSizePoints(state.editor);
+  if ($('folioFormatPainter')) $('folioFormatPainter').setAttribute('aria-pressed', String(!!formatBrush));
+  $('folioEditor')?.classList.toggle('folio-format-brush', !!formatBrush);
+  if ($('folioParagraphMarks')) $('folioParagraphMarks').setAttribute('aria-pressed', String(paragraphMarks));
 }
 function pageSetting(key, value) {
   state.doc.page[key] = value;
@@ -721,13 +785,39 @@ function fitPageWidth() {
   const available = canvas.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
   setZoom(Math.floor(available / width * 100));
 }
+function plainText(doc, from = 0, to = doc.content.size) {
+  return doc.textBetween(from, to, '\n', node => node.type.name === 'hardBreak' ? '\n' : '');
+}
+function wordCount(text) {
+  let words = 0;
+  const tokens = /\S+/gu;
+  while (tokens.test(text)) words++;
+  return words;
+}
+function selectionText({doc, selection}) {
+  if (selection.empty) return '';
+  return selection.ranges.map(({$from, $to}) => plainText(doc, $from.pos, $to.pos)).join('\n');
+}
+function scheduleWordCount() {
+  clearTimeout(countTimer);
+  countTimer = setTimeout(() => {
+    const label = $('folioWordCount');
+    if (!label || !state.editor) return;
+    const {doc, selection} = state.editor.state;
+    if (!wordTotals.has(doc)) wordTotals.set(doc, wordCount(plainText(doc)));
+    const total = wordTotals.get(doc);
+    const selected = selection.empty ? '' : wordCount(selectionText(state.editor.state)).toLocaleString() + ' of ';
+    const count = selected + total.toLocaleString() + (total === 1 ? ' word' : ' words');
+    if (label.textContent !== count) label.textContent = count;
+    const description = count + ' · Document statistics';
+    if (label.getAttribute('aria-label') !== description) label.setAttribute('aria-label', description);
+  }, 80);
+}
 function refreshDocumentInfo() {
+  scheduleWordCount();
   clearTimeout(state.viewTimer);
   state.viewTimer = setTimeout(() => {
     if (!state.editor) return;
-    const text = state.editor.getText();
-    const words = text.trim() ? text.trim().split(/\s+/u).length : 0;
-    if ($("folioWordCount")) $("folioWordCount").textContent = `${words.toLocaleString()} ${words === 1 ? "word" : "words"}`;
     if (state.sidebar === "outline") renderOutline();
     renderNotes();
   }, 180);
@@ -741,6 +831,10 @@ function sidebarHeader(title) {
   return pane;
 }
 function showSidebar(kind, add = false) {
+  const existing = kind === 'find' && state.sidebar === 'find' && $('folioSidebar').querySelector('input[type=search]');
+  if (existing) { existing.focus(); existing.select(); return; }
+  findRefresh = null;
+  if (kind !== 'find') state.editor.commands.setFolioSearch('');
   state.sidebar = kind;
   const pane = $("folioSidebar");
   pane.hidden = !kind;
@@ -748,6 +842,7 @@ function showSidebar(kind, add = false) {
   if (kind === "outline") renderOutline();
   if (kind === "comments") renderComments(add);
   if (kind === "find") renderFind();
+  if (kind === 'format') formatTools.sync(true);
 }
 function renderOutline() {
   const pane = sidebarHeader("Document outline");
@@ -803,76 +898,96 @@ function renderComments(add = false) {
   if (!(state.doc.comments || []).length) pane.append(el("p", "Select text to include a quote with your comment. Comments are document notes, not live text anchors.", "folio-muted"));
   if (add) input.focus();
 }
-function matches(query) {
-  const found = [];
-  if (!query) return found;
-  const literal = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu');
-  state.editor.state.doc.descendants((node, pos) => {
-    if (!node.isTextblock) return;
-    let text = "", positions = [];
-    node.descendants((child, offset) => {
-      if (child.isText) {
-        for (let i = 0; i < child.text.length; i++) positions.push(pos + 1 + offset + i);
-        text += child.text;
-      } else if (child.isLeaf) {
-        positions.push(pos + 1 + offset);
-        text += "￼";
-      }
-    });
-    for (const match of text.matchAll(literal)) {
-      found.push({from: positions[match.index], to: positions[match.index + match[0].length - 1] + 1});
-    }
-  });
-  return found;
-}
 function renderFind() {
   const pane = sidebarHeader("Find and replace");
   const find = el("input");
   find.type = "search";
   find.setAttribute("aria-label", "Find text");
   find.placeholder = "Find in document";
+  const {selection} = state.editor.state;
+  if (!selection.empty && selection.$from.sameParent(selection.$to) && selection.to - selection.from <= 256
+      && selection.$from.parent.inlineContent) {
+    const term = state.editor.state.doc.textBetween(selection.from, selection.to, '\n', '\ufffc');
+    if (term.trim() && !/[\n\ufffc]/.test(term)) find.value = term;
+  }
   const replace = el("input");
   replace.setAttribute("aria-label", "Replace with");
   replace.placeholder = "Replace with";
   const result = el("p", "Enter text to find.", "folio-muted");
+  result.setAttribute('role', 'status');
+  const options = el('div', undefined, 'folio-find-options');
+  const matchCase = el('input'), wholeWord = el('input');
+  for (const [input, label] of [[matchCase, 'Match case'], [wholeWord, 'Whole words']]) {
+    input.type = 'checkbox'; input.setAttribute('aria-label', label);
+    const item = el('label'); item.append(input, document.createTextNode(label)); options.append(item);
+  }
+  const settings = () => ({matchCase: matchCase.checked, wholeWord: wholeWord.checked});
   let index = -1;
+  const refresh = (reset = true) => {
+    if (reset) index = -1;
+    state.editor.commands.setFolioSearch(find.value, settings(), index);
+    const all = folioSearchState(state.editor).matches;
+    result.textContent = !find.value ? 'Enter text to find.' : `${all.length} matches`;
+    return all;
+  };
   const next = (direction = 1) => {
-    const all = matches(find.value);
+    const all = refresh(false);
     index = index < 0 && direction < 0 ? all.length - 1 : (index + direction + all.length) % Math.max(1, all.length);
     result.textContent = !find.value ? 'Enter text to find.' : all.length ? `${index + 1} of ${all.length} matches` : "No matches";
     if (all[index]) {
       const chain = state.editor.chain();
-      if (document.activeElement !== find) chain.focus();
-      chain.setTextSelection(all[index]).scrollIntoView().run();
+      if (![find, replace].includes(document.activeElement)) chain.focus();
+      chain.setFolioSearch(find.value, settings(), index).setTextSelection(all[index]).scrollIntoView().run();
     }
   };
-  find.oninput = () => {
+  find.oninput = () => refresh();
+  matchCase.onchange = wholeWord.onchange = () => refresh();
+  findRefresh = () => {
     index = -1;
-    const all = matches(find.value);
-    result.textContent = find.value ? `${all.length} matches` : 'Enter text to find.';
+    result.textContent = find.value ? `${folioSearchState(state.editor).matches.length} matches` : 'Enter text to find.';
   };
   find.onkeydown = (event) => {
     if (event.isComposing) return;
     if (event.key === "Enter") {
       event.preventDefault();
       next(event.shiftKey ? -1 : 1);
-    } else if (event.key === 'Escape') {
-      event.preventDefault(); event.stopPropagation();
-      showSidebar(''); state.editor.commands.focus();
     }
   };
-  pane.append(field("Find", find), field("Replace", replace), btn("Find next", next, "folio-button"), btn("Replace all", () => {
-    const all = matches(find.value);
+  const navigation = el('div', undefined, 'folio-find-actions');
+  navigation.append(btn('Find previous', () => next(-1), 'folio-button'), btn('Find next', next, 'folio-button'));
+  const replacements = el('div', undefined, 'folio-find-actions');
+  replacements.append(btn('Replace current', () => {
+    const all = refresh(false), current = all[index < 0 ? 0 : index];
+    if (!current) { result.textContent = 'No matches'; return; }
+    state.editor.view.dispatch(closeHistory(state.editor.state.tr.insertText(replace.value, current.from, current.to)));
+    state.editor.view.dispatch(closeHistory(state.editor.state.tr));
+    const remaining = folioSearchState(state.editor).matches;
+    const following = remaining.findIndex(match => match.from >= current.from + replace.value.length);
+    index = following < 0 ? -1 : following - 1;
+    if (remaining.length) next(); else result.textContent = 'Replaced 1 match. No matches remaining.';
+  }, 'folio-button'), btn("Replace all", () => {
+    const all = refresh(false);
     if (!all.length) {
       result.textContent = "No matches";
       return;
     }
     const tr = state.editor.state.tr;
-    for (const match of all.reverse()) tr.insertText(replace.value, match.from, match.to);
-    state.editor.view.dispatch(tr);
+    for (const match of [...all].reverse()) tr.insertText(replace.value, match.from, match.to);
+    state.editor.view.dispatch(closeHistory(tr));
+    state.editor.view.dispatch(closeHistory(state.editor.state.tr));
     result.textContent = `Replaced ${all.length} matches`;
-  }, "folio-button"), result);
+  }, "folio-button"));
+  pane.append(field("Find", find), options, navigation, field("Replace", replace), replacements, result);
+  if (find.value) {
+    const all = refresh();
+    index = all.findIndex(match => match.from === selection.from && match.to === selection.to);
+    if (index !== -1) {
+      state.editor.commands.setFolioSearch(find.value, settings(), index);
+      result.textContent = (index + 1) + ' of ' + all.length + ' matches';
+    }
+  }
   find.focus();
+  find.select();
 }
 function dialog(title, fields, submitLabel, action, {canCancel = () => true} = {}) {
   const selection = state.editor ? rememberSelection() : null;
@@ -1077,6 +1192,19 @@ function symbolDialog() {
     state.editor.chain().focus().insertContent({type: 'text', text: input.value}).run();
   });
 }
+function fitPicture(fraction) {
+  const current = objectAtSelection('image');
+  if (!current) throw new Error('Select a picture first.');
+  const image = state.editor.view.nodeDOM(current.pos);
+  const explicitSize = current.node.attrs.width && current.node.attrs.height;
+  const originalWidth = explicitSize ? current.node.attrs.width : image?.naturalWidth;
+  const originalHeight = explicitSize ? current.node.attrs.height : image?.naturalHeight;
+  if (!originalWidth || !originalHeight) throw new Error('Wait for the picture to load, then try again.');
+  const scale = Math.min(state.editor.view.dom.clientWidth * fraction / originalWidth, 2400 / originalWidth, 2400 / originalHeight);
+  const attrs = {...current.node.attrs, width: Math.max(1, Math.round(originalWidth * scale)), height: Math.max(1, Math.round(originalHeight * scale))};
+  state.editor.view.dispatch(closeHistory(state.editor.state.tr.setNodeMarkup(current.pos, undefined, attrs)));
+  state.editor.view.dispatch(closeHistory(state.editor.state.tr));
+}
 function pictureDialog() {
   const image = objectAtSelection('image');
   if (!image) throw new Error('Select a picture to change its size or description.');
@@ -1146,10 +1274,44 @@ function tableDialog() {
   columns.max = "10";
   columns.value = "3";
   columns.setAttribute("aria-label", "Table columns");
-  dialog("Insert table", [field("Rows", rows), field("Columns", columns)], "Insert table", () => {
+  const header = el('input'); header.type = 'checkbox'; header.checked = true; header.setAttribute('aria-label', 'Header row');
+  const headerLabel = el('label', undefined, 'folio-check'); headerLabel.append(header, document.createTextNode('Header row'));
+  const grid = el('div', undefined, 'folio-table-picker'); grid.setAttribute('role', 'grid'); grid.setAttribute('aria-label', 'Table size');
+  grid.setAttribute('aria-rowcount', '8'); grid.setAttribute('aria-colcount', '10');
+  const preview = el('p', '3 × 3 table', 'folio-table-preview'); preview.setAttribute('aria-live', 'polite');
+  let tableWindow;
+  const cells = [];
+  const highlight = (r, c) => {
+    preview.textContent = `${c} × ${r} table`;
+    for (const cell of cells) cell.classList.toggle('chosen', Number(cell.dataset.row) <= r && Number(cell.dataset.column) <= c);
+  };
+  for (let r = 1; r <= 8; r++) {
+    const row = el('div'); row.setAttribute('role', 'row');
+    for (let c = 1; c <= 10; c++) {
+      const cell = el('button'); cell.type = 'button'; cell.setAttribute('role', 'gridcell');
+      cell.setAttribute('aria-label', `${c} columns, ${r} rows`); cell.setAttribute('aria-rowindex', r); cell.setAttribute('aria-colindex', c);
+      cell.dataset.row = r; cell.dataset.column = c; cell.tabIndex = r === 1 && c === 1 ? 0 : -1;
+      cell.onpointerenter = cell.onfocus = () => highlight(r, c);
+      cell.onclick = () => { rows.value = r; columns.value = c; tableWindow.querySelector('form').requestSubmit(); };
+      cell.onkeydown = event => {
+        const steps = {ArrowLeft: -1, ArrowRight: 1, ArrowUp: -10, ArrowDown: 10, Home: -(c - 1), End: 10 - c};
+        if (!(event.key in steps)) return;
+        event.preventDefault();
+        const target = cells[Math.min(79, Math.max(0, (r - 1) * 10 + c - 1 + steps[event.key]))];
+        cells.forEach(item => { item.tabIndex = item === target ? 0 : -1; }); target.focus();
+      };
+      row.append(cell); cells.push(cell);
+    }
+    grid.append(row);
+  }
+  grid.onpointerleave = () => highlight(Number(rows.value), Number(columns.value));
+  rows.oninput = columns.oninput = grid.onpointerleave;
+  highlight(3, 3);
+  const dimensions = el('div', undefined, 'folio-paragraph-grid'); dimensions.append(field('Rows', rows), field('Columns', columns));
+  tableWindow = dialog("Insert table", [preview, grid, dimensions, headerLabel], "Insert table", () => {
     const r = Number(rows.value), c = Number(columns.value);
     if (!Number.isInteger(r) || !Number.isInteger(c) || r < 1 || r > 20 || c < 1 || c > 10) throw new Error("Choose 1–20 rows and 1–10 columns.");
-    state.editor.chain().focus().insertTable({ rows: r, cols: c, withHeaderRow: true }).run();
+    state.editor.chain().focus().insertTable({ rows: r, cols: c, withHeaderRow: header.checked }).run();
   });
 }
 function imageDialog() {
@@ -1207,9 +1369,16 @@ async function saveCopy() {
   }
 }
 function wordCountDialog() {
-  const text = state.editor.getText();
-  dialog("Document statistics", [el("p", `${text.trim() ? text.trim().split(/\s+/u).length : 0} words`), el("p", `${text.length} characters (including spaces)`), el("p", `${text.replace(/\s/g, "").length} characters (without spaces)`)], "Done", () => {
-  });
+  const detail = (title, text) => {
+    let characters = 0, withoutSpaces = 0;
+    for (const c of text) { characters++; if (!/\s/u.test(c)) withoutSpaces++; }
+    return [el('h3', title), el('p', wordCount(text).toLocaleString() + ' words'),
+      el('p', characters.toLocaleString() + ' characters (including spaces)'),
+      el('p', withoutSpaces.toLocaleString() + ' characters (without spaces)')];
+  };
+  const current = state.editor.state;
+  const fields = current.selection.empty ? [] : detail('Selection', selectionText(current));
+  dialog('Document statistics', [...fields, ...detail('Document', plainText(current.doc))], 'Done', () => {});
 }
 function preparePrint() {
   if (!state.doc || !state.editor) return;

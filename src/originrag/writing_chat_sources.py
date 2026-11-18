@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from heapq import nsmallest
 import json
 import os
 from pathlib import Path
@@ -35,18 +36,23 @@ def search(catalogue, query, *, allowed=None):
     if not query and allowed is None:
         return {'items': [], 'total': 0}
     tokens = query.split()
-    matches = []
-    for paper in catalogue:
-        if allowed is not None and paper.get('paper_id') not in allowed:
-            continue
-        fields = [str(paper.get(key) or '').casefold() for key in
-                  ('title', 'author', 'journal', 'doi', 'year', 'paper_id', 'topic_label')]
-        if not all(any(token in field for field in fields) for token in tokens):
-            continue
-        rank = (100 if query and query in fields[0] else 0) + sum(10 for token in tokens if token in fields[0])
-        matches.append((-rank, fields[1], fields[0], metadata(paper)))
-    matches.sort(key=lambda row: row[:3])
-    return {'items': [row[3] for row in matches[:8]], 'total': len(matches)}
+    total = 0
+
+    def matches():
+        nonlocal total
+        for paper in catalogue:
+            if allowed is not None and paper.get('paper_id') not in allowed:
+                continue
+            fields = [str(paper.get(key) or '').casefold() for key in
+                      ('title', 'author', 'journal', 'doi', 'year', 'paper_id', 'topic_label')]
+            if not all(any(token in field for field in fields) for token in tokens):
+                continue
+            rank = (100 if query and query in fields[0] else 0) + sum(10 for token in tokens if token in fields[0])
+            total += 1
+            yield -rank, fields[1], fields[0], paper
+
+    best = nsmallest(8, matches(), key=lambda row: row[:3])
+    return {'items': [metadata(row[3]) for row in best], 'total': total}
 
 
 def _excerpts(paper_id, chunks_dir, query):

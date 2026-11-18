@@ -21,6 +21,13 @@ Open **Folio → New document**, choose a starter, or import a DOCX or Folio JSO
 file. Use the ribbon to format text and paragraphs. Changes save automatically;
 wait for **Saved** before closing the page. Ctrl/Cmd+S saves immediately.
 
+**Home → Format painter** copies the first selected text's formatting and
+paragraph spacing. Select the destination text to apply it once, or press
+Escape to cancel. Links, note identities and heading structure stay intact.
+Use Undo to revert it. Type a font size directly (6–96 points), or use the
+grow/shrink buttons. The **¶** button shows paragraph endings only in the editor,
+not in printed or exported documents.
+
 To save a file on your computer, choose **File → Save as…** or press
 **Ctrl/Cmd+Shift+S**, enter a filename and choose **DOCX**, **HTML**, **text** or
 **JSON**. Autosave still saves the document in Origin. The local file is an
@@ -41,6 +48,7 @@ when no account is required. Their database is excluded from Git.
 
 Select an image to open **Picture**. Change its dimensions and description,
 lock or unlock the aspect ratio, reset its size, add a caption, or remove it.
+**Page width** and **Half page** resize proportionally to the writing area.
 Wide images scale down to fit the available space. These controls resize the
 image; they do not crop it or turn it into a floating object.
 
@@ -48,11 +56,21 @@ Place the cursor in a table to open **Table**. Insert or delete rows and columns
 select cells, merge or split them, change cell shading, and toggle header rows
 or columns. Drag column boundaries to resize columns. Captions are ordinary
 editable paragraphs with manual numbering, not automatic Word caption fields.
+**Insert → Table** also offers a size grid: hover or use the arrow keys, then
+click or press Enter. Numeric fields support up to 20 rows and 10 columns,
+with an optional header row.
 
 **Draw** opens a canvas with pens, a highlighter, an eraser, colour and thickness
 controls, and undo/redo. Use the pen presets to start quickly. Mouse, trackpad,
 pen and touch input are supported. Inserted sketches become embedded PNG
 pictures; their individual strokes are not editable afterwards.
+
+**Insert → Shapes** adds a rectangle, rounded rectangle or ellipse. Right-click
+it and choose **Format Shape**, or double-click it. The pane on the right lets
+you change its fill, outline and dimensions. Select another object to keep
+working in the same pane. Pictures and drawings open **Format Picture** for
+size, aspect ratio and alt text. Undo works for pane edits.
+Shapes stay in the text flow and export as editable DOCX shapes.
 
 **Design** offers four document-wide formatting sets with previews. They format
 existing text and headings while retaining emphasis, links and notes. Undo
@@ -76,6 +94,8 @@ and Greek characters without treating them as HTML.
 
 **Review** provides document comments and browser spelling checks. Comments
 retain a quote from the selection, not an anchor that tracks subsequent edits.
+Select a passage to see its word count in the status bar. Click the count
+to compare words and characters in the selection and the whole document.
 **View** provides the heading outline and zoom. The editing surface is continuous;
 page settings and explicit page breaks control the printed output. Pagination
 and font metrics can differ from Word, and depend on installed fonts and browser.
@@ -83,6 +103,11 @@ and font metrics can differ from Word, and depend on installed fonts and browser
 In **Find and replace**, Enter moves to the next match and Shift+Enter to the
 previous one, keeping the search field ready for typing. Escape closes the
 search panel and returns to the document.
+With a short passage selected, Ctrl/Cmd+F starts at that occurrence. Pressing
+it again in the panel refocuses the search without clearing your replacement.
+Matches are highlighted without changing document formatting. **Match case**
+and **Whole words** narrow the search; **Replace current** changes one match,
+while **Replace all** remains a single undoable action.
 
 If saving fails, keep the tab open. Retry **Save**, or use **File → Save a copy**
 after a conflict to create a separate document in Origin. **Download recovery JSON**
@@ -101,7 +126,7 @@ different document or layout model. Microsoft also distinguishes its
 | Text and paragraphs | Common character formatting, fonts, colours, headings, lists, alignment, before/after spacing and indentation. Arbitrary Word themes and custom style inheritance are not reproduced. |
 | Design | Four document-wide formatting presets with previews and undo. Word theme inheritance, watermarks and page borders are unsupported. Origin's Appearance setting changes the interface rather than the document. |
 | Drawing | Pen, highlighter, eraser, colour, thickness, undo/redo, and mouse/trackpad/touch input on a drawing canvas. Sketches are inserted as PNG pictures, not editable Word ink. |
-| Insert objects | Pictures, drawings, tables, links, dates, symbols and manual captions are supported. Shapes, SmartArt, charts and editable equations are unsupported. |
+| Insert objects | Basic in-flow shapes, pictures, drawings, tables, links, dates, symbols and manual captions are supported. Floating shapes, shape text, SmartArt, charts and editable equations are unsupported. |
 | Images | Embedded PNG, JPEG and WebP, size, aspect ratio and descriptions. No floating text wrap, cropping, rotation, SVG/EMF editing or grouped drawing objects. |
 | Tables | Editable cells, shading, header cells, column widths and merged/nested tables. No formulas, Excel embedding or Word's complete table-style system. Marking a header does not guarantee repeated headers across browser-printed pages. |
 | Layout/pages | A4/Letter, orientation, margin presets and explicit page breaks. No section breaks, section-specific layouts, text columns, running headers/footers or dynamic page-number fields. |
@@ -347,7 +372,9 @@ document's printed font size.
 
 The editor includes LaTeX syntax colours, line numbers, bracket matching, command
 suggestions, and separate undo history for each open file. Click a heading in
-**File outline** to jump to its source. The toolbar provides bold/italic wrapping,
+**File outline** to jump to its source. Multiline titles are shown together;
+headings in commented lines and common verbatim environments are skipped.
+The toolbar provides bold/italic wrapping,
 commenting, undo/redo and find/replace. **References** connects papers to the
 manuscript; project settings remain below the file tree.
 

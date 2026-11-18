@@ -580,7 +580,7 @@ class WritingStore:
         db = self.connect()
         try:
             query = ('SELECT d.id,d.kind,s.data,d.revision,d.updated '
-                     'FROM documents AS d INDEXED BY documents_listing '
+                     'FROM documents AS d ' + ('INDEXED BY documents_listing ' if key is None else '') +
                      'LEFT JOIN writing_summaries AS s ON s.document_id=d.id AND s.revision=d.revision ')
             parameters = ()
             if key is not None:

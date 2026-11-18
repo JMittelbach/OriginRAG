@@ -52,6 +52,7 @@ jobs:
             tests/test_workspace_profiles_browser.py \
             tests/test_workspace_navigation.py \
             tests/test_folio_http.py \
+            tests/test_folio_format_pane.py \
             tests/test_folio_engine.py \
             tests/test_folio_browser.py \
             tests/test_folio_schema_edges.py \
@@ -63,7 +64,9 @@ jobs:
             tests/test_folio_drawing_browser.py \
             tests/test_folio_word_ribbon_browser.py \
             tests/test_folio_document_tools_browser.py \
+            tests/test_folio_editing_polish_browser.py \
             tests/test_writing.py \
+            tests/test_writing_editor_integration.py::test_outline_exact_line_nested_titles_and_literal_examples \
             tests/test_quill_citations_backups.py \
             tests/test_writing_chat_browser.py \
             tests/test_writing_chat_threads_browser.py \
@@ -81,6 +84,8 @@ jobs:
           tests/test_folio_save_file_browser.py tests/test_folio_notes_engine.py
           tests/test_folio_drawing_browser.py tests/test_folio_word_ribbon_browser.py
           tests/test_folio_document_tools_browser.py
+          tests/test_folio_editing_polish_browser.py
+          tests/test_folio_format_pane.py
           tests/test_web_models.py
 
   python:

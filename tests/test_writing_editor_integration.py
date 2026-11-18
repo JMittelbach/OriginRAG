@@ -19,6 +19,31 @@ def get_project(page, project_id):
     return page.evaluate("async id => (await fetch('/api/writing?id=' + id)).json()", project_id)
 
 
+def test_outline_exact_line_nested_titles_and_literal_examples(workspace_server):
+    playwright = pytest.importorskip('playwright.sync_api')
+    base, _ = workspace_server
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        create_manuscript(page, base)
+        code = page.locator('#source .cm-content')
+        text = '\n'.join(['% Note', '', r'   \section*{First \emph{{result}}}',
+                          r'\begin{verbatim}', r'\section{Example only}', r'\end{verbatim}',
+                          '', r'\subsection[Short]{A', r'long \% title}', r'% \section{Hidden}'])
+        code.fill(text)
+        buttons = page.locator('#outline button')
+        playwright.expect(buttons).to_have_text(['First result', 'A long % title'])
+        buttons.last.click()
+        playwright.expect(page.locator('#cursorPosition')).to_contain_text('Ln 8,')
+        buttons.last.evaluate('b => window.previousHeading = b')
+        code.fill(text + '\nOnly body prose changed.')
+        playwright.expect(page.locator('#savedState')).to_have_text('All changes saved')
+        assert buttons.last.evaluate('b => b === window.previousHeading')
+        code.fill('\n' + text)
+        playwright.expect(buttons.last).to_have_attribute('title', 'Line 9')
+        browser.close()
+
+
 def test_real_code_editor_free_font_size_does_not_change_manuscript(workspace_server):
     playwright = pytest.importorskip('playwright.sync_api')
     base, _ = workspace_server

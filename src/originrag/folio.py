@@ -23,7 +23,8 @@ MAX_NOTES = 500
 MAX_NOTE_TEXT = 4000
 DEFAULT_PAGE = {'size': 'a4', 'orientation': 'portrait', 'margin': 'normal'}
 BLOCKS = {'paragraph', 'heading', 'blockquote', 'bulletList', 'orderedList', 'taskList',
-          'codeBlock', 'horizontalRule', 'image', 'table', 'pageBreak'}
+          'codeBlock', 'horizontalRule', 'image', 'shape', 'table', 'pageBreak'}
+SHAPES = {'rect': 'Rectangle', 'roundRect': 'Rounded rectangle', 'ellipse': 'Ellipse'}
 INLINE = {'text', 'hardBreak', 'footnote'}
 MARKS = {'bold', 'italic', 'underline', 'strike', 'code', 'link', 'textStyle',
          'highlight', 'subscript', 'superscript'}
@@ -300,6 +301,19 @@ def validate_content(content):
                 clean['colwidth'] = [_integer(w, 0, 2400, 'column width') for w in widths]
             if attrs.get('backgroundColor'):
                 clean['backgroundColor'] = color(attrs['backgroundColor'])
+        if kind == 'shape':
+            geometry = attrs.get('geometry', 'rect')
+            if not isinstance(geometry, str) or geometry not in SHAPES:
+                raise ValueError('Unsupported shape.')
+            clean['geometry'] = geometry
+            for key, default in [('fill', '#729ad0'), ('stroke', '#315887')]:
+                shade = attrs.get(key, default)
+                if not isinstance(shade, str) or not re.fullmatch(r'none|#[0-9a-fA-F]{6}', shade):
+                    raise ValueError('Invalid shape colour.')
+                clean[key] = shade.lower()
+            clean['width'] = _integer(attrs.get('width', 160), 1, 2400, 'shape width')
+            clean['height'] = _integer(attrs.get('height', 90), 1, 2400, 'shape height')
+            clean['weight'] = _integer(attrs.get('weight', 2), 1, 16, 'shape line weight')
         if kind == 'image':
             image_data(attrs.get('src'))
             clean['src'] = attrs['src']
@@ -433,6 +447,8 @@ def plain_text(content):
             return '\n'
         if kind == 'image':
             return '[' + node.get('attrs', {}).get('alt', 'Image') + ']\n'
+        if kind == 'shape':
+            return '[' + SHAPES[node['attrs']['geometry']] + ']\n'
         if kind == 'footnote':
             attrs = node['attrs']
             counters[attrs['kind']] += 1
@@ -494,6 +510,13 @@ def document_html(document):
             if attrs.get('width') and attrs.get('height'):
                 extra += f' style="aspect-ratio:{attrs["width"]}/{attrs["height"]}"'
             return f'<img src="{escape(attrs["src"])}"{extra}>'
+        if kind == 'shape':
+            radius = {'rect': '0', 'roundRect': '12px', 'ellipse': '50%'}[attrs['geometry']]
+            fill = 'transparent' if attrs['fill'] == 'none' else attrs['fill']
+            stroke = 'transparent' if attrs['stroke'] == 'none' else attrs['stroke']
+            style = (f'width:{attrs["width"]}px;height:{attrs["height"]}px;max-width:100%;box-sizing:border-box;'
+                     f'border-radius:{radius};background-color:{fill};border:{attrs["weight"]}px solid {stroke};print-color-adjust:exact')
+            return f'<div role="img" aria-label="{SHAPES[attrs["geometry"]]}" style="{style}"></div>'
         tag = {'paragraph': 'p', 'heading': 'h' + str(attrs.get('level', 1)), 'blockquote': 'blockquote',
                'bulletList': 'ul', 'orderedList': 'ol', 'taskList': 'ul', 'listItem': 'li', 'taskItem': 'li',
                'codeBlock': 'pre', 'table': 'table', 'tableRow': 'tr', 'tableCell': 'td', 'tableHeader': 'th'}[kind]
