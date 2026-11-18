@@ -5,8 +5,7 @@ import zipfile
 
 import pytest
 
-from originrag.folio import validate_content
-from originrag.folio import document_html, plain_text
+from originrag.folio import SHAPES, document_html, plain_text, validate_content
 from originrag.folio_docx import NS, import_docx
 from test_folio_browser import folio_browser as folio_browser
 from test_folio_http import folio_server as folio_server
@@ -33,9 +32,9 @@ def test_native_shape_without_folio_snapshot(geometry):
         assert props.find('a:ln', NS).get('w') == str(3 * 9525)
     doc, _ = import_docx(without_snapshot(raw))
     assert doc['content']['content'][1] == node
-    html = document_html(doc)
+    html = document_html({**doc, 'title': 'Shapes'})
     assert 'background-color:transparent' in html and 'border:3px solid #aabbcc' in html
-    assert '[Example]' in plain_text(doc['content'])
+    assert '[' + SHAPES[geometry] + ']' in plain_text(doc['content'])
 
 
 @pytest.mark.parametrize('attrs', [{'width': 0}, {'geometry': 'unknown'}, {'weight': 64}, {'fill': 'invalid'}])
