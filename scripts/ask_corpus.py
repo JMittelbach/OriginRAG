@@ -495,7 +495,15 @@ def run_question(
         if progress_callback is not None:
             progress_callback(stage)
 
-    request = summary_request(str(getattr(args, "answer_question", "") or args.question))
+    group = getattr(args, "reading_group", None)
+    if group:
+        parts = [run_paper_reading_card(args, output_dir / f"paper_{n}", req, progress)
+                 for n, req in enumerate(group, 1)]
+        answer = "\n\n".join(card_markdown(part["reading_card"]) for part in parts)
+        answer_path = output_dir / "answer.md"
+        answer_path.write_text(answer, encoding="utf-8")
+        return {"resolved_task": "paper_summaries", "parts": parts, "answer_path": answer_path, "answer": answer}
+    request = getattr(args, "reading_request", None) or summary_request(str(getattr(args, "answer_question", "") or args.question))
     if request is not None:
         return run_paper_reading_card(args, output_dir, request, progress)
     progress("Planning a focused literature search")

@@ -43,6 +43,7 @@ from originrag.web_local_access import local_browser_request  # noqa: E402
 from originrag.model_runtime import manager_for, model_download_allowed, model_manage_allowed  # noqa: E402
 from originrag.library_topics import assign_library_topics  # noqa: E402
 from originrag.library_presence import presence_answer, presence_language  # noqa: E402
+from originrag.retrieval.quick_list import indexed_list_ids, paper_list_request  # noqa: E402
 from originrag.personal_shelf import PersonalShelf  # noqa: E402
 from originrag.reading_history import ReadingHistory, reading_query  # noqa: E402
 from originrag.reader_notes import ReaderNotes, NoteConflict, document_key, notebook_paper_key, validate_notebook  # noqa: E402
@@ -280,9 +281,10 @@ class WebChatApp:
 
         with cancellable_lock(session_lock):
             settings = merge_settings(self.settings, settings_update)
+            saved_turns = read_session_turns(target_session)
             previous_turns = [
                 turn_context_from_saved_turn(turn)
-                for turn in read_session_turns(target_session)
+                for turn in saved_turns[-2:]
                 if turn.get("user")
             ]
             retrieval_question = build_chat_retrieval_question(
@@ -311,16 +313,53 @@ class WebChatApp:
                 infer_session_title(clean_message, resolved_task),
             )
             language = presence_language(clean_message)
-            if language:
+            listing = paper_list_request(clean_message) if resolved_task == "sources" else None
+            relative = re.fullmatch(
+                r"(?:(?:can|could|would) you )?(?:please )?summari[sz]e (?:my|this|the|that|the first|the second) (?:paper|article)"
+                r"|(?:bitte )?fass(?:e)? (?:mir )?(?:bitte )?(?:mein|dieses|das|das erste|das zweite) paper zusammen",
+                clean_message.rstrip(".!?"), re.I)
+            direct = None
+            group = re.fullmatch(
+                r"(?:(?:can|could|would) you )?(?:please )?summari[sz]e (?:these|those|both|the first two) (?:papers|articles|studies)"
+                r"|(?:bitte )?fass(?:e)? (?:mir )?(?:bitte )?(?:diese|beide|die beiden|die ersten zwei) (?:papers?|artikel|studien) zusammen",
+                clean_message.rstrip(".!?"), re.I)
+            if group:
+                prior = saved_turn_result(saved_turns[-1]) if saved_turns else {}
+                refs = prior.get("sources") or []
+                if re.search(r"first two|ersten zwei", group[0], re.I):
+                    refs = refs[:2]
+                if (not 1 <= len(refs) <= 3 or not all(p.get("paper_id") for p in refs)
+                    or (re.search(r"\b(both|beide|beiden|two|zwei)\b", group[0], re.I) and len(refs) != 2)):
+                    direct = {"resolved_task": "library_status", "sources": refs, "answer":
+                              "Which papers should I summarize? Choose up to three from the last list, "
+                              "for example: “Summarize the first two papers.”"}
+                else:
+                    turn_args.reading_group = [(p["paper_id"], "de" if "zusammen" in group[0].lower() else "en") for p in refs]
+            if language or listing or relative:
                 papers = REPO_ROOT / settings.papers
                 catalogue = library_catalog(str(papers.with_name("paper_registry.tsv")), str(papers),
                                             chunks_dir=str(REPO_ROOT / settings.chunks_dir))
-                answer = presence_answer(catalogue, language)
+                if language:
+                    direct = {"resolved_task": "library_status", "answer": presence_answer(catalogue, language)}
+                elif listing:
+                    direct = quick_paper_list(listing, catalogue, settings)
+                else:
+                    prior = saved_turn_result(saved_turns[-1]) if saved_turns else {}
+                    refs = prior.get("sources") or []
+                    ordinal = re.search(r"\b(first|second|erste|zweite)\b", relative[0], re.I)
+                    n = int(bool(ordinal and ordinal[1].casefold() in {"second", "zweite"}))
+                    choices = refs if refs else catalogue if len(catalogue) == 1 else ()
+                    if n < len(choices) and (ordinal or len(choices) == 1) and choices[n].get("paper_id"):
+                        lang = "de" if re.search(r"\bfass", relative[0], re.I) else "en"
+                        turn_args.reading_request = (choices[n]["paper_id"], lang)
+                    else:
+                        direct = {"resolved_task": "library_status", "sources": refs, "answer":
+                                  "Which paper should I summarize? Give me its title or DOI."}
+            if direct is not None:
                 turn_dir.mkdir(parents=True, exist_ok=True)
                 answer_path = turn_dir / "answer.md"
-                answer_path.write_text(answer, encoding="utf-8")
-                result = {"resolved_task": "library_status", "retrieval_question": clean_message,
-                          "answer": answer, "answer_path": answer_path}
+                answer_path.write_text(direct["answer"], encoding="utf-8")
+                result = {**direct, "retrieval_question": clean_message, "answer_path": answer_path}
             else:
                 with manager_for(REPO_ROOT).session() as model_selection:
                     if model_selection:
@@ -366,12 +405,9 @@ class WebChatApp:
             write_json(turn_dir / "public_result.json", public_result)
             with self.lock:
                 if self.session_dir.resolve() == target_session.resolve():
-                    self.previous_turns = [
-                        turn_context_from_saved_turn(turn)
-                        for turn in read_session_turns(target_session)
-                        if turn.get("user")
-                    ]
-                    self.turn_index = len(self.previous_turns) + 1
+                    latest = read_session_turns(target_session)[-1]
+                    self.previous_turns = previous_turns[-1:] + [turn_context_from_saved_turn(latest)]
+                    self.turn_index = turn_index + 1
             return public_result
 
     def load_session(self, session_dir_text: str) -> dict:
@@ -380,9 +416,9 @@ class WebChatApp:
             turns = read_session_turns(session_dir)
             self.session_dir = session_dir
             self.previous_turns = [
-                turn_context_from_saved_turn(turn) for turn in turns if turn.get("user")
+                turn_context_from_saved_turn(turn) for turn in turns[-2:] if turn.get("user")
             ]
-            self.turn_index = len(self.previous_turns) + 1
+            self.turn_index = len(turns) + 1
             return {
                 "session_dir": relative_path(self.session_dir),
                 "title": session_title(self.session_dir),
@@ -1557,6 +1593,35 @@ def library_catalog(
             ),
         )
     )
+
+
+def quick_paper_list(request, catalogue, settings):
+    if settings.category:
+        catalogue = tuple(p for p in catalogue if p.get("category") == settings.category)
+    page = search_library_catalog(request.topic, limit=request.limit, catalogue=catalogue)
+    rows = page["items"]
+    ids = {p["paper_id"] for p in rows}
+    de = request.language == "de"
+    scope = "Katalog" if de else "catalogue"
+    if request.topic and len(rows) < request.limit:
+        ranked = indexed_list_ids(request, REPO_ROOT / settings.retrieval_index, REPO_ROOT / settings.chunks_dir,
+                                  REPO_ROOT / settings.papers)
+        if ranked is not None:
+            scope = "Katalog und Volltextindex" if de else "catalogue + full-text index"
+            available = {p["paper_id"]: p for p in catalogue if p["searchable"]}
+            rows.extend([available[k] for k in ranked if k in available and k not in ids][:request.limit - len(rows)])
+    count = len(rows)
+    answer = (f"{count} Treffer zu „{request.topic}“" if de else
+              f"{count} {'match' if count == 1 else 'matches'} for “{request.topic}”")
+    if request.topic:
+        answer += f" ({scope}):" if count else f" ({scope})."
+    else:
+        total = page["total"]
+        answer = (f"Dein Katalog enthält {total} Paper. Hier siehst du {count}." if de else
+                  f"Your catalogue contains {total} {'paper' if total == 1 else 'papers'}. Showing {count}.")
+    answer += "".join(f"\n- {p['title']}" + (f" ({p['year']})" if p.get("year") else "") for p in rows)
+    return {"resolved_task": "sources", "quick_list": True, "answer": answer,
+            "sources": [{k: p.get(k) for k in ("paper_id", "title", "year", "doi", "local_pdf")} for p in rows]}
 
 
 def search_library_catalog(
@@ -3001,10 +3066,17 @@ def build_ask_args(
 def serialize_turn_result(
     result: dict, turn_dir: Path, retrieval_question: str, resolved_task: str
 ) -> dict:
-    if resolved_task == "library_status":
+    if resolved_task == "paper_summaries":
+        parts = [serialize_turn_result(part, part["answer_path"].parent, retrieval_question, "paper_summary")
+                 for part in result["parts"]]
+        return {"task": resolved_task, "answer": result["answer"], "answer_state": "answered",
+                "sources": [s for part in parts for s in part["sources"]], "parts": parts,
+                "output_dir": relative_path(turn_dir), "answer_path": relative_path(result["answer_path"])}
+    if resolved_task == "library_status" or result.get("quick_list"):
         return {"task": resolved_task, "answer": result["answer"], "answer_state": "answered",
                 "answer_path": relative_path(result["answer_path"]), "output_dir": relative_path(turn_dir),
-                "retrieval_question": retrieval_question, "sources": [], "evidence_grade": "not_applicable"}
+                "retrieval_question": retrieval_question, "sources": result.get("sources", []),
+                "quick_list": bool(result.get("quick_list")), "evidence_grade": "not_applicable"}
     if result.get("reading_card") is not None:
         card = result["reading_card"]
         sources = format_public_sources(result["pack"]["chunks"], source_role="summary_source")
@@ -3881,6 +3953,8 @@ def turn_context_from_saved_turn(turn: dict) -> ChatTurnContext:
             evidence_table = output_dir / "evidence_table.tsv"
             if evidence_table.exists() and evidence_table.is_file():
                 titles = titles_from_evidence_table(evidence_table)
+            elif turn.get("task") in {"sources", "paper_summaries"}:
+                titles = [str(p["title"]) for p in saved_turn_result(turn).get("sources", [])[:6] if p.get("title")]
     return ChatTurnContext(
         user_question=str(turn.get("user") or ""),
         retrieval_question=str(turn.get("retrieval_question") or ""),
@@ -4238,10 +4312,13 @@ def default_library_resolver() -> LibraryStatusResolver:
         bib_dir = get_bib_dir()
     except OriginRAGConfigError:
         bib_dir = REPO_ROOT / "bib"
+    metadata = REPO_ROOT / "data/metadata"
+    registry = metadata / "paper_registry.tsv"
     return LibraryStatusResolver(
-        registry_path=REPO_ROOT / "data/metadata/paper_registry.tsv",
+        registry_path=registry if registry.is_file() else metadata / "papers.tsv",
         bib_dir=bib_dir,
         chunks_dir=REPO_ROOT / "data/chunks",
+        allow_missing_registry=True,
     )
 
 
@@ -7300,6 +7377,24 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderMarkdown(container, text, result = null) {
       const lines = String(text || "").split("\n");
+      if (result?.quick_list) {
+        const heading = document.createElement("p");
+        heading.textContent = lines[0];
+        container.appendChild(heading);
+        const list = document.createElement("ol");
+        for (const paper of result.sources || []) {
+          const item = document.createElement("li");
+          const href = paper.local_pdf ? "/reader?paper_id=" + encodeURIComponent(paper.paper_id)
+            : paper.doi ? "https://doi.org/" + paper.doi : "";
+          const title = document.createElement(href ? "a" : "span");
+          if (href) title.href = href;
+          title.textContent = paper.title;
+          item.append(title, paper.year ? " (" + paper.year + ")" : "");
+          list.appendChild(item);
+        }
+        if (list.children.length) container.appendChild(list);
+        return;
+      }
       const citationSources = new Map();
       for (const source of (result || {}).sources || []) {
         for (const evidenceId of source.evidence_ids || []) citationSources.set(evidenceId, source);
@@ -7443,7 +7538,16 @@ INDEX_HTML = r"""<!doctype html>
 
     function resultMeta(data) {
       const box = document.createElement("div");
-      if (data.task === "library_status") return box;
+      if (data.task === "paper_summaries") {
+        for (const part of data.parts || []) {
+          const details = document.createElement("details");
+          const label = document.createElement("summary");
+          label.textContent = part.sources?.[0]?.title || "Paper details";
+          details.append(label, resultMeta(part)); box.appendChild(details);
+        }
+        return box;
+      }
+      if (data.task === "library_status" || data.quick_list) return box;
       box.className = "result-meta";
       const summary = document.createElement("div");
       summary.className = "result-summary";

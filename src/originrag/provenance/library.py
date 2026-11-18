@@ -134,6 +134,7 @@ class LibraryStatusResolver:
         registry_path: Path | str,
         bib_dir: Path | str,
         chunks_dir: Path | str | None = None,
+        allow_missing_registry: bool = False,
     ) -> None:
         self.registry_path = Path(registry_path)
         self.bib_dir = Path(bib_dir).expanduser().resolve()
@@ -142,7 +143,12 @@ class LibraryStatusResolver:
             if chunks_dir is not None
             else self.registry_path.parent.parent / "chunks"
         ).expanduser().resolve()
-        self.records = load_paper_registry(self.registry_path)
+        try:
+            self.records = load_paper_registry(self.registry_path)
+        except FileNotFoundError:
+            if not allow_missing_registry:
+                raise
+            self.records = []
         self._indexes = self._build_indexes(self.records)
 
     def resolve(

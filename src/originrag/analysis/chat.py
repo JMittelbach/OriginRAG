@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import json
 import re
 
+from originrag.retrieval.quick_list import paper_list_request
+
 
 VALID_CHAT_TASKS = {"auto", "answer", "gaps", "hypothesis", "sources"}
 
@@ -124,6 +126,12 @@ SOURCE_LOOKUP_PATTERNS = (
 )
 
 SYNTHESIS_REQUEST_PATTERNS = (
+    r"^(?:(?:what|which) (?:funders?|funding sources?|sponsors?|sample sizes?|methods?|outcomes?|results?)|who (?:funded|sponsored))\b",
+    r"^(?:wer (?:finanzierte|förderte)|welche(?:r|n)? (?:geldgeber|sponsoren|stichprobengrößen|methoden|ergebnisse))\b",
+    r"\b(?:and|then)\s+(?:(?:please|also)\s+)*(?:tell me|extract|explain|give me (?:their|the) (?:findings|results|sample sizes?|funders?))\b",
+    r"\b(?:und|dann)\s+(?:bitte\s+)?(?:sag(?:e)? mir|extrahiere|erkläre|erkläre mir|nenn[e]? mir (?:die|ihre) (?:ergebnisse|stichprobengrößen|geldgeber))\b",
+    r"\b(?:fass|fasse)\b.{1,150}\bzusammen\b",
+    r"^(?:look (?:in|at)|check|schau (?:in|dir)).*?\b(?:what|who|how many|wer|was|wie viele)\b",
     r"\bhow strong (?:is|are) the evidence\b",
     r"^(?:(?:please|now|then|and|also)\s+)*(?:summari[sz]e|synthesi[sz]e|"
     r"assess|evaluate|interpret)\b",
@@ -176,9 +184,17 @@ def resolve_chat_task(
         return task
 
     lowered = question.lower()
-    if any(term in lowered for term in HYPOTHESIS_TERMS):
+    # The deliverable takes precedence over topic words such as "gap junctions".
+    if paper_list_request(question):
+        return "sources"
+    if any(re.search(pattern, lowered) for pattern in SYNTHESIS_REQUEST_PATTERNS):
+        return "answer"
+    reported_hypothesis = re.search(r"\b(?:what|which|whose|welche)\s+hypothes\w*\b", lowered) and re.search(
+        r"\b(?:authors?|paper|stud(?:y|ies)|tested|test|study|autoren|studie|prüf\w*|getestet)\b", lowered)
+    topic_only = re.sub(r"\bgap[- ]junctions?\b|\bhypothesis[- ]testing\b", "", lowered)
+    if not reported_hypothesis and any(re.search(r"\b" + re.escape(term) + r"\b", topic_only) for term in HYPOTHESIS_TERMS):
         return "hypothesis"
-    if any(term in lowered for term in GAP_TERMS):
+    if any(re.search(r"\b" + re.escape(term) + r"\b", topic_only) for term in GAP_TERMS):
         return "gaps"
     identifier_lookup = bool(
         re.search(r"\b10\.\d{4,9}/\S+", question, flags=re.IGNORECASE)
@@ -192,13 +208,8 @@ def resolve_chat_task(
         or any(term in lowered for term in SOURCE_LOOKUP_TERMS)
         or structured_source_request
     )
-    synthesis_request = any(
-        re.search(pattern, lowered) for pattern in SYNTHESIS_REQUEST_PATTERNS
-    )
-    if source_request and not synthesis_request:
+    if source_request:
         return "sources"
-    if synthesis_request:
-        return "answer"
 
     prior = (previous_task or "").strip().lower()
     if (

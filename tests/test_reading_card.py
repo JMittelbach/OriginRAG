@@ -57,12 +57,15 @@ def corpus(tmp_path, rows=None, chunks=CHUNKS):
     ("Zusammenfassung auf Deutsch: A numerical method", ("A numerical method", "de")),
     ("Fasse dieses Paper zusammen: 10.1234/numerical", ("10.1234/numerical", "en")),
     ("Which methods have independent replication?", None),
+    ("Could you summarize the paper titled A numerical method?", ("A numerical method", "en")),
+    ("Fass mir bitte das Paper A numerical method zusammen.", ("A numerical method", "de")),
+    ("Summarize the findings of the papers on calibration.", None),
 ])
 def test_explicit_request(message, expected):
     assert rc.summary_request(message) == expected
 
 
-@pytest.mark.parametrize("target", ["P1", "A numerical method", "https://doi.org/10.1234/numerical"])
+@pytest.mark.parametrize("target", ["P1", "A numerical method", "numerical method", "https://doi.org/10.1234/numerical"])
 def test_resolves_one_local_paper(tmp_path, target):
     paths = corpus(tmp_path)
     paper, chunks = rc.load_paper(target, *paths)
@@ -83,6 +86,26 @@ def test_cannot_follow_text_symlink_outside_corpus(tmp_path):
     (root / "P1.jsonl").symlink_to(outside)
     with pytest.raises(ValueError, match="inside"):
         rc.load_paper("P1", papers, root)
+
+
+def test_summarize_first_two_uses_separate_cards_without_registry(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    monkeypatch.setattr(web_chat, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(ask_corpus, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(web_chat, "manager_for", lambda *a: SimpleNamespace(session=lambda: nullcontext(None)))
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **k: pytest.fail("Not a corpus synthesis"))
+    calls = fake_model(monkeypatch)
+    papers, chunks = corpus(tmp_path, [dict(PAPER, paper_id=f"P{i}", title=f"Numerical method {i}",
+                                            doi="", abstract=TEXT) for i in range(4)], chunks=None)
+    app = web_chat.WebChatApp(web_chat.WebChatSettings(papers=str(papers), chunks_dir=str(chunks)),
+                              str(tmp_path / "sessions"))
+    assert len(app.run_turn("List papers on numerical method", {})["sources"]) == 4
+    assert app.run_turn("Summarize those papers", {})["task"] == "library_status"
+    assert not calls
+    result = app.run_turn("Summarize the first two papers", {})
+    assert result["task"] == "paper_summaries" and len(calls) == 4
+    assert [p["title"] for p in result["sources"]] == ["Numerical method 0", "Numerical method 1"]
+    assert all(p["reading_card"]["coverage"]["basis"] == "abstract_only" for p in result["parts"])
 
 
 def test_wrong_paper_text_rejected(tmp_path):

@@ -2,6 +2,24 @@ from __future__ import annotations
 
 import pytest
 
+from originrag.retrieval.quick_list import paper_list_request
+
+
+@pytest.mark.parametrize("query,expected", [
+    ("Could you give me ten articles about gap junctions?", "sources"),
+    ("Gib mir fünf Studien über Solarzellen", "sources"),
+    ("Look in the papers on coffee and tell me who funded them.", "answer"),
+    ("Fass bitte die Studien zu Solarzellen zusammen.", "answer"),
+    ("Who funded the papers about coffee?", "answer"),
+    ("How do gap junctions work?", "answer"),
+    ("Which hypothesis did the authors test?", "answer"),
+    ("Welche Methoden wurden in den Studien zu Solarzellen verwendet?", "answer"),
+    ("Find papers about ceramics and summarize their results.", "answer"),
+])
+def test_deliverable_not_topic_controls_routing(query, expected):
+    assert resolve_chat_task(query) == expected
+    assert bool(paper_list_request(query)) == (expected == "sources")
+
 from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_question, is_followup_question, resolve_chat_task
 
 

@@ -47,12 +47,28 @@ def compact(value: object) -> str:
 
 
 def summary_request(message: str) -> tuple[str, str] | None:
+    text = compact(message).rstrip(".!?")
+    natural = re.fullmatch(
+        r"(?:(?:can|could|would) you )?(?:please )?summari[sz]e (?:the |my |this )?(?:paper|article) "
+        r"(?:titled |called |named )?[“\"]?(.+?)[”\"]?", text, re.I)
+    if natural and not re.match(r"[:]|(?:on|about|in|by|and|that|which)\b", natural[1], re.I):
+        return natural[1], "en"
+    natural = re.fullmatch(r"(?:bitte )?fass(?:e)? (?:mir )?(?:bitte )?(?:(?:das|den) )?"
+                           r"(?:paper|artikel) [„\"]?(.+?)[“\"]? zusammen", text, re.I)
+    if natural:
+        return natural[1], "de"
     match = re.fullmatch(
         r"\s*(summari[sz]e(?:\s+this\s+paper)?|/summary|zusammenfassung|"
         r"fasse\s+dieses\s+paper\s+zusammen)(?:\s+(auf Deutsch|in German|auf Englisch|in English))?\s*:?\s+(.+?)\s*", message, re.I)
     if not match:
         return None
     target = match[3].strip().strip('"“”')
+    # Bare "summarize" also introduces synthesis across papers, not a title.
+    if match[1].lower() in {"summarize", "summarise"} and re.match(
+        r"(?:(?:the|these|those|all|our)\s+)*(?:what|how|why|whether|evidence|literature|research|papers|articles|studies|findings|results|methods|differences)\b",
+        target, re.I
+    ) and not re.match(r'\s*summari[sz]e\s*(?::|[“"])', message, re.I):
+        return None
     return target, "de" if (match[2] or "").casefold() in {"auf deutsch", "in german"} else "en"
 
 
@@ -61,10 +77,20 @@ def identity(value: object) -> str:
 
 
 def load_paper(target: str, papers_path: Path, chunks_dir: Path) -> tuple[dict, list[dict]]:
+    key = identity(target)
+    phrase = (re.compile(r"(?<!\w)" + re.escape(key) + r"(?!\w)")
+              if len(key.split()) >= 2 and len(key) >= 8 and not key.startswith("10.") else None)
+    partial = []
+    matches = []
     with papers_path.open(encoding="utf-8", newline="") as handle:
-        matches = [dict(row) for row in csv.DictReader(handle, delimiter="\t")
-                   if identity(target) in {identity(row.get(key)) for key in ("paper_id", "doi", "title")}
-                   and identity(target)]
+        for row in csv.DictReader(handle, delimiter="\t"):
+            title = identity(row.get("title"))
+            if key and key in {identity(row.get("paper_id")), identity(row.get("doi")), title}:
+                matches.append(row)
+            elif phrase and phrase.search(title):
+                partial.append(row)
+    if not matches:
+        matches = partial
     if len(matches) != 1:
         raise ValueError("Select one paper from Library, or provide its exact title or DOI. "
                          "The summary target could not be resolved uniquely.")

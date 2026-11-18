@@ -152,6 +152,41 @@ def test_chat_presence_distinguishes_empty_and_ambiguous_catalogues():
         assert web_chat.presence_language(question) is None
 
 
+def test_quick_lists_and_reading_followup(tmp_path, monkeypatch):
+    from originrag.retrieval.fts_index import build_fts_index
+    monkeypatch.setattr(web_chat, "REPO_ROOT", tmp_path)
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\n" + "".join(
+        f"P{i:02}\t{'Thermal calibration' if i < 9 else 'Instrument design'} {i:02}\n" for i in range(12)))
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    for i in range(12):
+        pid = f"P{i:02}"
+        (chunks / f"{pid}.jsonl").write_text(json.dumps({"paper_id": pid, "chunk_id": pid + "_1",
+            "text": "thermal calibration procedure" if i == 9 else "laboratory method"}) + "\n")
+    index = tmp_path / "index.sqlite"
+    build_fts_index(chunks, papers, index)
+    app = WebChatApp(WebChatSettings(papers=str(papers), chunks_dir=str(chunks), retrieval_index=str(index)),
+                     str(tmp_path / "sessions"))
+    with monkeypatch.context() as mp:
+        mp.setattr(web_chat, "manager_for", lambda *a: pytest.fail("A simple list contacted the model"))
+        overview = app.run_turn("Which papers can you see in my library?", {})
+        assert "12 papers. Showing 10." in overview["answer"]
+        for question in ("Give me ten papers on thermal calibration", "Gib mir zehn Paper über thermal calibration"):
+            result = app.run_turn(question, {})
+            assert result["quick_list"] and len(result["sources"]) == 10
+            assert {p["paper_id"] for p in result["sources"]} == {f"P{i:02}" for i in range(10)}
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    monkeypatch.setattr(web_chat, "manager_for", lambda *a: SimpleNamespace(session=lambda: nullcontext(None)))
+    def read_card(args, turn_dir, progress_callback=None):
+        assert args.reading_request == ("P01", "en")
+        turn_dir.mkdir()
+        return {"resolved_task": "library_status", "answer": "test", "answer_path": turn_dir / "answer.md"}
+    monkeypatch.setattr(web_chat.ask_corpus, "run_question", read_card)
+    app.run_turn("Can you summarize the second paper?", {})
+
+
 @pytest.mark.parametrize('failure', [BrokenPipeError, ConnectionResetError])
 @pytest.mark.parametrize('during_headers', [False, True])
 def test_disconnected_json_response_does_not_report_a_storage_failure(tmp_path, failure, during_headers):
