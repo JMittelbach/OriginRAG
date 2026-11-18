@@ -4,25 +4,29 @@ import os
 from pathlib import Path
 import tempfile
 
+if __package__:
+    from .build_paper_registry import FIELDS as REGISTRY_FIELDS
+    from .sync_registry_to_papers import PAPERS_FIELDS
+else:
+    from build_paper_registry import FIELDS as REGISTRY_FIELDS
+    from sync_registry_to_papers import PAPERS_FIELDS
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def initialise(root: Path = ROOT) -> None:
     target = root / "data" / "metadata"
-    names = ("papers.tsv", "paper_registry.tsv")
-    if any((target / name).exists() for name in names):
+    tables = {"papers.tsv": PAPERS_FIELDS, "paper_registry.tsv": REGISTRY_FIELDS}
+    if any((target / name).exists() for name in tables):
         return
     target.mkdir(parents=True, exist_ok=True)
-    for name in names:
-        source = root / "assets" / "catalogue" / name
-        if not source.is_file():
-            continue
+    for name, fields in tables.items():
         descriptor, temporary = tempfile.mkstemp(prefix=".catalogue-", dir=target)
         temporary = Path(temporary)
         try:
-            with os.fdopen(descriptor, "wb") as handle:
-                handle.write(source.read_bytes())
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
+                handle.write("\t".join(fields) + "\n")
             try:
                 os.link(temporary, target / name)
             except FileExistsError:

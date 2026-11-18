@@ -7,12 +7,9 @@ OriginRAG separates reproducible project files from local research data.
 - Source code
 - Tests
 - Configuration files
-- The bundled example catalogue in `assets/catalogue/` (metadata only)
 - User installation, web, and data-policy documentation
 
-The example catalogue contains bibliographic records, not local file locations
-or import histories. It does not indicate that a PDF is installed. Local import
-and indexing update your private working catalogue without changing the examples.
+A fresh checkout contains no user library or starter bibliography.
 
 ## Not Committed
 
@@ -36,13 +33,13 @@ The complete `data/`, `bib/` and `outputs/` working directories are ignored,
 apart from shipped placeholder files and the bibliography README. This includes
 personal paper lists, downloaded PDFs, extracted text, indexes, chats, uploads,
 answers and account data. Local `.env` files and `config/paths.yaml` are ignored.
-Setup or the first application launch copies the bundled example catalogue into
-`data/metadata/` only if no local catalogue exists. Existing files are not replaced.
-Importers update this ignored copy, never the bundled catalogue.
+Setup or the first RAG launch creates header-only tables in `data/metadata/`
+if no local catalogue exists. Importing papers updates only the local catalogue.
+An update does not empty an existing library.
 
 When updating an older checkout that still tracks `data/metadata/*.tsv`, back
 up any personal changes to those tables before pulling. Do not resolve a Git
-rename or merge conflict by moving personal entries into `assets/catalogue/`.
+rename or merge conflict by moving personal entries into a tracked directory.
 
 `./setup.sh` also enables commit and push checks unless existing Git hooks
 would be replaced. Existing installations can enable them with
@@ -57,7 +54,7 @@ the checkout. Arbitrarily renamed data in source directories cannot reliably be
 recognised. Git ignores and hooks are accidental-disclosure safeguards, not
 access controls: they can be bypassed, and do not remove data already in Git
 history. Review staged changes before committing. Personal content must not be
-copied into the bundled example catalogue, tests or public documentation.
+copied into tests or public documentation.
 
 ## Local Bibliography
 
@@ -84,17 +81,18 @@ The absolute bibliography root is configured with `ORIGINRAG_BIB_DIR`.
 
 ## Cloning On Another Computer
 
-A fresh Git clone is enough for code, configuration, and bibliographic
-metadata, but not enough to run full local retrieval over the papers. The clone
+A fresh Git clone includes the code and example configuration. The clone
 will not contain:
 
+- your catalogue or paper registry
 - the PDF files
 - extracted page text
 - chunk JSONL files
 - future embeddings or vector indexes
 
-To use the same corpus on another machine, copy or sync the ignored `bib/`
-directory separately and set `ORIGINRAG_BIB_DIR` to that machine's local path.
+To use the same corpus on another machine, copy the ignored `bib/` and
+`data/metadata/` directories separately and set `ORIGINRAG_BIB_DIR` to that
+machine's local PDF path.
 If extracted text, chunks, and the SQLite retrieval index are not restored as
 well, rebuild them with:
 
@@ -103,5 +101,4 @@ well, rebuild them with:
 ./originrag prepare-corpus
 ```
 
-Use `./originrag doctor` to distinguish a metadata-only clone from a complete
-local retrieval installation.
+Use `./originrag doctor` to check whether local retrieval is ready.

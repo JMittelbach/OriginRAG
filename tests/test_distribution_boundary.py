@@ -1,10 +1,8 @@
 import csv
 from pathlib import Path
-import shutil
 
 from originrag.retrieval.metadata import load_paper_metadata
 from originrag.retrieval.paper_retrieval import search_papers
-from originrag.schema import PaperRecord
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,31 +29,24 @@ def test_user_guides_and_software_checks_are_retained():
         assert (ROOT / relative).is_file(), relative
 
 
-def test_shipped_catalogue_contains_bibliography_not_local_processing_state():
-    for name in ("papers.tsv", "paper_registry.tsv"):
-        with (ROOT / "assets/catalogue" / name).open(newline="") as stream:
-            rows = list(csv.DictReader(stream, delimiter="\t"))
-        assert rows
-        for row in rows:
-            for field in ("local_pdf_relpath", "extracted_text_relpath", "filename", "notes", "quality_score", "quality_tier"):
-                assert not row.get(field), (name, row.get("paper_id"), field)
-            if name == "papers.tsv":
-                PaperRecord.model_validate(row)
-                assert row["fulltext_status"] in {"missing", "duplicate", "archived", "excluded_no_doi"}
-            else:
-                sources = set(filter(None, row["metadata_source"].split(";")))
-                assert sources <= {"crossref", "pubmed", "europepmc", "publisher", "biorxiv", "zenodo"}
-
-
-def test_fresh_catalogue_is_searchable_without_claiming_local_pdfs(tmp_path):
+def test_fresh_catalogue_is_empty_and_only_searches_local_additions(tmp_path):
     from scripts.init_local_data import initialise
 
-    shutil.copytree(ROOT / "assets/catalogue", tmp_path / "assets/catalogue")
     initialise(tmp_path)
     papers = tmp_path / "data/metadata/papers.tsv"
-    metadata = load_paper_metadata(papers)
-    assert metadata
-    reference = next(row for row in metadata.values() if row.get("doi") and row.get("fulltext_status") == "missing")
-    results = search_papers(reference["doi"], papers, local_pdf_root=tmp_path / "bib", chunks_dir=tmp_path / "data/chunks")
-    assert any(row["paper_id"] == reference["paper_id"] and row["title"] == reference["title"] for row in results)
+    assert not load_paper_metadata(papers)
+    for path in (papers, papers.with_name("paper_registry.tsv")):
+        with path.open(newline="") as stream:
+            reader = csv.DictReader(stream, delimiter="\t")
+            assert {"paper_id", "title", "doi"} <= set(reader.fieldnames)
+            assert not list(reader)
+    reference = {"paper_id": "TEST_001", "title": "Synthetic checkout fixture", "fulltext_status": "missing"}
+    def search():
+        return search_papers(reference["title"], papers, local_pdf_root=tmp_path / "bib", chunks_dir=tmp_path / "data/chunks")
+    assert search() == []
+    fields = papers.read_text().splitlines()[0].split("\t")
+    with papers.open("a", newline="") as stream:
+        csv.DictWriter(stream, fieldnames=fields, delimiter="\t").writerow(reference)
+    results = search()
+    assert [row["paper_id"] for row in results] == [reference["paper_id"]]
     assert all(row["local_fulltext_available"] == "false" and not row["local_pdf_relpath"] for row in results)

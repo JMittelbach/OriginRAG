@@ -13,6 +13,10 @@ import install_git_hooks  # noqa: E402
 
 
 PRIVATE = [
+    "assets/catalogue/papers.tsv", "assets/catalogue/paper_registry.tsv", "assets/catalogue/export.csv",
+    "scratch/papers.tsv", "scratch/corpus_manifest.tsv", "scratch/all_papers.tsv",
+    "chunks/paper.txt", "scratch/chunks/batch.arrow", "scratch/extracted_text/page.md",
+    "indexes/vectors.bin", "scratch/embeddings/vectors.npy", "scratch/chroma/cache", "faiss/vectors.bin",
     "Origin Documents/.origin-temporary", "my-backup.origin1",
     "data/metadata/papers.tsv", "data/metadata/paper_registry.tsv", "data/metadata/paper_requests.tsv",
     "data/indexes/index.bin", "data/new-format/cache.json", "bib/new-paper.pdf", "bib/bibliography.tsv",
@@ -68,7 +72,7 @@ def test_fast_forward_code_update_keeps_private_workspace_files(repository, tmp_
     assert not run(clone, "status", "--porcelain", check=True).stdout
 
 
-@pytest.mark.parametrize("name", ["src/originrag/paths.py", "tests/test_private_data_guard.py", "assets/catalogue/papers.tsv", ".env.example", "config/paths.example.yaml", "data/metadata/.gitkeep", "bib/README.md"])
+@pytest.mark.parametrize("name", ["src/originrag/paths.py", "tests/test_private_data_guard.py", "scripts/build_chunks.py", ".env.example", "config/paths.example.yaml", "data/metadata/.gitkeep", "bib/README.md"])
 def test_public_source_and_examples_remain_committable(repository, name):
     assert run(repository, "check-ignore", "--no-index", "--", name).returncode == 1
     assert not guard.private_path(name)
@@ -157,19 +161,19 @@ def test_push_hook_blocks_upload_of_deleted_private_history(repository, monkeypa
     assert run(remote, "rev-parse", "refs/heads/main", check=True).stdout == before
 
 
-def test_example_catalogue_is_copied_not_shared_or_overwritten(tmp_path):
+def test_old_seed_files_are_never_imported_and_working_data_is_preserved(tmp_path):
     source = tmp_path / "assets/catalogue"
     source.mkdir(parents=True)
     for name in ("papers.tsv", "paper_registry.tsv"):
-        (source / name).write_text("example\n")
+        (source / name).write_text("title\nPrivate fixture\n")
     init_local_data.initialise(tmp_path)
     private = tmp_path / "data/metadata/papers.tsv"
-    assert private.read_text() == "example\n"
-    assert private.stat().st_ino != (source / "papers.tsv").stat().st_ino
+    assert len(private.read_text().splitlines()) == 1
+    assert "Private fixture" not in (private.parent / "paper_registry.tsv").read_text()
     private.write_text("personal\n")
     init_local_data.initialise(tmp_path)
     assert private.read_text() == "personal\n"
-    assert (source / "papers.tsv").read_text() == "example\n"
+    assert (source / "papers.tsv").read_text() == "title\nPrivate fixture\n"
 
 
 def test_partial_user_catalogue_is_not_mixed_with_examples(tmp_path):

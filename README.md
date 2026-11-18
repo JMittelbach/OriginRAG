@@ -81,6 +81,9 @@ If dependencies change, rerun setup; pass the same `--profile` for a standalone 
 
 ## Add papers and ask questions
 
+A fresh installation starts with an empty library. Your paper lists, PDFs,
+extracted text, chunks and search indexes stay local and are ignored by Git.
+
 Open **Add papers** to upload your PDFs, or **Find papers** to discover and import
 accessible PDFs. Accepted papers are organised and indexed in the background.
 They become searchable when the update finishes; uncertain imports are flagged

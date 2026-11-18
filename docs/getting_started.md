@@ -161,7 +161,7 @@ The ignored `bib/` directory inside the clone is a convenient choice. Store
 only papers that you are legally entitled to process. Subscription access does
 not grant permission to redistribute full text.
 
-Search the committed bibliographic metadata without a model call:
+After adding papers, search your local bibliography without a model call:
 
 ```bash
 ./originrag search-papers "severe malaria EPCR"

@@ -44,8 +44,8 @@ Git's original standard input to the latter. The checks must succeed before
 continuing. Do not use `--no-verify` to bypass a local-data warning.
 
 Personal PDFs belong in `bib/`, local metadata and indexes in `data/`, and chats
-or exports in `outputs/`. These directories are ignored. The files under
-`assets/catalogue/` are shipped examples, not your working bibliography.
+or exports in `outputs/`. These directories are ignored. Do not add a copy
+of your catalogue as an example; use synthetic records for tests.
 See the [data policy](docs/data_policy.md) for scope and limitations.
 
 ## Tests and style

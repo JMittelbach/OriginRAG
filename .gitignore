@@ -33,6 +33,16 @@ faiss/
 /.agents/
 runtime/
 external/
+/assets/catalogue/
+papers.tsv
+paper_registry.tsv
+corpus_manifest.tsv
+local_pdf_inventory.tsv
+all_papers.tsv
+chunks/
+extracted_text/
+indexes/
+embeddings/
 **/data/*
 !/data/metadata/
 /data/metadata/*

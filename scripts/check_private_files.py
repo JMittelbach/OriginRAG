@@ -7,16 +7,19 @@ import sys
 
 
 SAFE = {"data/metadata/.gitkeep", "outputs/.gitkeep", "bib/.gitkeep", "bib/README.md", "bib/papers/.gitkeep"}
-LOCAL_DIRS = {"runtime", "external", "logs", "uploads", "inbox", "sessions", "chat_sessions", "web_chat", "answers", "exports", ".cache", ".local"}
+LOCAL_DIRS = {"runtime", "external", "logs", "uploads", "inbox", "sessions", "chat_sessions", "web_chat", "answers", "exports", ".cache", ".local", "chunks", "extracted_text", "indexes", "embeddings", "chroma", "faiss"}
+CATALOGUES = {"papers.tsv", "paper_registry.tsv", "corpus_manifest.tsv", "local_pdf_inventory.tsv", "all_papers.tsv"}
 
 
 def private_path(name: str) -> bool:
     path = PurePosixPath(name)
     if name in SAFE:
         return False
-    if ({"data", "bib", "outputs"} | LOCAL_DIRS).intersection(path.parts[:-1]):
+    if ({"data", "bib", "outputs"} | LOCAL_DIRS).intersection(part.lower() for part in path.parts[:-1]):
         return True
     base = path.name.lower()
+    if base in CATALOGUES or name.startswith("assets/catalogue/"):
+        return True
     if base.endswith('.origin1') or 'Origin Documents' in path.parts:
         return True
     if base.startswith(".env") and base != ".env.example":

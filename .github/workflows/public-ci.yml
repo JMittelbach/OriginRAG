@@ -129,7 +129,7 @@ jobs:
       - name: Check for tracked local data
         run: .venv/bin/python scripts/check_private_files.py
 
-      - name: Initialise local example catalogue
+      - name: Initialise empty local catalogue
         run: .venv/bin/python scripts/init_local_data.py
 
       - name: Run test suite
@@ -142,7 +142,7 @@ jobs:
           .venv/bin/python scripts/check_environment.py
           ./originrag search-papers "severe malaria EPCR" --limit 3 \
             --out "$RUNNER_TEMP/metadata-search.tsv"
-          test "$(wc -l < "$RUNNER_TEMP/metadata-search.tsv")" -gt 1
+          test "$(wc -l < "$RUNNER_TEMP/metadata-search.tsv")" -eq 1
 
       - name: Build wheel and source distribution
         run: |
@@ -161,7 +161,7 @@ jobs:
           assert wheel.name.startswith("originrag-")
           assert any(name.endswith("originrag/db/schema.sql") for name in wheel_names)
           forbidden = (
-              "data/chunks/", "data/indexes/", "bib/papers/", "outputs/",
+              "assets/catalogue/", "data/chunks/", "data/indexes/", "bib/papers/", "outputs/",
               "originrag/evaluation/", "originrag/trace/lineage_trap_v1.py",
               "docs/manuscript/", "pfempire/",
           )

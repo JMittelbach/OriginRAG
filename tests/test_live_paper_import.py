@@ -35,10 +35,8 @@ def test_live_find_click_import_and_search(tmp_path, monkeypatch, doi, query, jo
     except ImportError:
         pytest.fail("Live controls require playwright and its Chromium browser")
     monkeypatch.setattr(inbox, "REPO_ROOT", tmp_path)
-    for name in ("papers.tsv", "paper_registry.tsv"):
-        with (ROOT / "assets/catalogue" / name).open() as stream:
-            fields = next(csv.reader(stream, delimiter="\t"))
-        inbox.write_tsv_atomic(tmp_path / "data/metadata" / name, [], fields)
+    from init_local_data import initialise
+    initialise(tmp_path)
     original_catalog = web_chat.library_catalog
 
     def catalogue():
