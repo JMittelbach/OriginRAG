@@ -452,7 +452,7 @@ async function synchronizeProject(forceBibliography = false) {
   if (syncBusy || (document.hidden && !forceBibliography) || saveBlocked || !project) { scheduleSync(); return; }
   syncBusy = true;
   try {
-    const checkBib = project.bibliography_auto !== false && (project.collection || project.collaboration?.role === 'editor') && (forceBibliography || Date.now() - lastBibliographyCheck > 15000);
+    const checkBib = project.bibliography_auto !== false && (project.collection || project.bibliography_corpus || project.collaboration?.role === 'editor') && (forceBibliography || Date.now() - lastBibliographyCheck > 15000);
     if (!checkBib && !project.collaboration?.enabled) return;
     const remote = checkBib ? await api('/api/writing', {action: 'refresh_bibliography', id: project.id})
       : await api('/api/writing?revision=' + encodeURIComponent(project.id));
@@ -476,7 +476,7 @@ async function synchronizeProject(forceBibliography = false) {
 }
 function scheduleSync() {
   clearTimeout(syncTimer);
-  if (project && !saveBlocked && (project.collaboration?.enabled || (project.collection && project.bibliography_auto !== false))) syncTimer = setTimeout(() => synchronizeProject(), Math.min(30000, (project.collaboration?.enabled ? 2500 : 15000) * 2 ** Math.min(syncFailures, 4)));
+  if (project && !saveBlocked && (project.collaboration?.enabled || ((project.collection || project.bibliography_corpus) && project.bibliography_auto !== false))) syncTimer = setTimeout(() => synchronizeProject(), Math.min(30000, (project.collaboration?.enabled ? 2500 : 15000) * 2 ** Math.min(syncFailures, 4)));
 }
 function fileList() {
   $('fileList').replaceChildren(); $('mainFile').replaceChildren();
@@ -491,6 +491,13 @@ function fileList() {
     const b = button('', () => { selectFile(name); writerLayout.showCode(); });
     b.append(node('span', /\.tex$/.test(name) ? 'TₑX' : /\.bib$/.test(name) ? 'Bib' : '◇', 'file-icon'), node('span', parts.at(-1)));
     b.dataset.file = name; b.title = name; folders.get(folder).append(b);
+    if (/\.bib$/i.test(name) && project.collaboration?.role !== 'editor') {
+      b.title += ' · Right-click to sync references';
+      b.oncontextmenu = event => {
+        event.preventDefault(); selectFile(name);
+        if (activeFile === name) $('referenceButton').click();
+      };
+    }
     if (name.endsWith('.tex')) $('mainFile').append(new Option(name, name));
   }
   $('mainFile').value = project.main; selectFile(activeFile in project.files ? activeFile : project.main);
@@ -639,7 +646,7 @@ async function editor(id) {
   };
   const references = () => {
     if (project.collaboration?.role === 'editor') { openProjectCitations(project, insertCitation); return; }
-    return openReferences({api, getProject: () => project, save, notice,
+    return openReferences({api, getProject: () => project, save, notice, filename: /\.bib$/i.test(activeFile) ? activeFile : null,
     linkCollection: async id => {
       project.collection = id; changed(); await save(); await refresh();
       $('projectLibrary').replaceChildren(new Option('No collection', ''));

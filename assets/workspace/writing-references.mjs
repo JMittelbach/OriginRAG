@@ -80,8 +80,12 @@ export async function openReferences(ctx) {
   newName.setAttribute('aria-label', 'New personal library name');
   const create = element('button', '+ New personal library'); create.id = 'referencesCreate'; create.type = 'submit';
   createForm.append(newName, create); sidebar.append(createForm);
-  const targetLabel = element('label', 'Bibliography file'); const filename = input('referencesFilename', 'references.bib'); filename.value = ctx.getProject().bibliography_target || 'references.bib';
+  const targetLabel = element('label', 'Bibliography file'); const filename = input('referencesFilename', 'references.bib'); filename.value = ctx.filename || ctx.getProject().bibliography_target || 'references.bib';
   targetLabel.append(filename); sidebar.append(targetLabel);
+  const wholeLibrary = element('button', 'Sync all OriginRAG papers to this file');
+  wholeLibrary.type = 'button'; wholeLibrary.id = 'referencesWholeLibrary';
+  wholeLibrary.title = 'Use the full OriginRAG catalogue instead of a collection. Only references are copied, not PDFs.';
+  sidebar.append(wholeLibrary);
   const connectLabel = element('label', undefined, 'references-check');
   const connect = input('referencesConnect', '', 'checkbox'); connect.checked = true;
   connectLabel.append(connect, element('span', 'Connect to the main document if it has no bibliography yet')); sidebar.append(connectLabel);
@@ -129,10 +133,16 @@ export async function openReferences(ctx) {
     }
   }
   function updateAvailability() {
+    const p = ctx.getProject();
+    wholeLibrary.textContent = p.bibliography_corpus && automaticSyncActive(p)
+      ? 'Stop whole-library sync' : 'Sync all OriginRAG papers to this file';
     previewButton.disabled = !library.value || busy;
     previous.disabled = busy || offset === 0; next.disabled = busy || offset + 20 >= total;
     const apply = review.querySelector('#referencesApply');
     if (apply) apply.disabled = busy || !plan || plan.conflicts.length > 0 || Boolean(pendingKey && !canConnect());
+  }
+  function automaticSyncActive(p) {
+    return p.bibliography_auto !== false && p.bibliography_target === filename.value.trim();
   }
   function invalidate() { plan = null; pendingKey = ''; review.hidden = true; review.replaceChildren(); }
   function showLibraries() {
@@ -140,7 +150,10 @@ export async function openReferences(ctx) {
     for (const item of collections) library.append(new Option(item.name, item.id));
     library.value = ctx.getProject().collection || ''; updateAvailability();
     const status = ctx.getProject().bibliography_status;
-    syncStatus.textContent = status?.message || (automatic.checked ? 'Automatic sync is enabled for the linked library.' : 'Manual bibliography mode.');
+    const p = ctx.getProject();
+    syncStatus.textContent = p.bibliography_corpus && p.bibliography_auto !== false && status?.state === 'synced'
+      ? 'All OriginRAG papers are linked to ' + p.bibliography_target + '.'
+      : status?.message || (automatic.checked && library.value ? 'Automatic sync is enabled for the linked library.' : 'No automatic sync is active.');
   }
   async function fetchReferences() {
     refs = library.value ? await ctx.api('/api/writing?collection_refs=' + encodeURIComponent(library.value)) : null;
@@ -276,6 +289,17 @@ export async function openReferences(ctx) {
     });
   };
   for (const field of [filename, connect]) field.addEventListener('input', invalidate);
+  filename.addEventListener('input', updateAvailability);
+  wholeLibrary.onclick = () => run(async () => {
+    await ctx.save();
+    const p = ctx.getProject(), enabled = !(p.bibliography_corpus && automaticSyncActive(p));
+    const updated = await ctx.api('/api/writing', {action: 'configure_bibliography', id: p.id, revision: p.revision,
+      filename: filename.value.trim(), enabled, whole_library: enabled});
+    await ctx.acceptProject(updated);
+    automatic.checked = enabled; invalidate(); showLibraries(); await fetchReferences(); await loadResults();
+    if (updated.bibliography_status?.state === 'needs_review') error.textContent = updated.bibliography_status.message;
+    else ctx.notice(enabled ? 'OriginRAG references synced. Citation keys are ready in the editor.' : 'Sync stopped. Existing references were kept.');
+  });
   settings.onclick = () => run(async () => {
     await ctx.save();
     const project = ctx.getProject();

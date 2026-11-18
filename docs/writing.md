@@ -317,6 +317,14 @@ Keys are stored per account and reused across personal libraries. Later metadata
 corrections or collection changes do not rename them. Already-used keys from
 older Quill projects are preserved, as are imported or handwritten `.bib` keys.
 
+To use the entire OriginRAG library instead of a personal collection, right-click
+the desired `.bib` file in the Quill file tree (or open **References** and choose
+the bibliography filename). Click **Sync all OriginRAG papers to this file**.
+This links the project's bibliography to the corpus, without copying PDFs.
+Newly catalogued papers appear on refresh or when you reopen the project.
+**Stop whole-library sync** keeps the existing entries. In shared projects the
+owner manages the link; collaborators can use the synced keys.
+
 After syncing references, type `\cite{`, `\citep{`, `\citet{`, `\parencite{` or
 `\textcite{` directly in the source. Suggestions use the project's `.bib` files
 and display author/year details with the title on selection. Type part of a key,

@@ -8,6 +8,38 @@ from test_writing_editor_integration import create_manuscript, get_project
 import test_web_chat as http
 
 
+def test_right_click_custom_bib_syncs_corpus_and_completes_key(workspace_server, monkeypatch):
+    pw = pytest.importorskip('playwright.sync_api')
+    base, _ = workspace_server
+    monkeypatch.setattr(http.web_chat, 'library_catalog', lambda: [
+        {'paper_id': 'P1', 'author': 'Bell, Jane', 'year': '2025', 'title': 'Sample study'}])
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={'width': 1600, 'height': 1000})
+        key = create_manuscript(page, base)
+        project = get_project(page, key)
+        files = {**project['files'], 'sources/local.bib': '@book{Manual, title={Keep me}}'}
+        assert page.request.post(base + '/api/writing', data={**project, 'action': 'save_project', 'files': files}).ok
+        page.reload()
+        page.locator('[data-file="sources/local.bib"]').click(button='right')
+        pw.expect(page.locator('#referencesFilename')).to_have_value('sources/local.bib')
+        page.locator('#referencesWholeLibrary').click()
+        pw.expect(page.locator('#referencesWholeLibrary')).to_have_text('Stop whole-library sync')
+        updated = get_project(page, key)
+        assert updated['files']['references.bib'] == files['references.bib']
+        assert '@book{Manual,' in updated['files']['sources/local.bib']
+        assert '@article{Bell2025,' in updated['files']['sources/local.bib']
+        page.keyboard.press('Escape')
+        page.locator('[data-file="main.tex"]').click()
+        code = page.locator('#source .cm-content')
+        code.fill(r'\cite{')
+        page.keyboard.insert_text('Bell')
+        pw.expect(page.locator('.cm-tooltip-autocomplete')).to_contain_text('Bell2025')
+        page.keyboard.press('Enter')
+        pw.expect(code).to_contain_text(r'\cite{Bell2025')
+        browser.close()
+
+
 def test_default_references_flow_syncs_and_inserts_without_manual_apply(workspace_server):
     playwright = pytest.importorskip('playwright.sync_api')
     base, _ = workspace_server

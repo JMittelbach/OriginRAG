@@ -435,14 +435,21 @@ class WritingStore:
         return db
 
     def _automatic_bibliography(self, db, key, data, catalogue):
-        if not data.get('collection') or data.get('bibliography_auto', True) is False:
+        whole = data.get('bibliography_corpus', False)
+        if not (data.get('collection') or whole) or data.get('bibliography_auto', True) is False:
             data.pop('bibliography_status', None)
+            data.pop('bibliography_stamp', None)
             return
         try:
-            row = db.execute("SELECT data,revision FROM documents WHERE id=? AND kind='collections'", (data['collection'],)).fetchone()
-            if not row:
-                raise ValueError('The linked personal library is unavailable. Choose a library in References.')
-            collection = {**json.loads(row[0]), 'id': data['collection'], 'revision': row[1]}
+            if whole:
+                catalogue = list(catalogue)
+                collection = {'id': 'corpus', 'name': 'OriginRAG library', 'revision': 0,
+                              'papers': sorted({p['paper_id'] for p in catalogue})}
+            else:
+                row = db.execute("SELECT data,revision FROM documents WHERE id=? AND kind='collections'", (data['collection'],)).fetchone()
+                if not row:
+                    raise ValueError('The linked personal library is unavailable. Choose a library in References.')
+                collection = {**json.loads(row[0]), 'id': data['collection'], 'revision': row[1]}
             target = data.get('bibliography_target')
             sources, _ = document_tex_sources(data)
             cited = any(re.search(r'(?<!\\)\\(?:[Cc]ite(?:[pt]|alt|alp|author|yearpar|year|num|alias)?|autocite|parencite|textcite|footcite|nocite)\b', source)
@@ -459,7 +466,20 @@ class WritingStore:
                 if len(choices) > 1:
                     raise ValueError('This project uses several bibliography files. Choose the automatic sync target in References.')
                 target = next(iter(choices), 'references.bib')
-            catalogue = list(catalogue)
+            if whole:
+                fields = ('paper_id', 'authors', 'full_authors', 'author', 'title', 'year', 'journal', 'volume',
+                          'issue', 'pages', 'doi', 'doi_url', 'publisher', 'type', 'document_type')
+                metadata = hashlib.sha256(json.dumps([tuple(p.get(f) for f in fields) for p in catalogue],
+                                                      sort_keys=True).encode()).hexdigest()
+                can_connect = bibliography_connection(data, target, False)[0]
+                def stamp(files):
+                    h = hashlib.sha256(json.dumps([metadata, target, cited, sorted(connected), can_connect]).encode())
+                    h.update(files.get(target, '').encode())
+                    return h.hexdigest()
+                if data.get('bibliography_stamp') == stamp(data['files']):
+                    return
+            else:
+                catalogue = list(catalogue)
             keys = self.citation_keys(collection, catalogue, db)
             preview, managed = bibliography_plan({**data, 'id': key, 'revision': 0}, collection, catalogue, target, True, keys)
             has_entries = bool(bibtex_entries(preview['bibtex']))
@@ -477,9 +497,12 @@ class WritingStore:
             elif has_entries and target not in connected and not preview['document_change']:
                 status.update(state='needs_review', message='The bibliography cannot be connected safely. Check the main document’s bibliography setup.')
             data.update(files=files, bibliography_target=target, bibliography_status=status)
+            if whole:
+                data['bibliography_stamp'] = stamp(files)
             data.setdefault('bibliography_sync', {})[target] = {'entries': managed, 'collection': collection['id'],
                                                                'collection_revision': collection['revision']}
         except ValueError as exc:
+            data.pop('bibliography_stamp', None)
             data['bibliography_status'] = {'state': 'needs_review', 'message': str(exc), 'conflicts': [], 'missing_count': 0}
 
     def _write_refreshed_project(self, db, key, before, revision, data):
@@ -533,10 +556,17 @@ class WritingStore:
             used = {key.casefold() for key in assigned.values()}
             papers = {p['paper_id']: p for p in catalogue}
             requested = set(collection['papers']) & papers.keys()
-            for paper_id in sorted(requested - assigned.keys()):
+            new = sorted(requested - assigned.keys())
+            legacy_keys = None
+            if len(new) > 8:
+                legacy_keys = set()
+                for (value,) in db.execute("SELECT data FROM documents WHERE kind='projects' AND instr(data, 'paper') > 0"):
+                    legacy_keys.update(re.findall(r'paper[0-9a-f]{12}', value))
+            for paper_id in new:
                 legacy = 'paper' + hashlib.sha256(str(paper_id).encode()).hexdigest()[:12]
                 # Preserve keys already used by older Quill projects. Never rewrite citations.
-                legacy_used = db.execute("SELECT 1 FROM documents WHERE kind='projects' AND instr(data, ?) > 0 LIMIT 1", (legacy,)).fetchone()
+                legacy_used = legacy in legacy_keys if legacy_keys is not None else db.execute(
+                    "SELECT 1 FROM documents WHERE kind='projects' AND instr(data, ?) > 0 LIMIT 1", (legacy,)).fetchone()
                 base = legacy if legacy_used else citation_key(papers[paper_id])
                 key, suffix = base, 0
                 while key.casefold() in used:
@@ -697,6 +727,13 @@ class WritingStore:
                         if not target.lower().endswith('.bib'):
                             raise ValueError('Choose a .bib file for automatic synchronisation.')
                         data.update(bibliography_auto=automatic, bibliography_target=target)
+                        if 'whole_library' in payload:
+                            if type(payload['whole_library']) is not bool:
+                                raise ValueError('Invalid bibliography source.')
+                            data['bibliography_corpus'] = payload['whole_library']
+                            data.pop('bibliography_stamp', None)
+                            if data['bibliography_corpus']:
+                                data['collection'] = ''
                     elif action == 'save_project':
                         files, main = payload.get('files'), payload.get('main')
                         validate_files(files, main)
@@ -730,6 +767,9 @@ class WritingStore:
                             identifier(collection)
                             if not db.execute("SELECT 1 FROM documents WHERE id=? AND kind='collections'", (collection,)).fetchone():
                                 raise ValueError('Collection not found in your account.')
+                        if collection and data.get('bibliography_corpus'):
+                            data.pop('bibliography_corpus', None)
+                            data.pop('bibliography_stamp', None)
                         data.update(files=files, main=main, collection=collection)
                     elif action == 'rename_collection':
                         name = payload.get('name')

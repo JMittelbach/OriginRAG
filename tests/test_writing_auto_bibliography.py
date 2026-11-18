@@ -12,6 +12,23 @@ CATALOGUE = [
 ]
 
 
+def test_whole_library_is_opt_in_stable_and_refreshes_beyond_collection_limit(tmp_path):
+    store = WritingStore(tmp_path)
+    rows = [{'paper_id': f'P{i}', 'author': f'Author{i}', 'year': '2024', 'title': f'Study {i}'} for i in range(620)]
+    p = store.change({'action': 'create_project', 'name': 'Manuscript'}, rows)
+    assert not p['files']['references.bib']
+    link = dict(action='configure_bibliography', whole_library=True, enabled=True, filename='refs/all.bib')
+    p = store.change({**p, **link}, rows)
+    assert p['files']['refs/all.bib'].count('@article{') == 620
+    assert store.refresh_bibliography(p['id'], rows)['revision'] == p['revision']
+    rows.append({'paper_id': 'New', 'author': 'Author0', 'year': '2024', 'title': 'Follow-up'})
+    updated = store.refresh_bibliography(p['id'], rows)
+    assert '@article{Author02024a,' in updated['files']['refs/all.bib']
+    p = store.change({**updated, **link, 'enabled': False, 'whole_library': False}, rows)
+    rows.append({'paper_id': 'Later', 'title': 'Not linked'})
+    assert store.refresh_bibliography(p['id'], rows)['files'] == updated['files']
+
+
 def setup(store, papers=('P1',), automatic=True):
     collection = store.change({'action': 'create_collection', 'name': 'Research library'}, CATALOGUE)
     for paper in papers:
