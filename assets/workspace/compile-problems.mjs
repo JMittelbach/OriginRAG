@@ -1,5 +1,3 @@
-import {streamWritingRequest} from './writing-language.mjs';
-
 const $ = id => document.getElementById(id);
 function element(tag, text, cls) {
   const el = document.createElement(tag);
@@ -39,19 +37,67 @@ function setupResize() {
   };
 }
 
-export function setupCompileProblems({enabled, editor, project, revision, reveal, recompile, report}) {
+function diagnosticLines(rows, files) {
+  const requests = new Map(), ranges = new Map();
+  for (const {file, line} of rows) {
+    if (!Object.hasOwn(files, file) || !/\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i.test(file) || !Number.isSafeInteger(line) || line < 1) continue;
+    if (!requests.has(file)) requests.set(file, new Set());
+    requests.get(file).add(line);
+  }
+  for (const [file, numbers] of requests) {
+    const source = files[file], locations = new Map();
+    let n = 1, from = 0, end = source.indexOf('\n');
+    for (const target of [...numbers].sort((a, b) => a - b)) {
+      while (n < target && end !== -1) {
+        n++; from = end + 1; end = source.indexOf('\n', from);
+      }
+      if (n !== target) break;
+      let to = end === -1 ? source.length : end;
+      if (to > from && source[to - 1] === '\r') to--;
+      locations.set(target, {from, to});
+    }
+    ranges.set(file, locations);
+  }
+  return ranges;
+}
+
+const plain = text => !/[\\{}%$#&_^~\r\n]/.test(text);
+function simpleFix(message, text) {
+  const onlyMatch = pattern => {
+    const m = pattern.exec(text);
+    return m && plain(text.slice(0, m.index)) && plain(text.slice(m.index + m[0].length)) ? m : null;
+  };
+  if (/^Too many \}'s\.?$/i.test(message)) {
+    const trimmed = text.trimEnd();
+    if (!trimmed.endsWith('}')) return null;
+    const before = trimmed.slice(0, -1);
+    if (before.trim() && plain(before.replace(/\\(?:textbf|textit|texttt|emph)\{[^\\{}%$#&_^~]+\}/, '')))
+      return {label: 'Remove the extra closing brace.', replacement: before + text.slice(trimmed.length)};
+  } else if (/^Missing \} inserted\.?$/i.test(message)) {
+    const m = onlyMatch(/\$[A-Za-z0-9]+[_^]\{[A-Za-z0-9+-]+\$/);
+    if (m) {
+      const at = m.index + m[0].length - 1;
+      return {label: 'Close the math group before the final $.', replacement: text.slice(0, at) + '}' + text.slice(at)};
+    }
+  } else if (/^Undefined control sequence\.?$/i.test(message)) {
+    const m = onlyMatch(/\\(textbff|textitt|textttt|emphh)\{[^\\{}%$#&_^~]+\}/);
+    if (m) return {label: 'Remove the doubled final letter in the command.', replacement: text.slice(0, m.index + m[1].length) + text.slice(m.index + m[1].length + 1)};
+  }
+  return null;
+}
+
+export function setupCompileProblems({editor, project, revision, reveal, recompile, report}) {
   setupResize();
   const root = $('problems');
-  let build, pending, last;
+  let build;
   function invalidate() {
     if (!build) return;
     const hadErrors = build.failed;
-    build = null; pending?.abort();
+    build = null;
     queueMicrotask(() => { if (!build) editor().setCompilerErrors([]); });
     root.replaceChildren(...(hadErrors ? [element('p', 'Source changed. Recompile to update these diagnostics.')] : []));
   }
   function render(result, isCurrent) {
-    pending?.abort(); pending = null;
     root.replaceChildren();
     const current = build = {failed: !result.ok};
     const fresh = () => build === current && isCurrent();
@@ -59,83 +105,41 @@ export function setupCompileProblems({enabled, editor, project, revision, reveal
     const rows = [...(result.diagnostics || [])];
     if (!result.ok && rows.every(p => ['warning','note'].includes(p.severity)))
       rows.push({message: 'Build failed without a source location. Check the compile log.'});
-    const seen = new Set(), marks = [], jobs = [], counts = new Map();
-    function hasLine(file, line) {
-      if (!Object.hasOwn(project().files, file) || !/\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i.test(file) || !Number.isSafeInteger(line) || line < 1) return false;
-      if (!counts.has(file)) {
-        const source = project().files[file]; let n = 1, pos = -1;
-        while ((pos = source.indexOf('\n', pos + 1)) !== -1) n++;
-        counts.set(file, n);
-      }
-      return line <= counts.get(file);
-    }
+    const seen = new Set(), marks = [], files = project().files, ranges = diagnosticLines(rows, files);
     for (const p of rows) {
       const message = String(p.message || 'Compiler diagnostic');
       const severity = p.severity || (/\bwarning:/i.test(message) || result.ok ? 'warning' : 'error');
       const key = JSON.stringify([p.file, p.line, message]);
       if (seen.has(key)) continue; seen.add(key);
-      const located = hasLine(p.file, p.line);
+      const range = ranges.get(p.file)?.get(p.line);
       const row = element('section', '', 'compile-problem');
-      const label = located ? action(p.file + ':' + p.line + ' · ' + message, () => { if (fresh()) reveal(p.file, p.line); }) : element('span', message);
+      const label = range ? action(p.file + ':' + p.line + ' · ' + message, () => { if (fresh()) reveal(p.file, p.line); }) : element('span', message);
       row.append(element('strong', severity, 'problem-' + severity), label); root.append(row);
-      if (severity !== 'error') continue;
-      if (located) marks.push(p);
-      if (result.ok || !enabled) continue;
-      const box = element('div', '', 'compiler-advice'); row.append(box);
-      const signature = JSON.stringify([project().id, result.revision, key]);
-      function present(response) {
-        box.replaceChildren(element('p', response.answer));
-        const edit = response.edits?.length === 1 && response.edits[0];
-        if (response.filtered) box.append(element('small', 'No exact source replacement could be verified.'));
-        if (!located || !edit || edit.file !== p.file || !Number.isSafeInteger(edit.from) || !Number.isSafeInteger(edit.to)
-            || typeof edit.replacement !== 'string' || !edit.original || project().files[p.file].slice(edit.from, edit.to) !== edit.original) return;
-        const before = element('pre', edit.original), after = element('pre', edit.replacement);
-        box.append(element('small', 'Current source'), before, element('small', 'Suggested fix'), after);
-        for (const note of edit.review_notes || []) box.append(element('small', note));
-        const apply = action('Apply fix', async () => {
-          if (!fresh() || apply.disabled) return;
-          apply.disabled = true;
-          try {
-            const saved = await revision(project().id);
-            if (!fresh() || !box.contains(apply)) return;
-            if (saved.revision !== result.revision) {
-              invalidate(); report('The saved manuscript changed. Recompile before applying a fix.'); return;
-            }
-            reveal(p.file, p.line);
-            if (!editor().applyProjectEdits([edit], project().files)) { report('The source changed. Recompile to get a fresh suggestion.'); return; }
-            await recompile();
-          } catch (error) { report(error.message); } finally { apply.disabled = false; }
-        });
-        box.append(apply, action('Dismiss', () => box.replaceChildren(ask)));
-      }
-      async function run() {
-        if (!fresh() || pending) return;
-        const controller = pending = new AbortController();
-        box.replaceChildren(element('p', 'Looking for a fix…'));
+      if (severity !== 'error' || !range) continue;
+      marks.push(p);
+      if (result.ok || !/\.tex$/i.test(p.file) || range.to - range.from > 320) continue;
+      const original = files[p.file].slice(range.from, range.to), fix = simpleFix(message.trim(), original);
+      if (!fix) continue;
+      const edit = {...range, file: p.file, original, replacement: fix.replacement};
+      const box = element('div', '', 'compiler-advice');
+      const apply = action('Apply fix', async () => {
+        if (!fresh() || apply.disabled) return;
+        apply.disabled = true;
         try {
-          const res = await streamWritingRequest({action:'compile_fix', id:project().id, revision:result.revision,
-            file:located ? p.file : '', line:located ? p.line : 0, message:message.slice(0,1200)}, controller.signal, () => {});
-          if (!fresh() || controller.signal.aborted) return;
-          if (res.revision !== result.revision) { invalidate(); return; }
-          last = {signature, response:res}; present(res);
-        } catch (error) {
-          if (fresh() && !controller.signal.aborted) box.replaceChildren(element('p', error.message), ask);
-        } finally {
-          if (pending === controller) { pending = null; for (const job of jobs) job.ask.disabled = false; }
-        }
-      }
-      const ask = action(located ? 'Suggest fix' : 'Explain error', () => request());
-      function request() {
-        if (pending || !fresh()) return;
-        for (const job of jobs) job.ask.disabled = true;
-        void run();
-      }
-      box.append(ask); jobs.push({located, ask, start: () => last?.signature === signature ? present(last.response) : request()});
+          const saved = await revision(project().id);
+          if (!fresh() || !box.contains(apply)) return;
+          if (saved.revision !== result.revision) {
+            invalidate(); report('The saved manuscript changed. Recompile before applying a fix.'); return;
+          }
+          reveal(p.file, p.line);
+          if (!editor().applyProjectEdits([edit], project().files)) { report('The source changed. Recompile to get a fresh suggestion.'); return; }
+          await recompile();
+        } catch (error) { report(error.message); } finally { apply.disabled = false; }
+      });
+      box.append(element('span', fix.label), element('pre', fix.replacement), apply, action('Dismiss', () => box.remove()));
+      row.append(box);
     }
     editor().setCompilerErrors(marks);
-    if (current.failed && !enabled) root.append(element('small', 'Model suggestions are disabled on this host.'));
-    (jobs.find(job => job.located) || jobs[0])?.start();
   }
-  window.addEventListener('pagehide', () => pending?.abort());
   return {render, invalidate};
 }

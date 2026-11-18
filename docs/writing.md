@@ -166,12 +166,11 @@ those mechanisms.
 5. Inspect **Errors, warnings & compile log**. File/line diagnostics jump to the
    corresponding source; error lines are marked in red. Drag the panel's top
    edge to resize it, or focus the divider and use the up/down arrows.
-   With model assistance enabled, Quill asks about the first located error
-   automatically, using the diagnostic and nearby lines only. Select **Suggest fix**
-   on another error if needed. Compare the current and suggested source.
-   **Apply fix** makes one undoable edit and recompiles; **Dismiss** changes
-   nothing. Without a reliable location, Quill can explain the error but cannot
-   apply a patch. A failed build keeps the previous PDF labelled as out of date.
+   Quill offers an immediate quick fix only for a few clear single-line mistakes,
+   such as an extra closing brace. The error panel never calls a language model.
+   **Apply fix** makes one undoable edit and recompiles. For anything ambiguous,
+   only the compiler diagnostic is shown. A failed build keeps the previous PDF
+   labelled as out of date.
 6. **Download LaTeX ZIP** saves the manuscript first, then downloads all source
    files, bibliographies, classes, styles and figures in one archive. **PDF ↓** downloads the last
    successfully compiled PDF. **Download draft** preserves the current buffers

@@ -601,7 +601,7 @@ async function editor(id) {
     <details id="logDetails"><summary>Errors, warnings & compile log</summary><div id="problemsResize" role="separator" aria-label="Resize compile problems" aria-controls="compileBody" aria-orientation="horizontal" tabindex="0"></div><div class="log-body" id="compileBody"><div id="problems"></div><pre id="compileLog">No compilation yet.</pre></div></details>`;
   sourceEditor = createLatexEditor($('source'), (name, text) => { project.files[name] = text; changed(); clearTimeout(outlineTimer); outlineTimer = setTimeout(outline, 300); }, (line, col) => { $('cursorPosition').textContent = `Ln ${line}, Col ${col}`; }, () => project.files);
   writerLayout = setupWriterLayout(() => sourceEditor.measure());
-  compileProblems = setupCompileProblems({enabled: state.language_check, editor: () => sourceEditor, project: () => project,
+  compileProblems = setupCompileProblems({editor: () => sourceEditor, project: () => project,
     revision: id => api('/api/writing?revision=' + encodeURIComponent(id)),
     reveal: (file, line) => { selectFile(file); writerLayout.showCode(); sourceEditor.jump(line); },
     recompile: () => { clearTimeout(compileTimer); return compile(); }, report: message => notice(message, true)});

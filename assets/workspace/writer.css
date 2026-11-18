@@ -115,4 +115,4 @@ body.writing .writer-actions #templateButton{color:var(--text)}
 .writing .compile-problem strong{display:inline-block;margin-right:.5em;text-transform:capitalize}
 .writing .problem-error{color:var(--danger,#ef7280)}.writing .problem-warning{color:var(--amber,#c79339)}
 .writing #problems .compile-problem button{display:inline-block;width:auto;margin:2px 5px 2px 0}
-.writing .compiler-advice small{display:block}.writing .compiler-advice pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:5px 8px;background:var(--panel-2);margin:2px 0 5px}
+.writing .compiler-advice pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:5px 8px;background:var(--panel-2);margin:2px 0 5px}

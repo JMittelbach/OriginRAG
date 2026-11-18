@@ -7,6 +7,36 @@ data, or a retrieval index.
 
 ## 1. Install
 
+### Windows
+
+Windows uses the same full installer as Linux, inside **Ubuntu on WSL 2**.
+There is no separate Windows Python, Conda, TeX or Ollama installation.
+
+1. If Ubuntu on WSL 2 is not installed, run `wsl --install -d Ubuntu` in an
+   administrator PowerShell. Restart if requested. Open Ubuntu once and finish
+   creating your normal Linux user. [Microsoft's WSL installation guide](https://learn.microsoft.com/windows/wsl/install)
+2. Clone this repository on Windows or extract its GitHub ZIP. Double-click
+   **OriginRAG.cmd** in that folder. Keep its terminal open. The first launch
+   downloads the runtime and model and tests Quill's PDF compiler. Later
+   launches reuse the installation. Press **Ctrl+C** in the terminal to stop.
+3. If the browser does not open, enter the localhost address printed by the
+   launcher in your **Windows** browser (normally `http://localhost:8765`).
+
+The working copy and your data live in `~/OriginRAG` **inside the selected WSL
+distribution**. An existing checkout there is reused; a new one copies only
+committed code from the Windows clone. If you started from a ZIP, Ubuntu
+clones from GitHub and may ask you to sign in for a private repository.
+To see the working folder in Windows Explorer, run `cd ~/OriginRAG && explorer.exe .`
+in Ubuntu. To update it, stop the app and run `git pull --ff-only` in that same
+folder. Papers in a separate VirtualBox or Hyper-V VM stay in that VM.
+
+The launcher prefers the default Ubuntu distribution, then the one named
+`Ubuntu`. If you use another name, run `wsl -l -v` in PowerShell, set
+`$env:ORIGINRAG_WSL_DISTRO = 'Ubuntu-24.04'` (use your actual name with
+version **2**), then run `.\OriginRAG.cmd` from the repository.
+
+### macOS and Linux
+
 OriginRAG supports macOS and Linux with Python 3.11. The recommended Conda setup
 is:
 

@@ -11,6 +11,12 @@ study, cohort or dataset. Five papers do not necessarily mean five independent s
 
 ## Install and open
 
+**Windows 11 or Windows 10 (build 19041+):** Install Ubuntu on WSL 2 once with
+`wsl --install -d Ubuntu` in an administrator PowerShell. Restart if prompted
+and open Ubuntu once to create your user. Then **double-click `OriginRAG.cmd`**
+in the cloned or extracted repository. The first launch installs the full suite;
+later launches open it in your Windows browser. [Windows details](docs/getting_started.md#windows)
+
 On macOS or Linux, with Git, Bash, curl and an internet connection:
 
 ```bash
