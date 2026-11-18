@@ -7,7 +7,23 @@ NAVIGATION = '''<header id="globalNavigation" class="origin-navigation">
 </header>
 <dialog id="globalSettingsDialog" class="origin-global-dialog"><form method="dialog" class="dialog-dismiss-form"><button class="dialog-close" aria-label="Close settings" title="Close settings">×</button></form><h2>Workspace settings</h2>
 <label>Start page<select id="globalStartPage"><option value="/chat" data-feature="rag">OriginRAG</option><option value="/bookshelf">Bookshelf</option><option value="/library">Library</option><option value="/write" data-feature="write">Quill</option><option value="/folio" data-feature="folio">Folio</option></select></label>
-<label><input type="checkbox" id="globalReduceMotion"> Reduce animations</label><p>Saved in this browser across your workspace. Answer settings remain in OriginRAG.</p><button id="globalModels" type="button">Models &amp; runtimes</button></dialog>
+<label><input type="checkbox" id="globalReduceMotion"> Reduce animations</label><p>Saved in this browser across your workspace. Answer settings remain in OriginRAG.</p><button id="globalModels" type="button">Models &amp; runtimes</button>
+<details id="documentSync" hidden><summary>Document sync</summary>
+<p id="docSyncSetup">Connect the same private iCloud, Dropbox, Nextcloud or network folder on both computers.</p>
+<div id="docSyncConnect"><label for="docSyncFolder">Folder on this computer</label><input id="docSyncFolder" type="text" list="docSyncFolders" placeholder="Choose or enter a folder path" autocomplete="off"><datalist id="docSyncFolders"></datalist>
+<button type="button" id="docSyncLink">Connect folder</button></div>
+<div id="docSyncConnected" hidden><small id="docSyncPath"></small><div><button type="button" id="docSyncNow">Sync this document</button> <button type="button" id="docSyncRefresh">Refresh</button> <button type="button" id="docSyncDisconnect">Disconnect</button></div><ul id="docSyncList"></ul></div>
+<p id="docSyncNotice" role="status"></p></details>
+<details id="deviceHandoff"><summary>SSH access (advanced)</summary>
+<p>Wait for your edits to save. Leave this host running and reachable over SSH. On a shared host, use account protection and sign in with the same Origin account.</p>
+<label for="handoffHost">SSH host</label><input id="handoffHost" type="text" maxlength="255" placeholder="martin@workstation or an SSH alias" autocomplete="off" spellcheck="false">
+<p id="handoffHint" role="status"></p>
+<div id="handoffSteps" hidden>
+<label for="handoffCommand">1. Run on the other computer. Leave the terminal open.</label>
+<div><input id="handoffCommand" readonly spellcheck="false"><button type="button" data-copy="handoffCommand" aria-label="Copy SSH command">Copy</button></div>
+<label for="handoffUrl">2. Once connected, open this address there.</label>
+<div><input id="handoffUrl" readonly spellcheck="false"><button type="button" data-copy="handoffUrl" aria-label="Copy browser address">Copy</button></div>
+</div></details></dialog>
 <dialog id="modelDialog" class="origin-global-dialog model-dialog" aria-labelledby="modelTitle">
 <button id="modelClose" class="dialog-close" type="button" aria-label="Close models" title="Close models">×</button><div class="model-heading"><div><h2 id="modelTitle">Models</h2><p id="modelSelection" role="status"></p></div><button id="modelRefresh" type="button" aria-label="Refresh model list" title="Refresh">↻</button></div>
 <div class="model-controls model-browser-controls"><label class="model-search-label"><span class="sr-only">Find models</span><input id="modelSearch" type="search" maxlength="80" placeholder="Search models…" autocomplete="off"></label>

@@ -1,10 +1,14 @@
 import {requestJSON} from './request.mjs';
 import {getAppProfile} from './profile.mjs';
 import {openModels} from './models-launcher.mjs';
+import {bindDeviceHandoff} from './device-handoff.mjs';
+import {bindDocumentSync} from './document-sync.mjs';
 
 const $ = id => document.getElementById(id);
 const navigation = $('globalNavigation') || $('applicationHeader');
 const key = 'origin.workspace.settings.v1';
+bindDeviceHandoff($('deviceHandoff'));
+bindDocumentSync($('documentSync'));
 let settings = {};
 try {
   const stored = JSON.parse(localStorage.getItem(key));
@@ -22,6 +26,7 @@ async function loadProfile() {
   $('globalAccountDetails').textContent = 'Loading account…';
   try {
     const profile = await getAppProfile();
+    if ($('documentSync')) $('documentSync').hidden = profile.local_document_sync !== true;
     $('globalModels').hidden = !profile.features.rag && !profile.features.write;
     for (const item of navigation.querySelectorAll('[data-feature]')) item.hidden = !profile.features[item.dataset.feature];
     for (const item of startPage.querySelectorAll('[data-feature]')) item.disabled = !profile.features[item.dataset.feature];

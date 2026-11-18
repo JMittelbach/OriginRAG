@@ -446,7 +446,8 @@ Before an update, let queued requests and imports finish, then stop the service:
 
 ```bash
 systemctl --user stop originrag.service
-# Update application files/dependencies, preserving your local corpus and .env.
+git pull --ff-only
+# Only if dependencies changed: rerun ./setup.sh (for Conda installations).
 systemctl --user start originrag.service
 ```
 

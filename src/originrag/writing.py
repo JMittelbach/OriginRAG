@@ -625,7 +625,7 @@ class WritingStore:
         finally:
             db.close()
 
-    def change(self, payload, catalogue):
+    def change(self, payload, catalogue, *, from_document_sync=False):
         action = payload.get('action')
         if action == 'sync_bibliography':
             return self.sync_bibliography(payload, catalogue)
@@ -657,7 +657,10 @@ class WritingStore:
                         data['bibliography_auto'] = automatic
                         if payload.get('zip') and payload.get('template'):
                             raise ValueError('Choose a template or a ZIP, not both.')
-                        if payload.get('template'):
+                        if from_document_sync:
+                            files, main = payload.get('files'), payload.get('main')
+                            validate_files(files, main)
+                        elif payload.get('template'):
                             files, main = template_files(payload['template'])
                             data['template'] = payload['template']
                         else:
@@ -697,6 +700,11 @@ class WritingStore:
                     elif action == 'save_project':
                         files, main = payload.get('files'), payload.get('main')
                         validate_files(files, main)
+                        if from_document_sync:
+                            name = payload.get('name')
+                            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
+                                raise ValueError('Invalid synced manuscript name.')
+                            data['name'] = name.strip()
                         collection = payload.get('collection', '')
                         if concurrent_save:
                             base = payload['base']

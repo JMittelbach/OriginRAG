@@ -51,6 +51,7 @@ jobs:
             tests/test_reader_reading_status_browser.py \
             tests/test_workspace_profiles_browser.py \
             tests/test_workspace_navigation.py \
+            tests/test_document_sync.py \
             tests/test_folio_http.py \
             tests/test_folio_format_pane.py \
             tests/test_folio_engine.py \

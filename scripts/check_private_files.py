@@ -17,6 +17,8 @@ def private_path(name: str) -> bool:
     if ({"data", "bib", "outputs"} | LOCAL_DIRS).intersection(path.parts[:-1]):
         return True
     base = path.name.lower()
+    if base.endswith('.origin1') or 'Origin Documents' in path.parts:
+        return True
     if base.startswith(".env") and base != ".env.example":
         return True
     if base in {"chat.json", "session_config.json"} or name in {"config/paths.yaml", "config/paths.yml"}:

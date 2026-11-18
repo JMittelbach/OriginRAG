@@ -416,6 +416,7 @@ async function save() {
     const updated = dirty ? rebaseDraft(sent, project, result, diffTextChanges) : result;
     adoptProject(updated, result, dirty);
     if (dirty) savedVersion = version;
+    window.dispatchEvent(new CustomEvent('origin-document-saved', {detail: {kind: 'write', id: result.id}}));
   } catch (e) {
     if (e.retryable && !result) unconfirmedSave = {sent, version};
     pauseSaving(e); throw e;

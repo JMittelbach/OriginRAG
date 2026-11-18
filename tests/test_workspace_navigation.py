@@ -1,6 +1,43 @@
 import pytest
 
 from test_writing import workspace_server as workspace_server
+from test_writing_editor_integration import create_manuscript
+
+
+def test_quill_handoff_opens_the_saved_manuscript_in_a_fresh_browser(workspace_server):
+    pw = pytest.importorskip('playwright.sync_api')
+    base, _ = workspace_server
+    port = base.rsplit(':', 1)[1]
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        work = browser.new_page()
+        key = create_manuscript(work, base, 'Two desks')
+        source = work.locator('#source .cm-content')
+        source.fill('Written at work')
+        pw.expect(work.locator('#savedState')).to_have_text('All changes saved')
+        work.evaluate("history.replaceState(null, '', location.href + '&unrelated=private#selection')")
+        work.locator('#globalSettings').click()
+        work.get_by_text('SSH access (advanced)', exact=True).click()
+        host = work.get_by_label('SSH host', exact=True)
+        for invalid in ('martin@localhost', 'https://workstation', '-p 22'):
+            host.fill(invalid)
+            pw.expect(work.locator('#handoffSteps')).to_be_hidden()
+        host.fill('martin@workstation')
+        pw.expect(work.locator('#handoffCommand')).to_have_value(
+            f'ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:{port}:127.0.0.1:{port} martin@workstation')
+        url = work.locator('#handoffUrl').input_value()
+        assert url == f'{base}/write?id={key}'
+        work.close()
+        home = browser.new_page()
+        home.goto(url)
+        source = home.locator('#source .cm-content')
+        pw.expect(source).to_have_text('Written at work')
+        source.fill('Continued at home')
+        pw.expect(home.locator('#savedState')).to_have_text('All changes saved')
+        work = browser.new_page()
+        work.goto(url)
+        pw.expect(work.locator('#source .cm-content')).to_have_text('Continued at home')
+        browser.close()
 
 
 def test_corpus_drag_navigation_and_double_delete(workspace_server):

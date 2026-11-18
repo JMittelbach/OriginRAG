@@ -43,6 +43,11 @@ See [Getting started](docs/getting_started.md) for virtual-environment setup,
 model configuration and troubleshooting. Clone the repository for the complete
 web application; the Python wheel alone does not include the launchers or corpus.
 
+**Updating an existing clone:** wait for edits to save, stop the app, run
+`git pull --ff-only`, then start `./web` again and reload the page. Ordinary
+code updates need no reinstall and leave your papers and manuscripts in place.
+If an update changes dependencies, rerun `./setup.sh` (it remembers your profile).
+
 ## Add papers and ask questions
 
 Open **Add papers** to upload your PDFs, or **Find papers** to discover and import
@@ -99,6 +104,11 @@ ssh -N -L 8765:127.0.0.1:8765 USER@SERVER
 Visit `http://127.0.0.1:8765` and register. One account covers all enabled tools.
 Keep the server on loopback; do not expose the built-in Python server directly
 to the public internet.
+
+**Writing on two computers?** In each local installation, open **Settings →
+Document sync** and connect the same private cloud or network folder. Choose
+**Sync this document** on the first computer, then **Open** on the second.
+No terminal is needed. [Device setup and the shared-server alternative](docs/writing.md#continue-on-another-computer).
 
 For a persistent Linux service, complete the
 [one-time systemd setup](docs/getting_started.md#keep-the-server-running-with-systemd), then use:

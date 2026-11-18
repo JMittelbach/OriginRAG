@@ -1766,6 +1766,9 @@ def build_handler(
             if not context:
                 return
             current_app, user, _ = context
+            if parsed.path == '/api/document-sync':
+                self.handle_document_sync(current_app)
+                return
             if parsed.path == "/api/models":
                 local = not auth_store and local_browser_request(
                     self.server.server_address, self.client_address, self.headers)
@@ -1791,6 +1794,9 @@ def build_handler(
                 turn_jobs.recover_persisted(owner_key, current_app)
             if parsed.path == '/api/app-profile':
                 self.respond_json({**runtime_profile.public(), 'authenticated': bool(user),
+                                   'local_document_sync': runtime_profile.write and not auth_store and
+                                   local_browser_request(self.server.server_address, self.client_address, self.headers),
+                                   'web_port': self.server.server_address[1],
                                    'user': public_user(user) if user else None})
                 return
             if parsed.path == '/api/library-access':
@@ -2076,6 +2082,9 @@ def build_handler(
                 turn_jobs.recover_persisted(owner_key, current_app)
             if auth_store and not self.valid_csrf(session_token):
                 self.respond_json({"error": "invalid CSRF token"}, status=HTTPStatus.FORBIDDEN)
+                return
+            if parsed.path == '/api/document-sync':
+                self.handle_document_sync(current_app, post=True)
                 return
             if parsed.path == "/api/models":
                 local = not auth_store and local_browser_request(
@@ -2559,6 +2568,29 @@ def build_handler(
                     max_age=max(1, session.expires_at - int(datetime.now().timestamp())),
                 ),
             )
+
+        def handle_document_sync(self, app, *, post=False):
+            import sqlite3
+            from originrag.document_sync import DocumentSync, SyncConflict
+            if auth_store or not runtime_profile.write or not local_browser_request(
+                    self.server.server_address, self.client_address, self.headers):
+                self.respond_json({'error': 'Folder sync is available on a private local installation only.'}, status=403)
+                return
+            if post and not hmac.compare_digest(self.headers.get('X-OriginRAG-Local-Token', ''), local_import_token):
+                self.respond_json({'error': 'Reopen Document sync and try again.'}, status=403)
+                return
+            try:
+                result = DocumentSync(REPO_ROOT / app.out_dir, runtime_profile, library_catalog).run(
+                    self.read_json_body(reject_duplicate_fields=True) if post else {'action': 'status'})
+                if not post:
+                    result['token'] = local_import_token
+                self.respond_json(result)
+            except SyncConflict as exc:
+                self.respond_json({'error': str(exc)}, status=409)
+            except (TypeError, KeyError, ValueError, RecursionError) as exc:
+                self.respond_json({'error': str(exc) if isinstance(exc, ValueError) else 'Invalid or missing synced document.'}, status=400)
+            except (OSError, sqlite3.Error):
+                self.respond_json({'error': 'Cannot access the sync folder. Check that it is available and writable.'}, status=503)
 
         def library_access(self, user) -> dict:
             if not library_manager:

@@ -13,6 +13,7 @@ import install_git_hooks  # noqa: E402
 
 
 PRIVATE = [
+    "Origin Documents/.origin-temporary", "my-backup.origin1",
     "data/metadata/papers.tsv", "data/metadata/paper_registry.tsv", "data/metadata/paper_requests.tsv",
     "data/indexes/index.bin", "data/new-format/cache.json", "bib/new-paper.pdf", "bib/bibliography.tsv",
     "outputs/chat_sessions/a/chat.json", "outputs/answers/export.txt", "runtime/server.json",
@@ -46,6 +47,25 @@ def repository(tmp_path):
 def test_local_outputs_are_ignored_and_guarded(repository, name):
     assert run(repository, "check-ignore", "--no-index", "--", name).returncode == 0
     assert guard.private_path(name)
+
+
+def test_fast_forward_code_update_keeps_private_workspace_files(repository, tmp_path_factory):
+    clone = tmp_path_factory.mktemp("workstation")
+    run(repository, "clone", "--no-local", str(repository), str(clone), check=True)
+    private = {}
+    for name in (".env", "bib/papers/paper.pdf", "data/metadata/papers.tsv",
+                 "outputs/web_chat_sessions/.writing.sqlite3", "outputs/web_chat_sessions/.folio.sqlite3"):
+        path = clone / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        private[path] = ("Private fixture: " + name).encode()
+        path.write_bytes(private[path])
+    (repository / "web").write_text("updated launcher\n")
+    run(repository, "add", "web", check=True)
+    run(repository, "-c", "core.hooksPath=/dev/null", "commit", "-m", "Update launcher", check=True)
+    run(clone, "pull", "--ff-only", check=True)
+    assert (clone / "web").read_text() == "updated launcher\n"
+    assert {path: path.read_bytes() for path in private} == private
+    assert not run(clone, "status", "--porcelain", check=True).stdout
 
 
 @pytest.mark.parametrize("name", ["src/originrag/paths.py", "tests/test_private_data_guard.py", "assets/catalogue/papers.tsv", ".env.example", "config/paths.example.yaml", "data/metadata/.gitkeep", "bib/README.md"])

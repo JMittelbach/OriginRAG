@@ -632,7 +632,7 @@ class FolioStore:
             raise ValueError('A document must be no larger than 8 MB.')
         return title, encoded
 
-    def change(self, payload):
+    def change(self, payload, *, from_document_sync=False):
         if not isinstance(payload, dict):
             raise ValueError('Expected a document request.')
         action = payload.get('action')
@@ -641,7 +641,7 @@ class FolioStore:
         warnings = []
         if action == 'import':
             payload, warnings = self.import_payload(payload)
-        if action == 'create':
+        if action == 'create' and not from_document_sync:
             payload = {**payload, 'content': template_content(payload.get('template', 'blank')),
                        'page': dict(DEFAULT_PAGE), 'comments': []}
         if action in {'create', 'save', 'import'}:

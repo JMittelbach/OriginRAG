@@ -272,3 +272,18 @@ body > .app :is(.pill, .queue-summary, .library-stats-button) {
     padding: 7px 12px;
   }
 }
+#deviceHandoff { margin-top: 1rem; }
+#deviceHandoff summary { cursor: pointer; }
+#deviceHandoff label { display: block; margin: .75rem 0 .25rem; }
+#deviceHandoff input { width: 100%; min-width: 0; box-sizing: border-box; font: inherit; }
+#handoffSteps > div { display: flex; gap: .4rem; }
+#handoffSteps input { font: .85rem ui-monospace, monospace; }
+#handoffHint:empty { display: none; }
+#documentSync { margin-top: 1rem; }
+#documentSync summary { cursor: pointer; }
+#docSyncList { padding: 0; list-style: none; max-height: 14rem; overflow-y: auto; }
+#docSyncList li { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: .5rem 0; }
+#docSyncList span { flex: 1 1 8rem; overflow-wrap: anywhere; }
+#docSyncPath { display: block; overflow-wrap: anywhere; margin: .6rem 0; }
+#docSyncNotice:empty { display: none; }
+#globalSettings[data-sync-alert]::after { content: " •"; color: var(--amber, #edbd68); }

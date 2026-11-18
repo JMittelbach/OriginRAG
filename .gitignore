@@ -47,6 +47,8 @@ external/
 *.bib
 *.log
 *.sqlite3
+*.origin1
+Origin Documents/
 *.sqlite3-*
 .cache/
 .local/

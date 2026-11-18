@@ -138,6 +138,7 @@ async function save() {
       state.doc.updated_at = saved.updated_at;
       state.doc.title = data.title;
       state.saved = version;
+      window.dispatchEvent(new CustomEvent('origin-document-saved', {detail: {kind: 'folio', id: saved.id}}));
       state.paused = false;
       status(dirty() ? "Unsaved changes" : "Saved");
       notice("");

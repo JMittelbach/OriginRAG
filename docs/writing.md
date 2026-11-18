@@ -713,10 +713,55 @@ output size. Temporary files are discarded after the response. Build logs are
 returned only to the requesting account. LaTeX engine/package differences mean
 that not every existing Overleaf project will compile unchanged.
 
+## Continue on another computer
+
+**Two local installations, no terminal:** on both computers open **Settings →
+Document sync** and connect the same private folder in iCloud Drive, Dropbox,
+Nextcloud or on a network drive. Select a suggested location or enter its
+existing local path (it can differ between devices). The folder service must
+already be set up on both machines and approved for your documents. Anyone with
+access to that folder can read the shared files.
+
+1. Open a Quill or Folio document on the first computer and click **Sync this document**.
+2. Let the folder provider finish uploading before shutting that computer down.
+   On the other computer, choose **Refresh → Open** in Document sync.
+3. The linked editor sends saved changes to the folder after a short pause.
+   Before closing the tab, click **Sync this document** to send the latest edits
+   immediately. Use the same button to receive changes in an open editor.
+
+Quill shares its sources, bibliography files and project assets. Folio shares
+its text, layout, images and comments. This does not transfer chats, collection
+links, accounts, revision history or the paper corpus. Conflicting offline
+edits are not silently merged: **Open as copy** keeps the incoming version
+separate. Disconnecting does not delete any documents. This is not a backup
+history or live co-editing, and Origin cannot confirm a cloud provider's upload.
+
+**One shared host instead:**
+Keep one copy of the workspace on an always-on computer, such as a workstation
+or a private server. On the first computer, wait for **All changes saved**
+(Quill) or **Saved** (Folio). Open **Settings → SSH access (advanced)**
+and enter the host's SSH name, for example `martin@workstation`. On the second
+computer, run the displayed command, leave the terminal open, then open the
+displayed address. Bookmark it to return to the same manuscript next time.
+Only the browser and an SSH client are needed on the second computer.
+
+The host must be awake, running Origin and reachable by an authorised SSH
+connection (for example over your work VPN). If SSH reports the local port is
+in use, stop your other local Origin instance or conflicting tunnel before
+continuing. A shared host needs `--auth`; use the same Origin account on both
+computers. A personal no-account workspace is separate from a signed-in
+workspace. To move an existing document to a shared server, export and import
+it once, then work on the server copy from both places.
+
+**Working offline instead?** Export a Quill LaTeX ZIP or a Folio JSON file
+and import it on the other installation. That's a copy, not a merge: edit on
+one device at a time and transfer the latest version back. Don't sync a live
+Origin database or the entire clone with rsync or a cloud folder.
+
 ## Local writing and remote retrieval
 
 You can run an installation locally and keep a separate RAG installation on your
-server. Separate installations do **not** synchronise accounts, collections or manuscript
-edits between them. Transfer projects explicitly with ZIP export/import. No
-background synchronisation or access to arbitrary files on your computer is enabled.
-Local file access happens only through the browser's explicit file picker.
+server. Accounts and collections stay on their respective installations.
+Manuscripts stay local unless you explicitly link them in **Document sync**
+or transfer an exported copy. The local sync helper only manages Origin's
+document files in the selected folder.

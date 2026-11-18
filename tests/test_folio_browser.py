@@ -10,7 +10,7 @@ import zipfile
 
 import pytest
 
-from test_folio_http import folio_server as folio_server, request_json
+from test_folio_http import PASSWORD, folio_server as folio_server, request_json
 from test_ecosystem_design_browser import NAVIGATION_CONTRAST
 
 
@@ -62,6 +62,29 @@ def create_document(browser, title='A useful draft', *, capture_dashboard=False)
 def saved_document(browser):
     key = parse_qs(urlparse(browser.page.url).query)['id'][0]
     return request_json(browser.port, path='/api/folio?id=' + key, headers=browser.headers)
+
+
+@pytest.mark.parametrize('folio_server', [True], indirect=True)
+def test_handoff_resumes_folio_after_sign_in_on_a_second_device(folio_browser):
+    b = folio_browser
+    editor = create_document(b, 'Desk to desk')
+    editor.fill('One saved document')
+    b.expect(b.page.locator('#folioSaveStatus')).to_have_text('Saved')
+    b.page.locator('#globalSettings').click()
+    b.page.get_by_text('SSH access (advanced)', exact=True).click()
+    b.page.get_by_label('SSH host', exact=True).fill('research-server')
+    b.expect(b.page.locator('#handoffUrl')).to_have_value(b.page.url)
+    home = b.page.context.browser.new_context()
+    try:
+        page = home.new_page()
+        page.goto(b.page.locator('#handoffUrl').input_value())
+        page.locator('#loginIdentity').fill('alice')
+        page.locator('#loginPassword').fill(PASSWORD)
+        page.locator('#loginSubmit').click()
+        b.expect(page).to_have_url(b.page.url)
+        b.expect(page.get_by_role('textbox', name='Document content')).to_have_text('One saved document')
+    finally:
+        home.close()
 
 
 @pytest.mark.parametrize('folio_server', [False, True], indirect=True)
