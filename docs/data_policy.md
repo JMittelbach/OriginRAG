@@ -37,6 +37,14 @@ Setup or the first RAG launch creates header-only tables in `data/metadata/`
 if no local catalogue exists. Importing papers updates only the local catalogue.
 An update does not empty an existing library.
 
+Older releases copied a starter catalogue into `data/metadata/`. A pull removes
+the tracked template, not that local copy. To distinguish the original starter
+from a changed table, run `python3 scripts/init_local_data.py --check`.
+It compares file fingerprints without printing titles or changing files. If
+you want a separate empty workspace, set up a fresh clone in a new directory
+and keep your original checkout for its papers and manuscripts. The old
+catalogue templates are still present in historical commits.
+
 When updating an older checkout that still tracks `data/metadata/*.tsv`, back
 up any personal changes to those tables before pulling. Do not resolve a Git
 rename or merge conflict by moving personal entries into a tracked directory.

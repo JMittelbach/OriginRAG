@@ -531,9 +531,8 @@ def run_question(
         write_json(output_dir / "question_understanding.json", understanding)
         if understanding["status"] != "ready":
             raise ValueError(
-                "Die Suchfrage konnte nicht zuverlässig aufbereitet werden. Bitte versuche es "
-                "erneut oder formuliere den gesuchten Begriff kurz aus. Dies ist kein Befund "
-                "über fehlende Literatur. / The search question could not be prepared reliably."
+                "The search question could not be prepared reliably. Try again or rephrase the search term. "
+                "This does not mean that the library has no relevant papers."
             )
         answer_question = understanding["normalized_question"]
         retrieval_question = answer_question

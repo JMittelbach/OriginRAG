@@ -83,6 +83,9 @@ If dependencies change, rerun setup; pass the same `--profile` for a standalone 
 
 A fresh installation starts with an empty library. Your paper lists, PDFs,
 extracted text, chunks and search indexes stay local and are ignored by Git.
+If an older installation still shows a paper list after an update, run
+`python3 scripts/init_local_data.py --check` in the checkout. It identifies
+unchanged copies of the old starter catalogue without modifying your library.
 
 Open **Add papers** to upload your PDFs, or **Find papers** to discover and import
 accessible PDFs. Accepted papers are organised and indexed in the background.

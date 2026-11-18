@@ -133,10 +133,7 @@ def inventory_markdown(report: dict, *, language: str = "en", sources: list[dict
     german = language == "de"
     if not report.get("items"):
         if report.get("errors") or report.get("status") == "unavailable":
-            return ("Die Übersicht konnte wegen eines Modell- oder Zeitlimitfehlers nicht "
-                    "fertiggestellt werden. Die gefundenen Papers stehen unten; das ist "
-                    "kein Hinweis auf fehlende Literatur." if german else
-                    "The overview could not be completed because of a model error or time limit. "
+            return ("The overview could not be completed because of a model error or time limit. "
                     "The retrieved papers are listed below; this is not evidence of missing literature.")
         return ("In den abgerufenen Ausschnitten konnten keine passenden benannten Beispiele "
                 "verifiziert werden. Die gefundenen Papers stehen unten. Das bedeutet nicht, "
@@ -171,6 +168,5 @@ def inventory_markdown(report: dict, *, language: str = "en", sources: list[dict
                "this list does not certify "
                "independent replication.")]
     if report.get("errors"):
-        lines += ["", "Ein Teil der Auswertung konnte nicht abgeschlossen werden." if german
-                  else "Part of the extraction could not be completed."]
+        lines += ["", "Part of the extraction could not be completed."]
     return "\n".join(lines)

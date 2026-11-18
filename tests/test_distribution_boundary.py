@@ -50,3 +50,22 @@ def test_fresh_catalogue_is_empty_and_only_searches_local_additions(tmp_path):
     results = search()
     assert [row["paper_id"] for row in results] == [reference["paper_id"]]
     assert all(row["local_fulltext_available"] == "false" and not row["local_pdf_relpath"] for row in results)
+
+
+def test_check_catalogue_is_read_only_and_only_identifies_exact_copies(tmp_path, monkeypatch, capsys):
+    import hashlib
+    from scripts import init_local_data as local
+
+    local.check_catalogue(tmp_path)
+    assert "not present" in capsys.readouterr().out and not list(tmp_path.iterdir())
+    local.initialise(tmp_path)
+    path = tmp_path / "data/metadata/papers.tsv"
+    sample = b"paper_id\ttitle\n1\tPrivate fixture\n"
+    monkeypatch.setitem(local.OLD_STARTER, path.name, hashlib.sha256(sample).hexdigest())
+    for content, expected in [(sample.replace(b"\n", b"\r\n"), "matches the old bundled starter"),
+                              (sample + b"2\tPrivate addition\n", "2 local records")]:
+        path.write_bytes(content)
+        local.check_catalogue(tmp_path)
+        output = capsys.readouterr().out
+        assert expected in output and "Private" not in output
+        assert path.read_bytes() == content

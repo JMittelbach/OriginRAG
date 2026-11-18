@@ -4536,8 +4536,12 @@ def test_invalid_preparation_fails_before_retrieval_or_evidence_decision(
     monkeypatch.setattr(ask_corpus, "grade_evidence_pack", lambda *a, **k: pytest.fail(
         "A preparation error is not a missing-evidence decision"))
 
-    with pytest.raises(ValueError, match="search question could not be prepared reliably"):
+    with pytest.raises(ValueError) as exc:
         ask_corpus.run_question(args, tmp_path / "run")
+    assert str(exc.value) == (
+        "The search question could not be prepared reliably. Try again or rephrase the search term. "
+        "This does not mean that the library has no relevant papers."
+    )
 
     saved = json.loads((tmp_path / "run" / "question_understanding.json").read_text())
     assert saved["status"] == "needs_clarification"

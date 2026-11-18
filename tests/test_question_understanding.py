@@ -604,4 +604,7 @@ def test_inventory_model_failure_is_not_reported_as_no_matching_names(monkeypatc
     result = inventory.extract_inventory("Which methods occur in the corpus?", [
         {"paper_id": "P1", "title": "Numerical methods"}], [])
     assert result["errors"]
-    assert "Zeitlimit" in inventory.inventory_markdown(result, language="de")
+    assert inventory.inventory_markdown(result, language="de") == inventory.inventory_markdown(result, language="en")
+    assert "model error or time limit" in inventory.inventory_markdown(result)
+    partial = {"items": [{"name": "Method", "paper_id": "P1"}], "errors": ["timeout"]}
+    assert inventory.inventory_markdown(partial, language="de").endswith("Part of the extraction could not be completed.")
