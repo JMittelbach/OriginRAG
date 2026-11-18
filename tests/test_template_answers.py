@@ -834,7 +834,7 @@ def test_evidence_contribution_curates_western_kenya_cohort_sentence() -> None:
 
 def test_answer_fallback_honors_german_list_request() -> None:
     answer = build_template_answer(
-        "Gib mir alle Korrelationen übersichtlich als Liste.",
+        "Gib mir alle Korrelationen übersichtlich als Liste auf Deutsch.",
         {
             "chunks": [
                 {

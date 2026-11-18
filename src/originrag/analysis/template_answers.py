@@ -14,6 +14,7 @@ from originrag.analysis.evidence_pack_grading import (
     epistemic_causal_comparison_question,
 )
 from originrag.trace.facets import infer_direct_evidence_roles
+from originrag.reply_language import reply_language
 
 
 EVIDENCE_KEYWORDS = [
@@ -503,7 +504,7 @@ def build_answer_template(question: str, evidence_pack: dict) -> str:
         f"- {chunk.get('evidence_id')}: {chunk.get('citation_label')}."
         for chunk in cited_chunks
     )
-    german = is_german_question(question)
+    german = reply_language(question) == "de"
     answer = statements or ("Nicht durch die abgerufene Evidenz gestützt." if german else "Not supported by retrieved evidence.")
     if statements:
         answer = (
@@ -1256,11 +1257,6 @@ def wants_list_answer(question: str) -> bool:
         marker in normalized
         for marker in ["list", "liste", "auflist", "übersicht", "uebersicht", "übersichtlich", "alle korrel"]
     )
-
-
-def is_german_question(question: str) -> bool:
-    normalized = f" {' '.join(str(question or '').lower().split())} "
-    return any(marker in normalized for marker in [" gib ", " geb ", " mir ", " alle ", " welche ", " warum ", " klinisc"])
 
 
 def build_sources_template(question: str, evidence_pack: dict) -> str:

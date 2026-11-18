@@ -160,7 +160,8 @@ def partial_suggestions(raw):
     return items
 
 
-def generate_json_stream(prompt, on_fragment, *, num_ctx=4096, num_predict=900, timeout=60, max_chars=24000):
+def generate_json_stream(prompt, on_fragment, *, num_ctx=4096, num_predict=900, timeout=60,
+                         total_timeout=None, schema=None, max_chars=24000):
     from .model_runtime import CURRENT_RUNTIME, ollama_model_urls
     runtime = CURRENT_RUNTIME.get()
     if runtime and runtime['provider'] != 'ollama':
@@ -169,7 +170,7 @@ def generate_json_stream(prompt, on_fragment, *, num_ctx=4096, num_predict=900, 
     model = runtime['model'] if runtime else os.environ.get('ORIGINWRITE_LANGUAGE_MODEL') or answer_model()
     base = runtime['base_url'] if runtime else ollama_model_urls().get(model, (
         env_value('PFEMPIRE_OLLAMA_BASE_URL', 'HYPORAG_OLLAMA_BASE_URL') or DEFAULT_BASE_URL))
-    payload = {'model': model, 'prompt': prompt, 'stream': True, 'format': 'json',
+    payload = {'model': model, 'prompt': prompt, 'stream': True, 'format': schema or 'json',
                'keep_alive': '60s', 'options': {'temperature': 0, 'num_predict': num_predict,
                                              'num_ctx': runner_num_ctx(num_ctx, model=model, base_url=base)}}
     if model.startswith('qwen3'):
@@ -177,7 +178,7 @@ def generate_json_stream(prompt, on_fragment, *, num_ctx=4096, num_predict=900, 
     request = urllib.request.Request(base.rstrip('/') + '/api/generate', data=json.dumps(payload).encode(),
                                      headers={'Content-Type': 'application/json'})
     cancellation = Cancellation()
-    timer = threading.Timer(timeout, cancellation.cancel)
+    timer = threading.Timer(total_timeout or timeout, cancellation.cancel)
     timer.daemon = True
     timer.start()
     raw, final = '', None
@@ -205,6 +206,8 @@ def generate_json_stream(prompt, on_fragment, *, num_ctx=4096, num_predict=900, 
                     if item.get('done') is True:
                         final = item
                         break
+            if final and final.get('done_reason') == 'length':
+                raise LanguageUnavailable('The model reached its output limit. Select a shorter passage or ask for one change at a time. Nothing was applied.')
             if final is None or final.get('done_reason') not in (None, 'stop'):
                 raise LanguageUnavailable('The model response was interrupted or incomplete. Nothing has been changed.')
             duration, tokens = final.get('eval_duration'), final.get('eval_count')
@@ -212,7 +215,9 @@ def generate_json_stream(prompt, on_fragment, *, num_ctx=4096, num_predict=900, 
                 runtime['manager'].record(runtime, tokens, duration / 1e9, 'decode')
             return raw, model
     except TurnCancelled:
-        raise LanguageUnavailable(f'The model exceeded {timeout:g} seconds. Try a shorter request after the model has loaded.') from None
+        raise LanguageUnavailable(f'The model exceeded {total_timeout or timeout:g} seconds. Try a shorter request after the model has loaded.') from None
+    except TimeoutError:
+        raise LanguageUnavailable('The local model stopped responding. Retry with a shorter passage. Nothing was applied.') from None
     except (OSError, ValueError) as exc:
         if isinstance(exc, (LanguageUnavailable, WritingConflict)):
             raise

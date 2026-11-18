@@ -3090,9 +3090,10 @@ def serialize_turn_result(
         answer_state = "results" if sources else "empty"
         answer = build_public_paper_search_summary(sources, paper_search)
         if pack.get("corpus_inventory") is not None:
+            from originrag.reply_language import reply_language
             answer = inventory_markdown(
                 pack["corpus_inventory"],
-                language=(pack.get("question_understanding") or {}).get("language", "en"),
+                language=reply_language(pack.get("question", retrieval_question)),
                 sources=sources,
             )
     else:

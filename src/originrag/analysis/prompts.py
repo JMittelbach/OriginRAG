@@ -14,6 +14,7 @@ from originrag.analysis.evidence_pack_grading import (
     epistemic_causal_comparison_question,
 )
 from originrag.analysis.template_answers import clean_evidence_text
+from originrag.reply_language import reply_language
 
 
 SUPPORTED_TASKS = {"answer", "gaps", "hypothesis", "sources"}
@@ -107,7 +108,7 @@ Global rules:
 - Prefer short, plain sentences. Remove filler, repeated caveats, generic transitions, and review-style scene setting.
 - Unless the user requests detail, keep a normal answer to 120-200 words, excluding References.
 - {paragraph_rule}
-- Answer in the same language as the user's question unless another language is explicitly requested.
+- Reply in English unless the user explicitly requests another language.
 - For normal answers, prefer short prose paragraphs over section-heavy bullet lists, unless the user explicitly asks for a list, table, or overview.
 - Prioritize the most direct human or disease-phenotype evidence first. Use mechanistic, in vitro, or review evidence as supporting context and label it as such.
 - If the evidence is insufficient, say so clearly.
@@ -800,23 +801,8 @@ Explicit response-shape request:
 
 
 def _language_block(question: str) -> str:
-    normalized = " ".join(str(question or "").lower().split())
-    german_markers = [
-        " gib ",
-        " geb ",
-        " mir ",
-        " alle ",
-        " mit ",
-        " und ",
-        " welche ",
-        " warum ",
-        " übersicht",
-        " ueber",
-        " klinisc",
-    ]
-    padded = f" {normalized} "
-    if not any(marker in padded for marker in german_markers):
-        return ""
+    if reply_language(question) != 'de':
+        return "Write the answer in English by default, unless a different output language was explicitly requested."
     return """
 
 Language requirement:

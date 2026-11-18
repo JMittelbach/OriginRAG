@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from originrag.analysis.chat import ChatTurnContext
 from originrag.analysis.corpus_inventory import inventory_markdown
+from originrag.reply_language import reply_language
 
 
 def now() -> str:
@@ -56,7 +57,7 @@ def visible_answer(result: dict, root: Path) -> tuple[str, str]:
     if pack.get("corpus_inventory") is not None:
         return inventory_markdown(
             pack["corpus_inventory"],
-            language=(pack.get("question_understanding") or {}).get("language", "en"),
+            language=reply_language(pack.get("question", "")),
             sources=result.get("paper_search_results") or [],
         ), "answer"
     for key, status in (("answer_path", "answer"), ("partial_answer_path", "partial"),

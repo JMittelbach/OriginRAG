@@ -515,8 +515,10 @@ def test_prompt_allows_bounded_paper_level_synthesis_without_certifying_origins(
 
 
 def test_prompt_honors_explicit_german_list_request() -> None:
+    default = build_citation_answer_prompt("Welche Quellen gibt es?", {"chunks": []})
+    assert "in English by default" in default and "answer in German" not in default
     prompt = build_citation_answer_prompt(
-        "Gib mir alle Korrelationen übersichtlich als Liste.",
+        "Gib mir alle Korrelationen übersichtlich als Liste auf Deutsch.",
         {"chunks": []},
     )
 
@@ -924,7 +926,7 @@ def test_repair_prompt_gives_mechanically_checkable_publication_family_choices()
 
 def test_repair_prompt_preserves_german_list_request() -> None:
     prompt = build_answer_repair_prompt(
-        question="Gib mir alle Korrelationen übersichtlich als Liste.",
+        question="Gib mir alle Korrelationen übersichtlich als Liste auf Deutsch.",
         evidence_pack={"chunks": []},
         task="answer",
         previous_answer="Wrong prose.",

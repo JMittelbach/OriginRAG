@@ -1,5 +1,6 @@
 import {requestJSON} from './request.mjs';
 import {getAppProfile} from './profile.mjs';
+import {quillSession} from './quill-session.mjs';
 import {openModels} from './models-launcher.mjs';
 import {bindDeviceHandoff} from './device-handoff.mjs';
 import {bindDocumentSync} from './document-sync.mjs';
@@ -26,6 +27,8 @@ async function loadProfile() {
   $('globalAccountDetails').textContent = 'Loading account…';
   try {
     const profile = await getAppProfile();
+    const quill = navigation.querySelector('nav a[href="/write"]');
+    if (quill && location.pathname !== '/write' && quillSession(profile).read('project')) quill.href = '/write?resume=1';
     if ($('documentSync')) $('documentSync').hidden = profile.local_document_sync !== true;
     $('globalModels').hidden = !profile.features.rag && !profile.features.write;
     for (const item of navigation.querySelectorAll('[data-feature]')) item.hidden = !profile.features[item.dataset.feature];
@@ -75,6 +78,7 @@ $('globalSignOut').onclick = async () => {
     const token = document.cookie.split('; ').find(value => value.startsWith('pfempire_csrf='))?.split('=')[1];
     await requestJSON('/api/logout', {payload: {}, timeout: 15000,
       headers: token ? {'X-CSRF-Token': decodeURIComponent(token)} : {}});
+    quillSession(await getAppProfile()).clear();
     location.href = '/login';
   } catch (error) {
     $('globalAccountError').textContent = error.message;

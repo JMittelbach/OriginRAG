@@ -3754,7 +3754,7 @@ Candidate records and retrieved excerpts:
 Return JSON only:
 {{"reasons": [{json.dumps(example, ensure_ascii=False)}]}}
 
-For every supplied paper ID, write one sentence in the language of the user question. Explain the
+For every supplied paper ID, write one sentence in English unless another language was explicitly requested. Explain the
 scientific connection: what the paper studies, measures, compares, or reports that bears on the
 question. For an explicit identifier-mention search, you may instead report the literal mention
 and its stated context. For other requests, do not explain relevance merely as a keyword,

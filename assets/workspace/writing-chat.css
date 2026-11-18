@@ -13,6 +13,11 @@
 .project-chat-list-row .project-chat-list-name {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
 .project-chat-list-name[aria-current="true"] {color:var(--teal,#79debe);font-weight:650}
 .project-chat-list-state {color:var(--muted);font-size:10px;white-space:nowrap}
+.project-chat-tabs {display:flex;gap:4px;overflow-x:auto;flex:none}
+.project-chat-tabs[hidden],#projectChatReview[hidden] {display:none}
+.project-chat-tabs button {flex:none;max-width:15ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;padding:3px 8px}
+.project-chat-tabs button[aria-pressed="true"] {border-color:var(--teal);color:var(--teal)}
+#projectChatReview {align-self:flex-start;color:var(--teal);font-size:12px}
 .project-chat-list-row .project-chat-delete {color:var(--danger,#ec9797)}
 .project-chat-rename {min-width:0;flex:1;padding:5px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text);font:inherit}
 .project-chat-transcript {display:flex;flex-direction:column;gap:12px;flex:none}

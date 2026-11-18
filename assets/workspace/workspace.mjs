@@ -5,6 +5,7 @@ import {openLibraryImport} from './library-import.mjs';
 import {collaborationStyle, snapshotProject, rebaseDraft, openSharing, openProjectCitations} from './writing-collaboration.mjs';
 import {setupLanguageMenu} from './writing-language.mjs';
 import {setupProjectChat} from './writing-chat.mjs';
+import {quillSession} from './quill-session.mjs';
 import {setupCompileProblems} from './compile-problems.mjs';
 import {openModels} from './models-launcher.mjs';
 import {setupProjectBackup} from './writing-backups.mjs';
@@ -660,7 +661,7 @@ async function editor(id) {
   $('languageCheck').hidden = !state.language_check;
   $('quillModels').onclick = openModels;
   const projectChat = setupProjectChat({api, save, getProject: () => project, getEditor: () => sourceEditor,
-    enabled: state.language_check, openModels, notify: notice,
+    session: quillSession(appProfile), enabled: state.language_check, openModels, notify: notice,
     reveal: (file, line) => { selectFile(file); writerLayout.showCode(); sourceEditor.jump(line); }});
   $('projectChat').onclick = projectChat.open;
   $('languageCheck').onclick = () => projectChat.open({selection: sourceEditor.selection()});
@@ -737,7 +738,17 @@ async function openWorkspace() {
     content.replaceChildren();
     if (mode === '/bookshelf') await shelf();
     else if (mode === '/library') await library();
-    else if (mode === '/write') { const id = new URLSearchParams(location.search).get('id'); if (id) await editor(id); else await projects(); }
+    else if (mode === '/write') {
+      const session = quillSession(profile), params = new URLSearchParams(location.search);
+      let id = params.get('id');
+      if (!id && params.has('resume')) {
+        const last = session.read('project');
+        if (state.projects.some(p => p.id === last)) id = last;
+        history.replaceState(null, '', id ? '/write?id=' + encodeURIComponent(id) : '/write');
+      }
+      if (id) { await editor(id); session.write('project', id); }
+      else { session.write('project', null); await projects(); }
+    }
     else home();
   } catch (error) {
     const panel = node('section', undefined, 'library-empty');
@@ -746,3 +757,4 @@ async function openWorkspace() {
   } finally { openingWorkspace = false; }
 }
 openWorkspace();
+window.addEventListener('pageshow', event => { if (event.persisted && mode === '/write') location.reload(); });

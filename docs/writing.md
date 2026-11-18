@@ -471,7 +471,7 @@ lets you reopen the original manuscript. Closing only the detached window keeps
 the conversation in the editor session, ready to reopen.
 
 Choose **+ New chat** to start another conversation about the same project.
-Click the chat name to open a compact list: switch chats, rename one with **✎**,
+When two or more chats are open, use their tabs to switch. Click the chat name for the full list: rename one with **✎**,
 or delete one with **×** and an inline confirmation. Names initially come from
 the first question. Each chat keeps its own history, selected passage, unsent
 draft and suggestions. New chats receive the current project but no other chat's
@@ -537,9 +537,11 @@ configured model is unavailable and exactly one Ollama model is installed, that
 model can be used for the request without changing the shared selection. If a
 choice is needed, the reply offers a **Models** button instead of leaving Send
 permanently disabled. Missing models are never downloaded automatically.
-Named chats stay in this project's open editor session,
-are not stored in the project or shared with collaborators, and are lost when
-the editor is closed, reloaded or switched to another project.
+In the same browser tab, returning from Library to Quill reopens the manuscript.
+Recent chats, unsent text and checked proposals are kept in that tab for this
+account and project, not in the shared manuscript. Up to 20 chats with 24 recent
+messages each are restored. Leaving interrupts a running request; resend its
+draft to continue. A proposal from an older manuscript revision is not restored.
 Only a bounded set of recent complete messages accompanies each request. The same
 **ORIGINWRITE_LANGUAGE_CHECK=0** switch disables both writing assistants.
 

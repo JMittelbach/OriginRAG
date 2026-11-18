@@ -4,7 +4,7 @@ import {projectChatList} from './project-chat-list.mjs';
 
 let activeChat = null;
 
-export function setupProjectChat({api, save, getProject, getEditor, enabled, openModels, reveal, notify}) {
+export function setupProjectChat({api, save, getProject, getEditor, enabled, openModels, reveal, notify, session}) {
   activeChat?.destroy();
   document.getElementById('projectChatPanel')?.remove();
   const panel = document.createElement('aside');
@@ -14,15 +14,18 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     '<button type="button" id="projectChatClose" class="dialog-close" aria-label="Close project chat" title="Close">×</button>',
     '<div id="projectChatHandle" class="project-chat-heading" role="button" tabindex="0" aria-label="Move project chat" title="Drag to move"><div><button type="button" id="projectChatListToggle" aria-label="Chats" aria-expanded="false" aria-controls="projectChatList">Chat 1 ▾</button><small id="projectChatName"></small></div><div class="project-chat-tools"><button type="button" id="projectChatNew" aria-label="New chat" title="New chat">+</button><button type="button" id="projectChatWindow" aria-label="Open project chat in a separate window" title="Open on another screen">↗</button></div></div>',
     '<div id="projectChatList" class="project-chat-list" aria-label="Project chats" hidden></div>',
+    '<div id="projectChatTabs" class="project-chat-tabs" role="group" aria-label="Open chats" hidden></div>',
     '<div id="projectChatSelectionContext" class="project-chat-selection" hidden><details><summary id="projectChatSelectionSummary"></summary><pre id="projectChatSelectionText"></pre></details><button type="button" id="projectChatRemoveSelection" aria-label="Remove selected passage" title="Remove selection">×</button></div>',
     '<div id="projectChatMessages" class="project-chat-messages" aria-live="polite"></div><p id="projectChatStatus" role="status"></p>',
+    '<button type="button" id="projectChatReview" hidden>Review in editor</button>',
     '<form id="projectChatForm"><label class="sr-only" for="projectChatInput">Message Quill</label><textarea id="projectChatInput" maxlength="4000" rows="2" placeholder="Ask Quill…" spellcheck="true"></textarea><button type="submit" id="projectChatSend" aria-label="Send" title="Send">↑</button><button type="button" id="projectChatStop" aria-label="Stop" title="Stop" hidden>■</button></form>',
     '<button type="button" id="projectChatResize" class="project-chat-resize" aria-label="Resize project chat" title="Resize"></button><button type="button" id="projectChatResizeLeft" class="project-chat-resize project-chat-resize-left" aria-label="Resize project chat from left" title="Resize"></button>',
   ].join('');
   document.body.append(panel);
   const $ = id => panel.querySelector('#' + id);
   const element = (tag, text, cls) => { const node = document.createElement(tag); node.textContent = text; if (cls) node.className = cls; return node; };
-  const configuration = {api, save, getProject, getEditor, enabled, openModels, reveal, notify};
+  const configuration = {api, save, getProject, getEditor, enabled, openModels, reveal, notify, session};
+  const sessionKey = 'chat:' + getProject().id;
   let alive = true, reviewBusy = false, shownReview = null, serial = 0;
   const conversations = [];
   function createChat() {
@@ -37,6 +40,7 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
   const windowControl = projectChatWindow(panel, {name: () => getProject().name,
     status: text => status(active, text),
     disconnected: () => {
+      remember();
       alive = false; shownReview?.editor.clearAssistantReview?.(); shownReview = null;
       for (const thread of conversations) {
         thread.deleted = true; thread.generation++; thread.controller?.abort();
@@ -55,6 +59,7 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     $('projectChatInput').disabled = !alive || !enabled;
     $('projectChatRemoveSelection').disabled = active.busy;
     $('projectChatNew').disabled = !alive || reviewBusy;
+    $('projectChatReview').hidden = !active.review || active.review.pending || !active.review.edits.length;
     const input = $('projectChatInput'); input.style.height = 'auto';
     input.style.height = Math.max(64, Math.min(140, input.scrollHeight)) + 'px';
     list.render();
@@ -83,6 +88,7 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
   function clearReview(thread = active) {
     if (shownReview === thread.review) { thread.review?.editor.clearAssistantReview?.(); shownReview = null; }
     thread.review = null;
+    if (thread === active) $('projectChatReview').hidden = true;
   }
   function newChat() {
     if (!alive || reviewBusy) return;
@@ -178,6 +184,7 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
       value.edits = value.edits.filter(item => item !== edit);
       if (!value.edits.length) { clearReview(thread); value.editor.focus(); }
       else { revealReview(value.edits[0], value.base); paintReview(value); }
+      controls();
       return;
     }
     reviewBusy = true; controls(); paintReview(value);
@@ -224,9 +231,16 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     let answerStarted = false;
     reply.item.setAttribute('aria-busy', 'true');
     const liveEdits = new Map();
-    thread.draft = ''; $('projectChatInput').value = ''; status(thread, ''); controls();
+    let previewUnavailable = false;
+    const previewIfPossible = base => {
+      if (previewUnavailable) return;
+      try { stageReview(thread, [...liveEdits.values()], base, epoch, true); }
+      catch { previewUnavailable = true; clearReview(thread); }
+    };
+    thread.draft = ''; thread.question = question; $('projectChatInput').value = ''; status(thread, ''); controls();
     const requestController = new AbortController(); thread.controller = requestController;
-    const timeout = setTimeout(() => requestController.abort(), 135000);
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; requestController.abort(); }, 380000);
     const valid = () => alive && !thread.deleted && epoch === thread.generation;
     try {
       await save();
@@ -241,6 +255,10 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
         if (!valid() || requestController.signal.aborted) return;
         const messages = $('projectChatMessages');
         const follow = thread === active && messages.scrollHeight - messages.clientHeight - messages.scrollTop < 48;
+        if (event.type === 'retrying') {
+          clearReview(thread); liveEdits.clear(); previewUnavailable = false; answerStarted = false;
+          reply.body.textContent = 'Checking the edit against your text…';
+        }
         if (event.type === 'answer_delta' && event.text) {
           if (!answerStarted) { reply.body.textContent = ''; answerStarted = true; }
           reply.body.textContent += event.text;
@@ -248,13 +266,13 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
         if (event.type === 'edit_preview') {
           if (!Number.isInteger(event.from) || !Number.isInteger(event.to) || typeof event.original !== 'string') return;
           liveEdits.set(`${event.file}:${event.from}:${event.to}`, event);
-          stageReview(thread, [...liveEdits.values()], base, epoch, true);
+          previewIfPossible(base);
         }
         if (event.type === 'edit_delta' && typeof event.text === 'string') {
           const key = `${event.file}:${event.from}:${event.to}`, previous = liveEdits.get(key);
           if (previous) {
             liveEdits.set(key, {...previous, replacement: previous.replacement + event.text});
-            stageReview(thread, [...liveEdits.values()], base, epoch, true);
+            previewIfPossible(base);
           }
         }
         if (follow) messages.scrollTop = messages.scrollHeight;
@@ -272,13 +290,20 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     } catch (error) {
       if (!valid()) return;
       if (thread.review?.epoch === epoch) clearReview(thread); thread.history.splice(historyStart);
-      if (!answerStarted) reply.body.textContent = '';
-      reply.item.append(element('p', error.name === 'AbortError' ? 'Request stopped. No changes applied.' : error.message, 'project-chat-warning'));
+      if (answerStarted && reply.body.textContent) {
+        const partial = element('details', '');
+        partial.append(element('summary', 'Incomplete reply'), element('div', reply.body.textContent, 'project-chat-text'));
+        reply.item.append(partial);
+      }
+      reply.body.textContent = '';
+      reply.item.append(element('p', error.name === 'AbortError' ? (timedOut ? 'The model took too long. Try a shorter passage. Nothing was applied.' : 'Request stopped. No changes applied.') : error.message, 'project-chat-warning'));
       if (valid()) {
+        if (!thread.draft) { thread.draft = question; if (thread === active) $('projectChatInput').value = question; }
         const retry = element('button', 'Retry'); retry.type = 'button';
         retry.onclick = () => {
           if (thread !== active || thread.deleted || thread.busy) return;
-          thread.draft = question; $('projectChatInput').value = question; setSelection(requestSelection); $('projectChatInput').focus(); controls();
+          thread.draft = question; $('projectChatInput').value = question; setSelection(requestSelection); controls();
+          if (!$('projectChatSend').disabled) $('projectChatForm').requestSubmit();
         };
         reply.item.append(retry);
         if (/model/i.test(error.message) && openModels) {
@@ -312,6 +337,12 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     }
   };
   $('projectChatStop').onclick = () => active.controller?.abort();
+  $('projectChatReview').onclick = () => {
+    const value = active.review;
+    if (!value || value.pending) return;
+    if (!current(value.base)) { clearReview(); status(active, 'The draft changed. Ask again for updated suggestions.'); return; }
+    revealReview(value.edits[0], value.base); paintReview(value);
+  };
   $('projectChatNew').onclick = newChat;
   $('projectChatRemoveSelection').onclick = () => setSelection(null);
   $('projectChatClose').onclick = () => {
@@ -332,8 +363,46 @@ export function setupProjectChat({api, save, getProject, getEditor, enabled, ope
     $('projectChatName').textContent = getProject().name; $('projectChatName').title = getProject().name;
     if (!enabled) status(active, 'The assistant is disabled on this host.');
     if (options.selection?.text?.trim()) setSelection(options.selection);
+    if (active.review && !active.review.pending) {
+      if (current(active.review.base)) { revealReview(active.review.edits[0], active.review.base, true); paintReview(active.review); }
+      else { clearReview(); status(active, 'The draft changed. Ask again for updated suggestions.'); }
+    }
     controls(); $('projectChatInput').focus(); windowControl.focus();
   }, destroy() { windowControl.destroy(); }};
+  function remember() {
+    if (!session) return;
+    const threads = [active, ...conversations.filter(t => t !== active).reverse()].slice(0, 20).map(thread => {
+      const history = thread.history.slice(-24);
+      if (thread.busy && history.at(-1)?.role === 'user') history.pop();
+      const value = thread.review;
+      return {id: thread.id, name: thread.name, renamed: thread.renamed, history,
+        draft: thread.draft || (thread.busy ? thread.question : ''), interrupted: thread.busy,
+        selection: thread.selection, review: value && !value.pending ? {revision: value.base.revision, edits: value.edits} : null};
+    });
+    session.write(sessionKey, {open: !panel.hidden, active: active.id, threads});
+  }
+  const saved = session?.read(sessionKey);
+  if (Array.isArray(saved?.threads) && saved.threads.length) {
+    conversations.length = 0;
+    for (const row of saved.threads.slice(0, 20).sort((a,b) => a.id - b.id)) {
+      const t = createChat(); t.id = row.id; t.name = row.name; t.renamed = row.renamed;
+      t.draft = row.draft || ''; t.history = row.history || [];
+      for (const item of t.history) message(t, item.role, item.content);
+      if (row.interrupted) t.status = 'Your previous request stopped when you left. Send it again to continue.';
+      const base = getProject(), sel = row.selection;
+      if (sel && base.files[sel.file]?.slice(sel.from, sel.to) === sel.text) t.selection = sel;
+      if (row.review && row.review.revision === base.revision) {
+        try {
+          const edits = normalizeEdits(row.review.edits, base, 0);
+          if (edits.length) t.review = {thread:t, edits, base:{...base, files:{...base.files}}, epoch:0, pending:false, editor:getEditor()};
+        } catch { /* A stale proposal is never applied. */ }
+      } else if (row.review) t.status = 'The draft changed. Ask again for updated suggestions.';
+    }
+    serial = Math.max(...conversations.map(t => t.id));
+    active = conversations.find(t => t.id === saved.active) || conversations[0];
+    $('projectChatInput').value = active.draft; status(active, active.status); selectionDisplay();
+    if (saved.open) instance.open();
+  }
   $('projectChatMessages').append(active.log);
   activeChat = instance; controls();
   return instance;

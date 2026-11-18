@@ -49,12 +49,11 @@ def compact(value: object) -> str:
 def summary_request(message: str) -> tuple[str, str] | None:
     match = re.fullmatch(
         r"\s*(summari[sz]e(?:\s+this\s+paper)?|/summary|zusammenfassung|"
-        r"fasse\s+dieses\s+paper\s+zusammen)\s*:?\s+(.+?)\s*", message, re.I)
+        r"fasse\s+dieses\s+paper\s+zusammen)(?:\s+(auf Deutsch|in German|auf Englisch|in English))?\s*:?\s+(.+?)\s*", message, re.I)
     if not match:
         return None
-    target = match[2].strip().strip('"“”')
-    language = "de" if match[1].casefold().startswith(("zusammen", "fasse")) else "en"
-    return target, language
+    target = match[3].strip().strip('"“”')
+    return target, "de" if (match[2] or "").casefold() in {"auf deutsch", "in german"} else "en"
 
 
 def identity(value: object) -> str:

@@ -136,3 +136,37 @@ def test_two_chat_requests_run_concurrently_and_background_previews_cannot_overw
             for event in release:
                 event.set()
             browser.close()
+def test_tabs_and_checked_review_survive_library_round_trip(model_list, monkeypatch):
+    pw = pytest.importorskip('playwright.sync_api')
+    base, _, _ = model_list
+    def reply(request, emit):
+        proposal = edits()[0]
+        start = request['project']['files'][proposal['file']].index(proposal['original'])
+        emit({'type': 'edit_preview', **proposal, 'from': start, 'to': start + len(proposal['original'])})
+        # An unusable provisional anchor must not prevent review of the verified final event.
+        emit({'type': 'edit_preview', **proposal, 'from': 0, 'to': len(proposal['original'])})
+        return {'answer': 'Here is a suggestion.', 'edits': [proposal], 'files': request['files']}
+    monkeypatch.setattr(writing_chat, 'chat', reply)
+    with pw.sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        page = browser.new_page(viewport={'width': 1500, 'height': 1000})
+        key, original = make_project(page, base)
+        page.locator('#projectChat').click()
+        send(page, 'Fix the first sentence.')
+        pw.expect(page.locator('#projectChatReview')).to_be_visible()
+        page.locator('#projectChatNew').click()
+        page.locator('#projectChatInput').fill('Keep this draft')
+        page.locator('nav').get_by_role('link', name='Library', exact=True).click()
+        page.locator('nav a[href*="resume"]').click()
+        pw.expect(page).to_have_url(base + '/write?id=' + key)
+        pw.expect(page.locator('#projectChatPanel')).to_be_visible()
+        pw.expect(page.locator('#projectChatInput')).to_have_value('Keep this draft')
+        page.get_by_role('button', name='Switch to Fix the first sentence.').click()
+        pw.expect(page.locator('.project-chat-message.assistant')).to_have_text('QuillHere is a suggestion.')
+        page.locator('#projectChatReview').click()
+        assert get_project(page, key)['files'] == original
+        page.locator('.cm-ai-accept').click()
+        pw.expect(page.locator('#savedState')).to_have_text('All changes saved')
+        pw.expect(page.locator('#projectChatReview')).to_be_hidden()
+        assert 'A clearer first sentence.' in get_project(page, key)['files']['main.tex']
+        browser.close()

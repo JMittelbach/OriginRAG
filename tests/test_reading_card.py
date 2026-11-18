@@ -53,8 +53,9 @@ def corpus(tmp_path, rows=None, chunks=CHUNKS):
 @pytest.mark.parametrize("message,expected", [
     ("Summarize this paper: 10.1234/numerical", ("10.1234/numerical", "en")),
     ("/summary A numerical method", ("A numerical method", "en")),
-    ("Zusammenfassung: A numerical method", ("A numerical method", "de")),
-    ("Fasse dieses Paper zusammen: 10.1234/numerical", ("10.1234/numerical", "de")),
+    ("Zusammenfassung: A numerical method", ("A numerical method", "en")),
+    ("Zusammenfassung auf Deutsch: A numerical method", ("A numerical method", "de")),
+    ("Fasse dieses Paper zusammen: 10.1234/numerical", ("10.1234/numerical", "en")),
     ("Which methods have independent replication?", None),
 ])
 def test_explicit_request(message, expected):

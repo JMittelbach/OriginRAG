@@ -181,7 +181,7 @@ def test_delete_during_generation_ignores_late_events_and_cannot_cancel_the_new_
           const fetch = window.fetch.bind(window), schedule = window.setTimeout.bind(window);
           window.chatRequests = []; window.chatTimeouts = [];
           window.setTimeout = (fn, ms, ...args) => {
-            if (ms === 135000) window.chatTimeouts.push(fn);
+            if (ms === 380000) window.chatTimeouts.push(fn);
             return schedule(fn, ms, ...args);
           };
           window.fetch = (url, options) => {

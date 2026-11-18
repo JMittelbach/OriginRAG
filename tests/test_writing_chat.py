@@ -80,6 +80,8 @@ def test_answer_stream_sends_deltas_without_repeating_large_prefixes(manuscript,
     events = []
     def generate(prompt, on_fragment, **options):
         assert options['num_ctx'] == 32768 and options['timeout'] == 120
+        assert options['total_timeout'] > options['timeout']
+        assert options['schema']['required'] == ['answer', 'edits']
         on_fragment('{"answer":"Hello', 'qwen-test')
         on_fragment('{"answer":"Hello world', 'qwen-test')
         return '{"answer":"Hello world","edits":[]}', 'qwen-test'
@@ -231,3 +233,37 @@ def test_late_access_revocation_discards_project_chat_result(workspace, monkeypa
     _, _, body, _ = http.http_request(port, 'POST', '/api/writing', headers=headers['bob'], payload=request(p))
     events = [json.loads(line) for line in body.splitlines()]
     assert events[-1]['type'] == 'error' and not any(item['type'] == 'done' for item in events)
+def test_checked_selection_can_be_reviewed_without_model_commentary(manuscript):
+    source = manuscript['files']['main.tex']
+    original = source[:5]
+    prepared = chat.prepare_request(manuscript, request(manuscript, mode='edit',
+        selection={'file': 'main.tex', 'from': 0, 'to': 5, 'text': original}))
+    assert chat.reply_schema(prepared)['required'] == ['answer', 'replacement', 'reason']
+    result = chat.parse_reply(json.dumps({'answer': '', 'replacement': 'Hello'}), prepared)
+    assert result['answer'] and result['edits'][0]['original'] == original and not result['filtered']
+    assert manuscript['files']['main.tex'] == source
+    with pytest.raises(language.LanguageUnavailable):
+        chat.parse_reply('{"replacement":"Hel', prepared)
+
+
+@pytest.mark.parametrize('duplicate', [False, True])
+def test_misquoted_anchor_retries_once_only_if_unique(manuscript, monkeypatch, duplicate):
+    name, original = 'chapters/intro.tex', '12 observations'
+    if duplicate:
+        manuscript['files'][name] += ' Another 12 observations.'
+    prepared = chat.prepare_request(manuscript, request(manuscript, mode='edit'))
+    calls, events = [], []
+    def generate(prompt, update, **options):
+        anchor = '"' + original + '\n"' if not calls else original
+        if calls:
+            assert options['schema']['properties']['edits']['items']['properties']['original']['enum'] == [original]
+        calls.append(prompt)
+        raw = json.dumps({'answer': 'Suggested.', 'edits': [
+            {'file': name, 'original': anchor, 'replacement': 'twelve observations', 'reason': 'Style'}]})
+        update(raw, 'test')
+        return raw, 'test'
+    monkeypatch.setattr(chat, 'generate_json_stream', generate)
+    result = chat.chat(prepared, events.append)
+    assert len(calls) == (1 if duplicate else 2)
+    assert bool(result['edits']) is not duplicate
+    assert sum(e['type'] == 'retrying' for e in events) == (0 if duplicate else 1)

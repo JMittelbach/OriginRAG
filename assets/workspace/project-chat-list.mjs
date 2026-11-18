@@ -1,7 +1,8 @@
 export function projectChatList(panel, {threads, current, choose, remove, blocked}) {
   const toggle = panel.querySelector('#projectChatListToggle'), list = panel.querySelector('#projectChatList');
+  const tabs = panel.querySelector('#projectChatTabs');
   const element = (tag, text, cls) => { const node = panel.ownerDocument.createElement(tag); node.textContent = text; if (cls) node.className = cls; return node; };
-  let editing = null, deleting = null;
+  let editing = null, deleting = null, tabState = '';
   function button(label, title, action, cls = '') {
     const node = element('button', label, cls); node.type = 'button'; node.title = title;
     node.setAttribute('aria-label', title); node.onclick = action; return node;
@@ -9,6 +10,18 @@ export function projectChatList(panel, {threads, current, choose, remove, blocke
   function close() { list.hidden = true; toggle.setAttribute('aria-expanded', 'false'); editing = deleting = null; }
   function render() {
     toggle.textContent = current().name + ' ▾'; toggle.title = 'Chats';
+    const state = JSON.stringify([current().id, blocked(), threads().map(t => [t.id, t.name, t.busy, t.unread])]);
+    if (state !== tabState) {
+      tabState = state; tabs.hidden = threads().length < 2; tabs.replaceChildren();
+      for (const t of threads()) {
+        const tab = button((t.busy ? '◌ ' : t.unread ? '• ' : '') + t.name, 'Switch to ' + t.name, () => { choose(t); close(); });
+        tab.setAttribute('aria-pressed', String(t === current())); tab.disabled = blocked(); tabs.append(tab);
+      }
+      if (!tabs.hidden) {
+        const tab = tabs.querySelector('[aria-pressed="true"]');
+        if (tab) tabs.scrollLeft = Math.max(0, tab.offsetLeft - tabs.offsetLeft - (tabs.clientWidth - tab.offsetWidth) / 2);
+      }
+    }
     toggle.classList.toggle('has-running-chat', threads().some(thread => thread.busy));
     toggle.disabled = blocked();
     if (list.hidden || editing) return;

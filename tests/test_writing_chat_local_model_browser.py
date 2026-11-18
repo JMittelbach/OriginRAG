@@ -171,3 +171,27 @@ def test_real_model_reads_main_preamble_automatically_even_when_another_file_is_
             page.locator('#projectChatPanel').screenshot(path=capture + '-preamble.png')
         page.locator('#projectChatClose').click()
         browser.close()
+@pytest.mark.skipif(not os.environ.get('ORIGINRAG_TEST_LOCAL_MODEL'), reason='Opt-in: requires local Ollama')
+def test_real_model_proposes_an_unselected_edit_until_rejected(workspace_server, monkeypatch):
+    pw = pytest.importorskip('playwright.sync_api')
+    base, _ = workspace_server
+    monkeypatch.setenv('ORIGINWRITE_LANGUAGE_CHECK', '1')
+    model = os.environ['ORIGINRAG_TEST_LOCAL_MODEL']
+    monkeypatch.setenv('ORIGINRAG_OLLAMA_ANSWER_MODEL', model)
+    monkeypatch.setenv('ORIGINRAG_OLLAMA_MODEL', model)
+    with pw.sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        page = browser.new_page(viewport={'width': 1500, 'height': 1050})
+        key, files = make_project(page, base)
+        page.locator('#projectChat').click()
+        page.locator('#projectChatInput').fill('Ersetze in chapter.tex bitte "A second sentence." durch "The second chapter is ready."')
+        page.locator('#projectChatSend').click()
+        page.wait_for_function("() => document.querySelector('.project-chat-message.assistant') && document.querySelector('#projectChatStop').hidden", timeout=150000)
+        assert page.locator('#projectChatReview').is_visible(), page.locator('.project-chat-message.assistant').inner_text()
+        page.locator('#projectChatReview').click()
+        pw.expect(page.locator('.cm-ai-proposed')).to_have_text('The second chapter is ready.')
+        assert get_project(page, key)['files'] == files
+        page.locator('.cm-ai-reject').click()
+        pw.expect(page.locator('#projectChatReview')).to_be_hidden()
+        assert get_project(page, key)['files'] == files
+        browser.close()

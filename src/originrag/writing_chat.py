@@ -2,10 +2,12 @@ import json
 import os
 from pathlib import PurePosixPath
 import re
+import time
 
 from .writing import TEXT_TYPES, bibtex_entries
 from .writing_language import LanguageUnavailable, generate_json_stream
 from .writing_chat_context import project_context
+from .reply_language import reply_language
 
 OUTPUT_TOKENS = 4096
 MAX_EDITS = 4
@@ -103,7 +105,8 @@ def prepare_request(project, payload, *, library_sources=None):
         'Do not imply a research-synthesis sufficiency check or verified independent studies. '
         'Only use LaTeX citation keys actually present in the supplied project bibliography. '
         'If a selected paper has no project citation key, ask the user to add it through References before citing it in LaTeX. '
-        'Answer in the language of the user. Answer questions and explain code. Only propose edits when the user explicitly requests a change. '
+        'Use English for chat replies unless the user explicitly requests another language. Preserve the language of the document when editing unless asked to translate. '
+        'Answer questions and explain code. Only propose edits when the user explicitly requests a change. '
         'Speak directly and concisely to the user; do not narrate their request or internal instructions. '
         'The current selection field supersedes earlier conversation: selection:null means no passage is currently attached. '
         'Preserve scientific meaning, numbers, gene names and citation keys unless the user explicitly requests a change to them. '
@@ -140,7 +143,8 @@ def prepare_request(project, payload, *, library_sources=None):
             'conversation': [{'role': item['role'], 'content': item['content']} for item in history],
             'library_sources': library_sources or [], 'mode': mode,
             'selection': {'file': selection['file'], 'text': selection['text']} if selection else None,
-            'request': question.strip()}
+            'request': question.strip(),
+            'chat_reply_language': 'German' if reply_language(question) == 'de' else 'English unless explicitly instructed otherwise'}
     budget = context_tokens() - OUTPUT_TOKENS - 1024
     context_ranges = None
     if automatic:
@@ -239,6 +243,10 @@ def parse_reply(raw, request):
         data['edits'] = [] if replacement is None else [{
             'file': selected['file'], 'original': selected['text'], 'replacement': replacement,
             'reason': data.get('reason') or 'Requested revision of the selected passage'}]
+    generated_notice = (isinstance(data, dict) and request.get('mode') == 'edit' and isinstance(data.get('edits'), list)
+                        and bool(data['edits']) and (data.get('answer') is None or isinstance(data['answer'], str) and not data['answer'].strip()))
+    if generated_notice:
+        data['answer'] = 'Review the proposed change in the editor.'
     if (not isinstance(data, dict) or not isinstance(data.get('answer'), str)
             or not data['answer'].strip() or len(data['answer']) > 12000
             or not isinstance(data.get('edits'), list) or len(data['edits']) > MAX_EDITS):
@@ -260,6 +268,8 @@ def parse_reply(raw, request):
             r'\\(?:cite[a-zA-Z]*|[Tt]extcite|parencite|autocite|nocite)\*?(?:\s*\[[^]]*\]){0,2}\s*\{([^}]*)\}', text)
                 for key in group.split(',') if key.strip() and key.strip() != '*'}
     for item in data['edits']:
+        if isinstance(item, dict) and (item.get('reason') is None or item['reason'] == ''):
+            item = {**item, 'reason': 'Requested edit'}
         if (not isinstance(item, dict) or item.get('file') not in request['files']
                 or not isinstance(item.get('original'), str) or not 1 <= len(item['original']) <= 8000
                 or not isinstance(item.get('replacement'), str) or len(item['replacement']) > 12000
@@ -296,13 +306,24 @@ def parse_reply(raw, request):
         edits.append({key: item[key] for key in ('file', 'original', 'replacement', 'reason')} | {
             'review_notes': notes, 'from': len(source[:start].encode('utf-16-le')) // 2,
             'to': len(source[:end].encode('utf-16-le')) // 2})
-    return {'answer': data['answer'].strip(), 'edits': [] if rejected else edits,
+    return {'answer': ('No change could be verified against this draft.' if rejected and generated_notice else data['answer'].strip()), 'edits': [] if rejected else edits,
             'filtered': rejected, 'files': request['files'], 'input_bytes': request['input_bytes'],
             'context_tokens': request['context_tokens'], 'sources': request.get('sources', []),
             'blocked_by_mode': bool(rejected_mode), 'history_omitted': request.get('history_omitted', 0)}
 
 
+def reply_schema(request):
+    text = {'type': 'string'}
+    def obj(fields):
+        return {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False}
+    if request.get('selection'):
+        return obj({'answer': text, 'replacement': {'anyOf': [text, {'type': 'null'}]}, 'reason': text})
+    edit = obj({'file': {'type': 'string', 'enum': request['files']}, 'original': text, 'replacement': text, 'reason': text})
+    return obj({'answer': text, 'edits': {'type': 'array', 'items': edit, 'maxItems': MAX_EDITS}})
+
+
 def chat(request, emit):
+    started = time.monotonic()
     previous = ''
     last_preview = None
     def update(raw, model):
@@ -322,9 +343,51 @@ def chat(request, emit):
                 else:
                     emit({'type': 'edit_preview', **preview, 'model': model})
                 last_preview = preview
-    raw, model = generate_json_stream(request['prompt'], update, num_ctx=request['context_tokens'],
-                                     num_predict=OUTPUT_TOKENS, timeout=120, max_chars=90000)
-    return {**parse_reply(raw, request), 'model': model}
+    def generate(prompt, schema, remaining):
+        return generate_json_stream(prompt, update, num_ctx=request['context_tokens'],
+                                    num_predict=OUTPUT_TOKENS, timeout=min(120, remaining),
+                                    total_timeout=remaining, schema=schema, max_chars=90000)
+    schema = reply_schema(request)
+    raw, model = generate(request['prompt'], schema, 360)
+    result = parse_reply(raw, request)
+    remaining = int(360 - (time.monotonic() - started))
+    if result['filtered'] and request['mode'] == 'edit' and not request.get('selection') and remaining >= 20:
+        # Retry a formatting mistake only if every proposed anchor is independently
+        # identifiable within the supplied context. Never trim or auto-apply a replacement.
+        items = json.loads(raw)['edits']
+        candidates = []
+        for item in items:
+            if not isinstance(item, dict):
+                break
+            name, original = item.get('file'), item.get('original')
+            if not isinstance(name, str) or not isinstance(original, str):
+                break
+            anchor = original
+            if edit_location(request, name, anchor) is None:
+                anchor = original.strip().strip('"“”„').strip()
+                if anchor == original or edit_location(request, name, anchor) is None:
+                    break
+            candidates.append({'file': name, 'original': anchor})
+        if (candidates and len(candidates) == len(items)
+                and any(a['original'] != b['original'] for a, b in zip(candidates, items))):
+            emit({'type': 'retrying'})
+            previous, last_preview = '', None
+            fields = schema['properties']['edits']['items']['properties']
+            fields['file'] = {'type': 'string', 'enum': sorted({item['file'] for item in candidates})}
+            fields['original'] = {
+                'type': 'string', 'enum': [item['original'] for item in candidates]}
+            hint = ('Your previous anchors did not match. Copy the exact original from these verified candidates. '
+                    'Quotation marks used to delimit a phrase in the question are NOT part of the replacement. '
+                    'Answer briefly, without discussing language choices. Candidate data: ' + json.dumps(candidates))
+            prompt = request['prompt']
+            if len((hint + prompt).encode()) < request['context_tokens'] - OUTPUT_TOKENS - 1024:
+                prompt = hint + '\n' + prompt
+            raw, model = generate(prompt, schema, remaining)
+            result = parse_reply(raw, request)
+            pairs = {(item['file'], item['original']) for item in candidates}
+            if any((item['file'], item['original']) not in pairs for item in result['edits']):
+                result.update(edits=[], filtered=1, answer='No change could be verified against this draft.')
+    return {**result, 'model': model}
 
 
 def partial_edit(raw, request):
