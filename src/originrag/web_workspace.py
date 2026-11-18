@@ -87,7 +87,7 @@ def stream_language_review(handler, store, collaboration, user, payload, selecte
         override = None
         if project_request is not None and payload.get('model'):
             override = {'provider': 'ollama', 'model': payload['model'], 'mode': 'fast'}
-        elif project_request is not None and payload.get('auto_context') is True and model_manager:
+        elif project_request is not None and (payload.get('auto_context') is True or project_request.get('compile_fix')) and model_manager:
             state = model_manager().snapshot(False)
             active = state.get('effective_selection')
             if active and active['provider'] != 'ollama':
@@ -197,18 +197,21 @@ def handle_writing(handler, path, query, owner_directory, catalogue, *, post=Fal
                 handler.respond_json({**snapshot, 'compiler': compiler_status(), 'language_check': writing_language.enabled()})
         else:
             payload = handler.read_json_body()
-            if payload.get('action') == 'project_chat':
+            if payload.get('action') in ('project_chat', 'compile_fix'):
                 slots = chat_slots if chat_slots is not None else language_lock
                 if not writing_language.enabled() or slots is None:
                     raise writing_language.LanguageUnavailable('Writing assistance is disabled on this host.')
                 with project_access(store, collaboration, user, payload.get('id')) as access:
                     project = access.store.get(payload['id'])
-                    question = payload.get('message')
-                    if not isinstance(question, str) or not 1 <= len(question.strip()) <= 4000:
-                        raise ValueError('Ask a question using between 1 and 4,000 characters.')
-                    ids = writing_chat_sources.paper_ids(payload)
-                    sources = writing_chat_sources.prepare_sources(catalogue, ids, question, chunks_dir=chunks_dir) if ids else []
-                    prepared = writing_chat.prepare_request(project, payload, library_sources=sources)
+                    if payload['action'] == 'compile_fix':
+                        prepared = writing_chat.prepare_compile_fix(project, payload)
+                    else:
+                        question = payload.get('message')
+                        if not isinstance(question, str) or not 1 <= len(question.strip()) <= 4000:
+                            raise ValueError('Ask a question using between 1 and 4,000 characters.')
+                        ids = writing_chat_sources.paper_ids(payload)
+                        sources = writing_chat_sources.prepare_sources(catalogue, ids, question, chunks_dir=chunks_dir) if ids else []
+                        prepared = writing_chat.prepare_request(project, payload, library_sources=sources)
                 if payload.get('model') is not None and (
                         not isinstance(payload['model'], str) or len(payload['model']) > 200):
                     raise ValueError('Choose an installed model for project chat.')

@@ -70,6 +70,7 @@ jobs:
             tests/test_writing_editor_integration.py::test_outline_exact_line_nested_titles_and_literal_examples \
             tests/test_quill_citations_backups.py \
             tests/test_writing_chat_browser.py \
+            tests/test_quill_compile_fixes.py \
             tests/test_writing_chat_threads_browser.py \
             tests/test_writing_chat_reset_browser.py \
             tests/test_writing_chat_window_browser.py \

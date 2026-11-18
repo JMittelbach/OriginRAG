@@ -1,5 +1,5 @@
-import {EditorState, Transaction, Compartment} from '@codemirror/state';
-import {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, dropCursor, highlightSpecialChars} from '@codemirror/view';
+import {EditorState, Transaction, Compartment, StateEffect, StateField} from '@codemirror/state';
+import {EditorView, Decoration, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, dropCursor, highlightSpecialChars} from '@codemirror/view';
 import {defaultKeymap, history, historyKeymap, indentWithTab, undo, redo, toggleComment, isolateHistory} from '@codemirror/commands';
 import {StreamLanguage, syntaxHighlighting, HighlightStyle, bracketMatching, indentUnit} from '@codemirror/language';
 import {stex} from '@codemirror/legacy-modes/mode/stex';
@@ -17,6 +17,19 @@ const colours = HighlightStyle.define([
   {tag: tags.comment, class: 'tex-comment'},
   {tag: [tags.variableName, tags.attributeName], class: 'tex-variable'},
 ]);
+const compileLines = StateEffect.define();
+const compilerMarks = StateField.define({
+  create: () => Decoration.none,
+  update(marks, tr) {
+    for (const effect of tr.effects) if (effect.is(compileLines)) {
+      return Decoration.set(effect.value.filter(p => p.line > 0 && p.line <= tr.state.doc.lines)
+        .map(p => Decoration.line({class: 'cm-compile-error', attributes: {title: p.message}})
+          .range(tr.state.doc.line(p.line).from)), true);
+    }
+    return tr.docChanged ? Decoration.none : marks;
+  },
+  provide: field => EditorView.decorations.from(field),
+});
 const commands = ['documentclass', 'usepackage', 'begin', 'end', 'title', 'author', 'date', 'maketitle',
   'section', 'subsection', 'subsubsection', 'paragraph', 'textbf', 'textit', 'emph', 'label', 'ref',
   'cite', 'citep', 'citet', 'includegraphics', 'caption', 'item', 'input', 'include', 'bibliography',
@@ -84,6 +97,12 @@ export function diffTextChanges(before, after) {
 export function createLatexEditor(parent, onChange, onCursor, getFiles = () => ({})) {
   const documents = new Map();
   const editability = new Compartment();
+  let compileErrors = [];
+  function paintErrors() {
+    const rows = compileErrors.filter(p => p.file === current);
+    if (rows.length || view.state.field(compilerMarks).size)
+      view.dispatch({effects: compileLines.of(rows), annotations: Transaction.addToHistory.of(false)});
+  }
   let current = '', view, assistantReview = null, assistantApplying = false, disposed = false;
   function paintAssistantReview() {
     if (disposed) return;
@@ -119,7 +138,7 @@ export function createLatexEditor(parent, onChange, onCursor, getFiles = () => (
   });
   function state(text, editable) {
     return EditorState.create({doc: text, extensions: [
-      lineNumbers(), highlightActiveLineGutter(), highlightSpecialChars(), history(), drawSelection(), dropCursor(),
+      lineNumbers(), highlightActiveLineGutter(), highlightSpecialChars(), history(), drawSelection(), dropCursor(), compilerMarks,
       highlightActiveLine(), highlightSelectionMatches(), bracketMatching(), closeBrackets(),
       search({top: true}), StreamLanguage.define(stex), syntaxHighlighting(colours), indentUnit.of('  '),
       autocompletion({override: [citationCompletion(getFiles, () => /\.tex$/i.test(current)), complete]}), EditorState.allowMultipleSelections.of(true),
@@ -179,10 +198,12 @@ export function createLatexEditor(parent, onChange, onCursor, getFiles = () => (
       view.scrollDOM.scrollTop = old?.top || 0;
       view.scrollDOM.scrollLeft = old?.left || 0;
       paintAssistantReview();
+      paintErrors();
       cursor();
       return true;
     },
     applyRemote,
+    setCompilerErrors(rows) { compileErrors = rows; if (!disposed) paintErrors(); },
     showAssistantReview(items, expectedFiles, options) {
       if (disposed || !Array.isArray(items) || !items.length || items.length > 4) return false;
       for (const item of items) {

@@ -64,7 +64,10 @@ export function bindDocumentSync(panel) {
     tell('Folder connected. Only documents you choose will be shared.'); await refresh();
   });
   el('Disconnect').onclick = () => run(async () => {
-    await send({action:'disconnect'}); tell('Disconnected. Saved documents are unchanged.'); await refresh();
+    await send({action:'disconnect'});
+    try { for (const key of Object.keys(localStorage)) if (key.startsWith('origin.sync.v1.')) localStorage.removeItem(key); } catch {}
+    document.getElementById('globalSettings').removeAttribute('data-sync-alert');
+    tell('Disconnected. Saved documents are unchanged.'); await refresh();
   });
   el('Refresh').onclick = () => run(refresh);
   el('Now').onclick = () => run(async () => {
@@ -76,19 +79,21 @@ export function bindDocumentSync(panel) {
     if (res.received) { await window.originragSaveDraft?.(); location.reload(); return; }
     await refresh();
   });
-  let timer;
+  const timers = new Map();
   window.addEventListener('origin-document-saved', ({detail: doc}) => {
     if (panel.hidden || !mark(doc)) return;
-    clearTimeout(timer);
-    timer = setTimeout(async () => {
+    const key = doc.kind + '.' + doc.id;
+    clearTimeout(timers.get(key));
+    timers.set(key, setTimeout(async () => {
+      timers.delete(key);
       try {
         const res = await send({action:'auto', ...doc});
-        tell(res.message);
+        if (!res.skipped) tell(res.message);
       } catch (error) {
         tell(error.message);
         document.getElementById('globalSettings').setAttribute('data-sync-alert', '');
         document.getElementById('globalSettings').title = 'Document sync: ' + error.message;
       }
-    }, 1500);
+    }, 1500));
   });
 }

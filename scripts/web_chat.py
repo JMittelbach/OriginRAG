@@ -2576,7 +2576,7 @@ def build_handler(
                     self.server.server_address, self.client_address, self.headers):
                 self.respond_json({'error': 'Folder sync is available on a private local installation only.'}, status=403)
                 return
-            if post and not hmac.compare_digest(self.headers.get('X-OriginRAG-Local-Token', ''), local_import_token):
+            if post and not hmac.compare_digest(self.headers.get('X-OriginRAG-Local-Token', '').encode(), local_import_token.encode()):
                 self.respond_json({'error': 'Reopen Document sync and try again.'}, status=403)
                 return
             try:

@@ -15,14 +15,14 @@ from test_writing import workspace_server as workspace_server
 @pytest.mark.parametrize('prefix', ['', 'error: ', 'warning: '])
 def test_compiler_paths_resolve_only_to_actual_project_files(path, prefix):
     items = diagnostics(prefix + path + ':12: Undefined command', {'chapters/my intro.tex': ''})
-    assert items == [{'file': 'chapters/my intro.tex', 'line': 12, 'message': 'Undefined command'}]
+    assert items == [{'file': 'chapters/my intro.tex', 'line': 12, 'message': 'Undefined command', 'severity': (prefix or 'error').rstrip(': ')}]
 
 
 def test_external_and_ambiguous_files_are_not_mapped_to_wrong_project_file():
     files = {'chapters/my intro.tex': '', 'main.tex': ''}
     for name in ['my intro.tex', '/private/main.tex', '../main.tex', 'other.tex']:
         message = 'error: ' + name + ':2: Undefined command'
-        assert diagnostics(message, files) == [{'file': '', 'line': 0, 'message': message}]
+        assert diagnostics(message, files) == [{'file': '', 'line': 0, 'message': message, 'severity': 'error'}]
     assert diagnostics('error: main.tex:' + '9' * 5000 + ': Error', files)[0]['line'] == 0
 
 

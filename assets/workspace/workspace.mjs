@@ -5,6 +5,7 @@ import {openLibraryImport} from './library-import.mjs';
 import {collaborationStyle, snapshotProject, rebaseDraft, openSharing, openProjectCitations} from './writing-collaboration.mjs';
 import {setupLanguageMenu} from './writing-language.mjs';
 import {setupProjectChat} from './writing-chat.mjs';
+import {setupCompileProblems} from './compile-problems.mjs';
 import {openModels} from './models-launcher.mjs';
 import {setupProjectBackup} from './writing-backups.mjs';
 import {prepareProjectUploads} from './project-uploads.mjs';
@@ -24,7 +25,7 @@ let sourceEditor, writerLayout, outlineTimer, diffTextChanges, serverProject, sy
 const textTypes = /\.(tex|bib|sty|cls|bst|bbl|txt|md|csv)$/i;
 let state, project, activeFile, editVersion = 0, savedVersion = 0, saving = null, unconfirmedSave = null;
 let appProfile = {profile: 'full', features: {rag: true, write: true}};
-let saveTimer, compileTimer, compiling = false, saveBlocked = false, pdfURL = '', pdfPreview;
+let saveTimer, compileTimer, compiling = false, saveBlocked = false, pdfURL = '', pdfPreview, compileProblems;
 function node(tag, text, cls) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; }
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
 async function api(path = '/api/writing', payload, options = {}) {
@@ -350,6 +351,7 @@ function outline() {
   pane.replaceChildren(...(buttons.length ? buttons : [node('p', 'Sections in this file appear here.', 'hint')]));
 }
 function changed() {
+  compileProblems?.invalidate();
   editVersion++; $('savedState').textContent = 'Unsaved changes'; $('previewState').textContent = 'Source changed · preview needs recompiling';
   clearTimeout(saveTimer); clearTimeout(compileTimer);
   if (saveBlocked) { $('savedState').textContent = 'Draft kept · saving paused'; return; }
@@ -387,6 +389,7 @@ async function finishComposition() {
   }
 }
 function adoptProject(updated, accepted = updated, dirty = false) {
+  compileProblems?.invalidate();
   const name = activeFile in updated.files ? activeFile : updated.main;
   const treeChanged = name !== activeFile || project.main !== updated.main || Object.keys(project.files).sort().join('\0') !== Object.keys(updated.files).sort().join('\0');
   const editable = textTypes.test(name);
@@ -505,12 +508,17 @@ async function compile(force = false, retry = 0) {
   let startedVersion = editVersion;
   $('previewState').textContent = 'Compiling…';
   try {
-    await save(); await synchronizeProject(true); await save(); const version = editVersion; startedVersion = version; const result = await api('/api/writing', {action: 'compile', id: project.id, revision: project.revision, force});
-    $('compileLog').textContent = result.log || 'Compilation completed.'; $('problems').replaceChildren();
-    for (const p of result.diagnostics) $('problems').append(button(`${p.file ? p.file + ':' + p.line + ' · ' : ''}${p.message}`, () => {
-      if (!(p.file in project.files) || !p.line) return; selectFile(p.file); writerLayout.showCode(); sourceEditor.jump(p.line);
-    }));
-    if (!result.ok) { $('logDetails').open = true; $('previewState').textContent = 'Compilation failed · previous PDF may be out of date'; notice('Compilation failed. Check the log below; your source is saved.', true); return; }
+    await save(); await synchronizeProject(true); await save(); const version = editVersion, revision = project.revision; startedVersion = version;
+    const result = await api('/api/writing', {action: 'compile', id: project.id, revision, force});
+    $('compileLog').textContent = result.log || 'Compilation completed.';
+    compileProblems.render(result, () => version === editVersion && revision === project.revision && revision === result.revision);
+    if (!result.ok) {
+      if (version !== editVersion || revision !== project.revision) {
+        $('previewState').textContent = 'Previous build failed · recompile the current source'; return;
+      }
+      $('logDetails').open = true; $('previewState').textContent = 'Compilation failed · previous PDF may be out of date';
+      notice('Compilation failed. Check the log below; your source is saved.', true); return;
+    }
     const bytes = Uint8Array.from(atob(result.pdf), c => c.charCodeAt(0));
     if (pdfURL) URL.revokeObjectURL(pdfURL); pdfURL = URL.createObjectURL(new Blob([bytes], {type: 'application/pdf'})); $('downloadPDF').href = pdfURL; $('downloadPDF').hidden = false;
     await renderPDF(bytes);
@@ -590,9 +598,13 @@ async function editor(id) {
         <div class="pdf-status"><span id="previewState" role="status">Compile to see your PDF</span><span id="pdfCount"></span></div>
       </section>
     </div>
-    <details id="logDetails"><summary>Errors, warnings & compile log</summary><div class="log-body"><div id="problems"></div><pre id="compileLog">No compilation yet.</pre></div></details>`;
+    <details id="logDetails"><summary>Errors, warnings & compile log</summary><div id="problemsResize" role="separator" aria-label="Resize compile problems" aria-controls="compileBody" aria-orientation="horizontal" tabindex="0"></div><div class="log-body" id="compileBody"><div id="problems"></div><pre id="compileLog">No compilation yet.</pre></div></details>`;
   sourceEditor = createLatexEditor($('source'), (name, text) => { project.files[name] = text; changed(); clearTimeout(outlineTimer); outlineTimer = setTimeout(outline, 300); }, (line, col) => { $('cursorPosition').textContent = `Ln ${line}, Col ${col}`; }, () => project.files);
   writerLayout = setupWriterLayout(() => sourceEditor.measure());
+  compileProblems = setupCompileProblems({enabled: state.language_check, editor: () => sourceEditor, project: () => project,
+    revision: id => api('/api/writing?revision=' + encodeURIComponent(id)),
+    reveal: (file, line) => { selectFile(file); writerLayout.showCode(); sourceEditor.jump(line); },
+    recompile: () => { clearTimeout(compileTimer); return compile(); }, report: message => notice(message, true)});
   for (const b of document.querySelectorAll('[data-edit-command]')) b.onclick = () => sourceEditor.command(b.dataset.editCommand);
   $('pdfZoom').onchange = zoomPDF;
   for (const [id, delta] of [['pdfZoomOut', -1], ['pdfZoomIn', 1]]) $(id).onclick = () => {

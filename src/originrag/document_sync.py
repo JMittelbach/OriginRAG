@@ -178,6 +178,8 @@ class DocumentSync:
                         'suggestions': [] if folder else suggestions(),
                         'documents': sorted(docs, key=lambda r: r['title'].casefold())}
             if not folder:
+                if action == 'auto':
+                    return {'skipped': True}
                 raise ValueError('Connect a sync folder first.')
             return self.exchange(db, folder, device, request)
 
@@ -190,7 +192,7 @@ class DocumentSync:
         link = db.execute(f'SELECT * FROM links WHERE folder=? AND kind=? AND {field}=?',
                           (str(folder), kind, key)).fetchone()
         if action == 'auto' and not link:
-            return {'message': 'Document not linked.'}
+            return {'skipped': True}
         remote = link['remote'] if link else key
         local = link['local'] if link else key if action == 'sync' else None
         rows = [snapshot(p) for p in folder.glob(f'{remote}.*.origin1') if FILE.fullmatch(p.name)]

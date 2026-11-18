@@ -94,7 +94,7 @@ def test_compile_busy_does_not_start_engine(monkeypatch):
 
 def test_diagnostics():
     result = diagnostics('main.tex:14: Undefined control sequence.\nwarning: a warning')
-    assert result[0] == {'file': 'main.tex', 'line': 14, 'message': 'Undefined control sequence.'}
+    assert result[0] == {'file': 'main.tex', 'line': 14, 'message': 'Undefined control sequence.', 'severity': 'error'}
     assert result[1]['line'] == 0
 
 

@@ -92,16 +92,17 @@ def mac_command(work, backend=None):
 def diagnostics(log, files=None):
     found = []
     for line in log.splitlines():
-        match = re.match(r'^\s*(?:(?:error|warning|note):\s*)?([^:]+):(\d{1,9}):\s*(.*)', line, re.IGNORECASE)
+        match = re.match(r'^\s*(?:(error|warning|note):\s*)?([^:]+):(\d{1,9}):\s*(.*)', line, re.IGNORECASE)
         if match:
-            name = match[1].strip().removeprefix('[build]/source/').removeprefix('/source/').removeprefix('./')
+            name = match[2].strip().removeprefix('[build]/source/').removeprefix('/source/').removeprefix('./')
             if files is not None:
                 name = next((candidate for candidate in (name, name + '.tex') if candidate in files), '')
             elif not name.endswith(('.tex', '.sty', '.cls', '.bib', '.bst')):
                 name = ''
-            found.append({'file': name, 'line': int(match[2]) if name else 0, 'message': match[3] if name else line})
+            severity = (match[1] or ('warning' if re.search(r'\bwarning\b|^(?:over|under)full ', match[4], re.I) else 'error')).lower()
+            found.append({'file': name, 'line': int(match[3]) if name else 0, 'message': match[4] if name else line, 'severity': severity})
         elif line.startswith('!') or 'warning:' in line.lower() or 'error:' in line.lower():
-            found.append({'file': '', 'line': 0, 'message': line})
+            found.append({'file': '', 'line': 0, 'message': line, 'severity': 'warning' if 'warning:' in line.lower() else 'error'})
     return found[:100]
 
 

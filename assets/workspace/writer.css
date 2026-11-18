@@ -105,3 +105,14 @@ body.writing .writer-actions #templateButton{color:var(--text)}
   .writing #writerGrid[data-mode=code] .source-pane,.writing #writerGrid[data-mode=pdf] .preview-pane{grid-column:1;grid-row:1}
   .writing #pdfPages{padding:14px}.writing .source-tab{min-height:30px;padding:5px 12px}.writing .code-toolbar{padding:3px 6px}
 }
+.writing #logDetails[open]{position:relative;padding-top:8px}
+.writing #compileBody{height:var(--problems-height,190px);max-height:57dvh;box-sizing:border-box;overscroll-behavior:contain}
+#problemsResize{position:absolute;inset:0 0 auto;height:9px;cursor:ns-resize;touch-action:none;user-select:none}
+#problemsResize::after{content:"";display:block;width:42px;height:3px;margin:3px auto;background:var(--muted);border-radius:2px}
+#problemsResize:focus-visible{outline:2px solid var(--writer-accent);outline-offset:-2px}
+#source .cm-line.cm-compile-error{background-color:rgba(226,65,75,.14);box-shadow:inset 3px 0 #df4955}
+.writing .compile-problem{padding:6px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.writing .compile-problem strong{display:inline-block;margin-right:.5em;text-transform:capitalize}
+.writing .problem-error{color:var(--danger,#ef7280)}.writing .problem-warning{color:var(--amber,#c79339)}
+.writing #problems .compile-problem button{display:inline-block;width:auto;margin:2px 5px 2px 0}
+.writing .compiler-advice small{display:block}.writing .compiler-advice pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:5px 8px;background:var(--panel-2);margin:2px 0 5px}

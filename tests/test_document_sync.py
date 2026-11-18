@@ -9,6 +9,7 @@ from originrag.folio import FolioStore, paragraph
 from originrag.writing import WritingStore
 from test_folio_http import folio_server as folio_server
 import test_web_chat as http
+from test_folio_schema_edges import PNG
 
 
 def app(owner):
@@ -37,7 +38,7 @@ def test_quill_round_trip_offline_conflict_and_unavailable_folder(tmp_path):
     (work, w, a), (home, h, b) = linked_instances(tmp_path)
     store = WritingStore(w)
     doc = store.change({'action':'create_project', 'name':'Manuscript'}, ())
-    files = {'main.tex': 'First draft', 'refs.bib':'@article{lee2024}', 'plot.png':'aGVsbG8='}
+    files = {'main.tex': 'First draft', 'refs.bib':'@article{lee2024}', 'plot.png': PNG.split(',')[1]}
     store.change({**doc, 'action':'save_project', 'files':files}, ())
     def sync(service, key, action='sync', **fields):
         return service.run(dict(action=action, kind='write', id=key, **fields))
@@ -75,18 +76,23 @@ def test_quill_round_trip_offline_conflict_and_unavailable_folder(tmp_path):
         sync(work, doc['id'])
     assert not a.exists()
     assert not work.run({'action':'disconnect'})['folder']
+    assert sync(work, doc['id'], 'auto') == {'skipped': True}
+    assert not a.exists()
 
 
 def test_folio_integrity_and_no_silent_overwrite(tmp_path):
     (work, w, a), (home, h, b) = linked_instances(tmp_path)
     st = FolioStore(w)
     d = st.change({'action':'create', 'title':'Research notes'})
-    d = st.change({**d, 'action':'save', 'content':{'type':'doc', 'content':[paragraph('Results')]}})
+    d = st.change({**d, 'action':'save', 'comments':[{'id':'note1', 'text':'Check this result'}],
+                   'content':{'type':'doc', 'content':[paragraph('Results'), {'type':'image','attrs':{'src':PNG}}]}})
     q = {'id':d['id'], 'kind':'folio'}
     work.run({**q, 'action':'sync'})
     transfer(a, b)
     key = home.run({**q, 'action':'open'})['id']
-    assert FolioStore(h).get(key)['content'] == d['content']
+    restored = FolioStore(h).get(key)
+    for field in ('title', 'content', 'page', 'comments'):
+        assert restored[field] == d[field]
     shared = next(b.glob('*.origin1'))
     header = shared.read_bytes().split(b'\n', 1)[0]
     shared.write_bytes(header + b'\n{}')
