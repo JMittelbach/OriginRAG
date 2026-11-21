@@ -1508,7 +1508,8 @@ def run_question(
     final_partial_answer_path = final_answer_path if provisional_synthesis else None
     research_fallback = None
     if pack.get("research_mode") and task != "sources" and final_answer_path is None and effective_answer_backend != "queue":
-        hits = reading_passages(answer_question, pack.get("chunks", []))
+        hits = reading_passages(answer_question, pack.get("chunks", []),
+                                count_conflicts=answer_qc.get("conflicting_cited_group_counts", []))
         research_fallback = "passages" if hits else "no_passage"
         final_answer_path = output_dir / "research_reading.md"
         final_answer_path.write_text(reading_result(hits) + "\n", encoding="utf-8")

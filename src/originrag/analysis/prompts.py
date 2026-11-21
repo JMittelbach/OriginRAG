@@ -182,6 +182,10 @@ def build_answer_repair_prompt(
                 + ", ".join(map(str, qc_report.get("warnings") or []))
                 + "\nClaims requiring source verification or narrower wording: "
                 + "; ".join(map(str, qc_report.get("unsupported_causal_claims") or []))
+                + ("\nVerify these group counts against the cited passages; correct or omit them: "
+                   + "; ".join(f"{c['claim']} vs {c['source']} ({', '.join(c['evidence_ids'])})"
+                               for c in qc_report["conflicting_cited_group_counts"])
+                   if qc_report.get("conflicting_cited_group_counts") else "")
                 + "\nPrevious draft (not evidence):\n" + str(previous_answer or ""))
 
     missing_sections = "\n".join(f"- {section}" for section in qc_report.get("missing_sections", []))

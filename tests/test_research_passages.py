@@ -17,6 +17,19 @@ def test_clause_rankings_share_budget_and_never_duplicate_evidence():
     assert interleave_passages([[], [c,a]], 5) == [c,a]
 
 
+def test_shared_chunk_keeps_one_contiguous_window_covering_both_questions(monkeypatch):
+    from originrag.analysis import evidence_pack as ep
+
+    left, right = "Which sensors in London?", "Which controls in Oxford?"
+    one = "The sensors in London were calibrated."
+    both = "The sensors in London were calibrated against controls in Oxford."
+    monkeypatch.setattr(ep, "evidence_window", lambda question, text, **kw: one if question == left else both)
+    a = {"chunk_id": "A", "text": one + " " + both, "report_search_clause": left}
+    rows = interleave_passages([[a], [{**a, "report_search_clause": right}]], 1)
+    assert len(rows) == 1
+    assert ep.evidence_text_for_pack("original", rows[0], 1000) == both
+
+
 def chunk(i, text, **extra):
     return {"paper_id": "REPORT", "evidence_id": f"E{i:03}", "title": "Field trial", "text": text, **extra}
 
@@ -28,6 +41,14 @@ def test_quote_is_from_body_has_source_and_does_not_repeat():
     hits = reading_passages("How did the optical sensor calibration work?", rows)
     assert hits == [(rows[1], quote)]
     assert "Field trial, p. 4 (E002)" in reading_result(hits)
+
+
+def test_unrepaired_count_prioritises_verbatim_source_sentence():
+    source = "At this site we enrolled 12 age-matched participants."
+    row = chunk(1, "Which groups were eligible was determined during screening. " + source)
+    refs = [{"claim": "21 age-matched participants", "source": "12 age-matched participants",
+             "evidence_ids": ["E001"]}]
+    assert reading_passages("Which groups were eligible?", [row], count_conflicts=refs) == [(row, source)]
 
 
 def test_no_hit_does_not_answer_from_title_or_rejected_draft():

@@ -10,6 +10,25 @@ from originrag.analysis.answer_qc import (
 )
 
 
+@pytest.mark.parametrize(("claim", "conflict"), [
+    ("There were 21 age-matched participants (E001).", True),
+    ("There were 12 age-matched participants (E001).", False),
+    ("The pooled total was 21 age-matched participants (E001).", False),
+    ("There were 21 age-matched participants (E001, E002).", False),
+    ("There were 21 age-matched participants (E002) and 12 age-matched participants (E001).", False),
+    ("The response rate was 21% (E001).", False),
+])
+def test_research_counts_must_match_attached_excerpt(claim, conflict):
+    pack = {"research_mode": True, "chunks": [
+        {"evidence_id": "E001", "text": "There were 12 age‑matched participants at site A."},
+        {"evidence_id": "E002", "text": "Site B enrolled 21 age-matched participants."},
+    ]}
+    answer = f"## Evidence-backed statements\n{claim}\n## References\nE001, E002"
+    checked = assess_answer_quality(answer, pack, "answer")
+    assert ("cited_group_count_conflict" in checked["warnings"]) == conflict
+    assert bool(checked["conflicting_cited_group_counts"]) == conflict
+
+
 def test_hypothesis_answer_qc_passes_structured_cited_card() -> None:
     pack = {
         "question": "Make a hypothesis.",

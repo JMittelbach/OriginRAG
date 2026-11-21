@@ -184,6 +184,26 @@ def evidence_text_for_pack(
         snippet=str(result.get("snippet") or ""),
         max_chars=max_chars_per_chunk,
     )
+    alternatives = result.get("report_window_alternatives")
+    if (isinstance(alternatives, list) and 1 < len(alternatives) <= 3
+            and all(isinstance(clause, str) and clause for clause in alternatives)
+            and window_question == result.get("report_search_clause") and not required_anchor_groups):
+        from originrag.analysis.evidence_pack_grading import question_relevance_terms
+        from originrag.retrieval.keyword import normalize_text
+
+        term_sets = [set(question_relevance_terms(clause, include_short_identifiers=True))
+                     for clause in alternatives]
+        common = set.intersection(*term_sets)
+        distinguishing = [terms - common for terms in term_sets if terms - common]
+
+        def coverage(window):
+            words = set(normalize_text(window).split())
+            scores = [len(terms & words) / len(terms) for terms in distinguishing]
+            return min(scores, default=0), sum(scores)
+
+        windows = [clean_text, *(evidence_window(clause, text, max_chars=max_chars_per_chunk)
+                                 for clause in alternatives if clause != window_question)]
+        clean_text = max(windows, key=coverage)
     clean_text = clean_evidence_text(clean_text)
     return truncate_text(clean_text, max_chars_per_chunk)
 

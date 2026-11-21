@@ -31,11 +31,17 @@ def report_queries(question, doi=None):
 def interleave_passages(rankings, limit):
     """Give each explicitly asked subquestion a turn within the existing passage budget."""
     result, seen = [], set()
+    leading_clauses = {}
+    for ranked in rankings:
+        for row in ranked[:2]:
+            if row.get("report_search_clause"):
+                leading_clauses.setdefault(row["chunk_id"], []).append(row["report_search_clause"])
     for layer in zip_longest(*rankings):
         for row in layer:
             if row and row["chunk_id"] not in seen:
                 seen.add(row["chunk_id"])
-                result.append(row)
+                clauses = leading_clauses.get(row["chunk_id"], [])
+                result.append({**row, "report_window_alternatives": clauses} if len(clauses) > 1 else row)
                 if len(result) >= limit:
                     return result
     return result
@@ -54,7 +60,7 @@ def report_author(question):
     return None
 
 
-def reading_passages(question, chunks, limit=3):
+def reading_passages(question, chunks, limit=3, *, count_conflicts=()):
     query = re.sub(r"(?:https?://(?:dx\.)?doi\.org/|\bdoi:?\s*)?10\.\d{4,9}/\S+", "", question, flags=re.I)
     terms = set(question_relevance_terms(query, include_short_identifiers=True))
     methods = bool(re.search(r"\b(?:methods?|measured|groups|participants|methode\w*|gemessen|gruppen)\b", query, re.I))
@@ -80,10 +86,14 @@ def reading_passages(question, chunks, limit=3):
             if re.match(r"(?:research article|original article|copyright|open access|received:|editor:)\b", sentence, re.I):
                 continue
             matched = terms.intersection(normalize_text(sentence).split())
-            if matched:
+            normalized = sentence.casefold().replace("‑", "-").replace("‐", "-")
+            direct = any(chunk["evidence_id"] in c["evidence_ids"]
+                         and re.search(r"\b" + re.escape(c["source"]) + r"\b", normalized)
+                         for c in count_conflicts)
+            if matched or direct:
                 section_bonus = int(methods and chunk.get("section") in {"abstract", "methods"})
-                candidates.append((len(matched) + section_bonus, chunk, sentence))
-    candidates.sort(key=lambda x: -x[0])  # retain retrieval order for equal matches
+                candidates.append(((direct, len(matched) + section_bonus), chunk, sentence))
+    candidates.sort(key=lambda x: x[0], reverse=True)  # retain retrieval order for equal matches
     hits, seen, chunks_seen = [], set(), set()
     for _, chunk, sentence in candidates:
         if sentence in seen or chunk["evidence_id"] in chunks_seen:

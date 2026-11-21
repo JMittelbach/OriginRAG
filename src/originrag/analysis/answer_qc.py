@@ -526,6 +526,13 @@ def assess_answer_quality(answer: str | None, evidence_pack: dict, task: str) ->
     if report_count_mismatch:
         warnings.append("retrieved_report_count_mismatch")
 
+    group_count_conflicts = (
+        conflicting_cited_group_counts(text, evidence_pack)
+        if normalized_task == "answer" and evidence_pack.get("research_mode") else []
+    )
+    if group_count_conflicts:
+        warnings.append("cited_group_count_conflict")
+
     unlabeled_secondary = unlabeled_secondary_citations(text, evidence_pack)
     if unlabeled_secondary:
         warnings.append("secondary_source_role_unlabeled")
@@ -588,6 +595,7 @@ def assess_answer_quality(answer: str | None, evidence_pack: dict, task: str) ->
         "contradicted_evidence_identifiers": identifier_contradictions,
         "report_chunk_unit_conflation": report_chunk_conflation,
         "retrieved_report_count_mismatch": report_count_mismatch,
+        "conflicting_cited_group_counts": group_count_conflicts,
         "unlabeled_secondary_citations": unlabeled_secondary,
         "unlabeled_publication_family_citations": unlabeled_publication_families,
         "var_gene_subclass_conflations": var_unit_conflations,
@@ -1127,6 +1135,45 @@ def cited_source_contains_exact_independence_absence_quote(
         for quote in negative_quotes
         for source_text in cited_source_text
     )
+
+
+_LABELLED_COUNT = re.compile(
+    r"(?<![\w.,/\-–])([1-9]\d{0,5})\s+"
+    r"((?:[a-z]+-[a-z]+|healthy|asymptomatic|untreated|matched)\s+"
+    r"(?:controls|participants|patients|samples|donors|cases))\b"
+)
+
+
+def conflicting_cited_group_counts(answer: str, evidence_pack: dict) -> list[dict]:
+    """Flag a differing explicit count for an identical group in the attached excerpt."""
+    def normalize(value: str) -> str:
+        return " ".join(value.casefold().replace("‑", "-").replace("‐", "-").split())
+
+    chunks = {c.get("evidence_id"): normalize(str(c.get("text") or ""))
+              for c in evidence_pack.get("chunks", [])}
+    conflicts = []
+    body = re.split(r"(?im)^## References\b", answer, maxsplit=1)[0]
+    for sentence in re.split(r"[.!?;\n]", body):
+        start = 0
+        for cite in re.finditer(r"[\[(]((?:E\d{3}\s*[,;]?\s*)+)[\])]", sentence):
+            claim = normalize(sentence[start:cite.start()])
+            start = cite.end()
+            if re.search(r"\b(?:total|combined|pooled|overall|across|together|subset|of whom)\b", claim):
+                continue
+            ids = re.findall(r"E\d{3}", cite[1])
+            for count, label in _LABELLED_COUNT.findall(claim):
+                cited = [chunks.get(i, "") for i in ids]
+                matches = {n for excerpt in cited for n, group in _LABELLED_COUNT.findall(excerpt)
+                           if group == label}
+                if len(matches) == 1 and count not in matches and not any(
+                    re.search(rf"\b{count}\b", excerpt) for excerpt in cited
+                ):
+                    source = f"{next(iter(matches))} {label}"
+                    record = {"claim": f"{count} {label}", "source": source,
+                              "evidence_ids": [i for i in ids if source in chunks.get(i, "")]}
+                    if record not in conflicts:
+                        conflicts.append(record)
+    return conflicts
 
 
 def unsupported_causal_claims(answer: str, evidence_pack: dict) -> list[str]:
