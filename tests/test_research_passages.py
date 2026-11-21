@@ -1,5 +1,6 @@
 from originrag.retrieval.research_passages import reading_passages, reading_result, report_author
 from originrag.retrieval.research_passages import interleave_passages, report_queries
+from originrag.retrieval.research_passages import report_needs_translation
 
 
 def test_scoped_query_does_not_search_for_the_identifier_or_mix_question_parts():
@@ -9,6 +10,14 @@ def test_scoped_query_does_not_search_for_the_identifier_or_mix_question_parts()
         "Where were sensors placed", "how were they calibrated"]
     assert report_queries(f"Beschreibe nur diesen einzelnen Bericht: DOI {doi}.", doi) == []
     assert report_queries("Were both length and width measured?") == ["Were both length and width measured"]
+
+
+def test_report_questions_in_another_language_keep_subquestions_and_do_not_translate_english():
+    clauses = report_queries("Was ist der Unterschied? Worauf muss ich achten?")
+    assert clauses == ["Was ist der Unterschied", "Worauf muss ich achten"]
+    assert report_needs_translation(clauses)
+    assert report_needs_translation(["Quelles méthodes sont utilisées"])
+    assert not report_needs_translation(["How was the die cast", "When was it measured"])
 
 
 def test_clause_rankings_share_budget_and_never_duplicate_evidence():

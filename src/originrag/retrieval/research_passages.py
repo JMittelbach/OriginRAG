@@ -23,9 +23,17 @@ def report_queries(question, doi=None):
                           r"(?:nur|ausschlie(?:ß|ss)lich)\s+(?:dieses|diesen|diese|das|den|die)\s+"
                           r"(?:(?:einzelne\w*|eine\w*)\s+)?(?:paper|bericht|artikel|studie)\b",
                           " ", question, flags=re.I)
-    parts = re.split(r"(?:\?\s+|\b(?:and|und)\s+)(?=(?:how|which|what|who|where|when|"
-                     r"wie|welche\w*|wer|wo|wann)\b)", question, maxsplit=2, flags=re.I)
+    parts = re.split(r"\?\s+|\b(?:and|und)\s+(?=(?:how|which|what|who|where|when|"
+                     r"wie|welche\w*|wer|wo\w*|wann)\b)", question, maxsplit=2, flags=re.I)
     return [p.strip(" \t.,:;?!") for p in parts if re.search(r"\w", p)]
+
+
+def report_needs_translation(clauses):
+    """Use the multilingual planner selectively; don't tax ordinary English report lookups."""
+    return any(re.search(r"\b(?:welche\w*|wurde\w*|worauf|woher|zwischen|wie|worin|was ist|"
+                         r"quel(?:le)?s?|comment|pourquoi|dans cette|cómo|cuáles|qué|según)\b"
+                         r"|[\u3040-\u30ff\u3400-\u9fff\u0400-\u04ff]", clause, re.I)
+               for clause in clauses)
 
 
 def interleave_passages(rankings, limit):

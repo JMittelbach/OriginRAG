@@ -26,7 +26,7 @@ from originrag.analysis.answer_format import normalize_answer_format  # noqa: E4
 from originrag.analysis.chat import model_requests_bibliography  # noqa: E402
 from originrag.analysis.question_understanding import named_method_subject, understand_question, understanding_plan  # noqa: E402
 from originrag.retrieval.method_description import contains_flattened_table, describes_named_method  # noqa: E402
-from originrag.retrieval.research_passages import interleave_passages, reading_passages, reading_result, report_author, report_queries  # noqa: E402
+from originrag.retrieval.research_passages import interleave_passages, reading_passages, reading_result, report_author, report_needs_translation, report_queries  # noqa: E402
 from originrag.retrieval.report_scope import exclusive_single_report_doi, extract_explicit_dois, normalize_doi_text  # noqa: E402
 from originrag.analysis.corpus_inventory import extract_inventory  # noqa: E402
 from originrag.summaries.reading_card import summary_request, load_paper, create_card, card_markdown  # noqa: E402
@@ -678,7 +678,19 @@ def run_question(
         records = tuple((scoped_paper + ".jsonl", i, row) for i, row in enumerate(rows, 1)
                         if row.get("paper_id") == scoped_paper)
         rankings = []
-        for clause in report_queries(user_question, exclusive_report_doi):
+        clauses = report_queries(user_question, exclusive_report_doi)
+        if (getattr(args, "understand_question", False) and report_needs_translation(clauses)
+                and configured_model_backend in {"qwen", "ollama", "deepseek"}):
+            # The report is already resolved. Translate only what to look for inside it.
+            understanding = understand_question("? ".join(clauses),
+                model=getattr(args, "planner_model", None) or getattr(args, "answer_model", None),
+                num_ctx=effective_model_context(args, model=getattr(args, "planner_model", None)))
+            write_json(output_dir / "question_understanding.json", understanding)
+            if understanding.get("status") == "ready":
+                answer_question = understanding["normalized_question"]
+                translated = report_queries(answer_question)
+                clauses = list(dict.fromkeys(translated + clauses))
+        for clause in clauses:
             ranked = search_chunks(
                 clause, chunks_dir, papers_tsv, paper_id=scoped_paper, category=args.category,
                 candidate_records=records, limit=evidence_limit, max_per_paper=evidence_limit,

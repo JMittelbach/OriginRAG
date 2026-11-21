@@ -231,3 +231,27 @@ def test_original_exclusive_scope_survives_preparation_that_drops_only_marker(co
     assert {row["paper_id"] for row in result["results"]} == {"TARGET"}
     assert result["pack"]["requested_report_scope"]["doi"] == DOI
     assert "corpus_inventory" not in result["pack"]
+
+
+@pytest.mark.parametrize("ready", [True, False])
+def test_translation_inside_a_report_never_changes_report_identity(corpus, tmp_path, monkeypatch, ready):
+    chunks, metadata, _ = corpus
+    question = f"In der Studie mit DOI {DOI}: Wie wurde die Datenbanklatenz gemessen?"
+    monkeypatch.setattr(sys, "argv", ["ask_corpus.py", question, "--chunks-dir", str(chunks),
+                        "--papers", str(metadata), "--backend", "none", "--understand-question"])
+    args = ask_corpus.parse_args()
+    args.configured_answer_backend = "qwen"
+    def translate(text, **unused):
+        assert DOI not in text
+        return ({"status": "ready", "normalized_question": "How was database query latency measured?"}
+                if ready else {"status": "unavailable"})
+    monkeypatch.setattr(ask_corpus, "understand_question", translate)
+    if not ready:
+        with pytest.raises(ValueError, match="No other reports were substituted"):
+            ask_corpus.run_question(args, tmp_path / "run")
+        return
+    pack = ask_corpus.run_question(args, tmp_path / "run")["pack"]
+    assert pack["requested_report_scope"]["doi"] == DOI
+    assert pack["question"] == question
+    assert pack["question_understanding"]["status"] == "ready"
+    assert {c["paper_id"] for c in pack["chunks"]} == {"TARGET"}
