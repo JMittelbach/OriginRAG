@@ -6,6 +6,7 @@ study, cohort or dataset. Five papers do not necessarily mean five independent s
 
 - Search by topic, title, author or DOI, without a language model.
 - Find new papers, filter by journal and import available open-access PDFs.
+- Type a question or dictate it in German or English. Review the text before sending.
 - Chat with your library using a local model through Ollama.
 - Inspect citations, source passages and possible study overlap.
 
@@ -15,7 +16,8 @@ The default installation gives you **OriginRAG, Quill, Folio, Library, Bookshelf
 and the PDF reader**. The editors and PDF renderer ship in the repository.
 The first install needs internet: it sets up Python and its packages, prepares
 the TeX compiler and packages for the included templates, and installs or reuses
-Ollama and a local Qwen model (about 2.5 GB on a new install). You do not need
+Ollama and a local Qwen model (about 2.5 GB on a new install), plus a 574 MB
+offline speech model for [chat dictation](docs/web_chat.md#dictate-a-question). You do not need
 to install Node.js, activate Conda or supply your own LaTeX installation.
 
 ### Windows

@@ -75,7 +75,7 @@ def test_full_install_verifies_bundled_editors_before_success(tmp_path):
 
 
 @pytest.mark.parametrize(('profile', 'expected'), [
-    ('full', ['tex', 'model']), ('rag', ['model']), ('write', ['tex']),
+    ('full', ['tex', 'model', 'dictation']), ('rag', ['model', 'dictation']), ('write', ['tex']),
 ])
 def test_setup_prepares_the_selected_runtime_only(monkeypatch, profile, expected):
     calls = []
@@ -83,6 +83,7 @@ def test_setup_prepares_the_selected_runtime_only(monkeypatch, profile, expected
     monkeypatch.setattr(setup, 'load_project_env', lambda *_: None)
     monkeypatch.setattr(setup, 'prepare_tex', lambda: calls.append('tex'))
     monkeypatch.setattr(setup, 'prepare_model', lambda *, start_only: calls.append('model'))
+    monkeypatch.setattr(setup, 'prepare_dictation', lambda: calls.append('dictation'))
     setup.main()
     assert calls == expected
 

@@ -41,6 +41,7 @@ from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_questi
 from originrag.analysis.faithfulness import citation_claim_blocks, direct_evidence_text  # noqa: E402
 from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
 from originrag.web_local_access import local_browser_request  # noqa: E402
+from originrag import dictation  # noqa: E402
 from originrag.model_runtime import manager_for, model_download_allowed, model_manage_allowed  # noqa: E402
 from originrag.library_topics import assign_library_topics  # noqa: E402
 from originrag.library_presence import presence_answer, presence_language  # noqa: E402
@@ -1952,6 +1953,7 @@ def build_handler(
     local_import_token = secrets.token_urlsafe(32)
     corpus_lock = library_manager.corpus_lock if library_manager else threading.RLock()
     writing_slots = threading.BoundedSemaphore(2)
+    dictation_slot = threading.BoundedSemaphore(1)
     turn_jobs = TurnJobManager(
         max_concurrent_turns,
         corpus_lock=corpus_lock,
@@ -1987,6 +1989,13 @@ def build_handler(
             if not context:
                 return
             current_app, user, _ = context
+            if parsed.path == '/api/dictation':
+                local = not auth_store and local_browser_request(self.server.server_address, self.client_address, self.headers)
+                if not (local or user):
+                    self.respond_json({'error': 'Sign in or use a local browser.'}, status=403)
+                    return
+                self.respond_json({'ready': dictation.ready(), 'token': local_import_token if local else ''})
+                return
             if parsed.path == '/api/document-sync':
                 self.handle_document_sync(current_app)
                 return
@@ -2303,6 +2312,13 @@ def build_handler(
                 turn_jobs.recover_persisted(owner_key, current_app)
             if auth_store and not self.valid_csrf(session_token):
                 self.respond_json({"error": "invalid CSRF token"}, status=HTTPStatus.FORBIDDEN)
+                return
+            if parsed.path == '/api/dictation':
+                if not auth_store and not (local_browser_request(self.server.server_address, self.client_address, self.headers)
+                        and hmac.compare_digest(self.headers.get('X-OriginRAG-Local-Token', ''), local_import_token)):
+                    self.respond_json({'error': 'Reload the local chat or sign in.'}, status=403)
+                    return
+                self.handle_dictation()
                 return
             if parsed.path == '/api/document-sync':
                 self.handle_document_sync(current_app, post=True)
@@ -2812,6 +2828,39 @@ def build_handler(
                 self.respond_json({'error': str(exc) if isinstance(exc, ValueError) else 'Invalid or missing synced document.'}, status=400)
             except (OSError, sqlite3.Error):
                 self.respond_json({'error': 'Cannot access the sync folder. Check that it is available and writable.'}, status=503)
+
+        def handle_dictation(self):
+            import subprocess
+            language = self.headers.get('X-Dictation-Language', 'auto')
+            if self.headers.get('Content-Type') != 'application/octet-stream' or language not in dictation.LANGUAGES:
+                self.respond_json({'error': 'Unsupported recording format or language.'}, status=415)
+                return
+            length = self.headers.get('Content-Length', '')
+            if not re.fullmatch(r'[0-9]{1,8}', length) or not 8000 <= int(length) <= dictation.MAX_BYTES or int(length) % 2:
+                self.respond_json({'error': 'Record between a quarter second and 90 seconds.'}, status=400)
+                return
+            if not dictation.ready():
+                self.respond_json({'error': 'Dictation is not installed on this host.'}, status=503)
+                return
+            if not dictation_slot.acquire(blocking=False):
+                self.respond_json({'error': 'Another recording is being transcribed. Retry in a moment.'}, status=429)
+                return
+            try:
+                timeout = self.connection.gettimeout()
+                try:
+                    self.connection.settimeout(15)
+                    raw = self.rfile.read(int(length))
+                finally:
+                    self.connection.settimeout(timeout)
+                if len(raw) != int(length):
+                    raise ValueError('The recording was incomplete.')
+                self.respond_json({'text': dictation.transcribe(raw, language)})
+            except ValueError as exc:
+                self.respond_json({'error': str(exc)}, status=400)
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                self.respond_json({'error': 'Transcription could not finish. Try again.'}, status=503)
+            finally:
+                dictation_slot.release()
 
         def library_access(self, user) -> dict:
             if not library_manager:
@@ -6657,7 +6706,7 @@ INDEX_HTML = r"""<!doctype html>
       max-width: 860px;
       margin: 0 auto;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 52px;
+      grid-template-columns: minmax(0, 1fr) 44px 52px;
       gap: 10px;
       border: 1px solid var(--line);
       border-radius: 28px;
@@ -6682,8 +6731,16 @@ INDEX_HTML = r"""<!doctype html>
       background: transparent;
       outline: 0;
     }
+    #dictate { grid-column: 2; grid-row: 1; align-self: end; height: 44px; border-radius: 50%; padding: 10px; }
+    #dictate svg { display: block; width: 20px; height: 20px; margin: auto; }
+    #dictate[aria-pressed="true"] { color: #fff; background: #9a333b; }
+    #form[data-dictating="yes"] #send { opacity: .45; cursor: not-allowed; }
+    #dictationPanel { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: 840px;
+      margin: 0 auto 6px; font-size: 13px; }
+    #dictationPanel[hidden], #dictationRetry[hidden] { display: none; }
+    #dictationPanel button, #dictationPanel select { min-height: 30px; padding: 4px 8px; width: auto; }
     #send {
-      grid-column: 2;
+      grid-column: 3;
       grid-row: 1;
       border-radius: 999px;
       min-height: 44px;
@@ -6955,7 +7012,7 @@ INDEX_HTML = r"""<!doctype html>
       .header-button { padding: 0 9px; }
       .library-stats-word { display: none; }
       .composer { padding: 18px 12px 12px; }
-      .composer-inner { grid-template-columns: minmax(0, 1fr) 46px; border-radius: 22px; }
+      .composer-inner { grid-template-columns: minmax(0, 1fr) 44px 46px; border-radius: 22px; }
       .assurance-grid { grid-template-columns: 1fr 1fr; }
       .assurance-metric:nth-child(2) { border-right: 0; }
       .assurance-metric:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
@@ -7082,9 +7139,20 @@ INDEX_HTML = r"""<!doctype html>
           <span>Enter to send · Shift+Enter for a new line</span>
           <button id="composerStop" type="button" hidden aria-label="Stop current request">■ Stop</button>
         </div>
+        <div id="dictationPanel" hidden>
+          <span id="dictationNote" role="status" aria-live="polite"></span>
+          <select id="dictationLanguage" aria-label="Dictation language">
+            <option value="auto">Auto · DE / EN</option><option value="de">Deutsch</option><option value="en">English</option>
+          </select>
+          <button type="button" id="dictationRetry" hidden>Retry</button>
+          <button type="button" id="dictationCancel" title="Dismiss dictation" aria-label="Dismiss dictation">×</button>
+        </div>
         <div class="composer-inner">
           <label class="sr-only" for="message">Research question</label>
           <textarea id="message" placeholder="Ask a question about your corpus..." required></textarea>
+          <button id="dictate" type="button" title="Dictate question" aria-label="Dictate question" aria-pressed="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 10.5v1a7 7 0 0 0 14 0v-1M12 19v3m-3 0h6"/></svg>
+          </button>
           <button id="send" type="submit" title="Send" aria-label="Send research question">↑</button>
         </div>
       </form>
@@ -7203,6 +7271,11 @@ INDEX_HTML = r"""<!doctype html>
     const chat = document.getElementById("chat");
     const form = document.getElementById("form");
     const message = document.getElementById("message");
+    import('/assets/workspace/dictation.mjs').then(({attachDictation}) => attachDictation(form, message))
+      .catch(() => { document.getElementById('dictate').onclick = () => {
+        document.getElementById('dictationPanel').hidden = false;
+        document.getElementById('dictationNote').textContent = 'Dictation could not load. Reload the page to retry.';
+      }; });
     const send = document.getElementById("send");
     const statusEl = document.getElementById("status");
     const aboutButton = document.getElementById("aboutButton");
@@ -7523,6 +7596,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function setSessionNavigationPending(isPending) {
+      if (isPending) form.dispatchEvent(new Event('origin:cancel-dictation'));
       sessionNavigationPending = isPending;
       updateComposerStop();
       send.disabled = submittingTurn || libraryBusy || isPending;
@@ -8669,7 +8743,7 @@ INDEX_HTML = r"""<!doctype html>
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (submittingTurn || libraryBusy || sessionNavigationPending) return;
+      if (submittingTurn || libraryBusy || sessionNavigationPending || form.dataset.dictating === 'yes') return;
       const text = message.value.trim();
       if (!text) return;
       const submittedSession = currentSessionDir;

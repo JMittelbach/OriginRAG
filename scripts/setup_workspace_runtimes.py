@@ -155,6 +155,12 @@ def prepare_model(*, start_only=False):
         (RUNTIME / 'setup-ollama').touch()
 
 
+def prepare_dictation():
+    subprocess.run([sys.executable, '-m', 'pip', 'install', '--only-binary=:all:',
+                    'pywhispercpp>=1.5.1,<2'], check=True)
+    subprocess.run([sys.executable, str(ROOT / 'src/originrag/dictation.py'), '--prepare'], check=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--start-only', action='store_true')
@@ -167,6 +173,8 @@ def main():
         steps.append(('Quill PDF preview', prepare_tex))
     if args.profile in ('full', 'rag'):
         steps.append(('Ollama', lambda: prepare_model(start_only=args.start_only)))
+        if not args.start_only:
+            steps.append(('Chat dictation', prepare_dictation))
     for name, action in steps:
         try:
             action()

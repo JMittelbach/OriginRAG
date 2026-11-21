@@ -22,6 +22,7 @@ Usage:
   ./originrag users ...        Manage invite-only local web accounts
   ./originrag ask "question"   Ask one question and write outputs/answers
   ./originrag setup-model      Pull/configure the preferred local Qwen model
+  ./originrag setup-dictation  Install local English/German voice input
   ./originrag sync-bib ...     Sync the local PDF library with rsync
   ./originrag bib              Refresh bib inventory, registry, keys, and reports
   ./originrag library [query]  Browse papers; filter with --author or --title
@@ -303,6 +304,11 @@ case "$cmd" in
     configure_local_model
     report_accelerator
     exec "$ORIGINRAG_PYTHON" scripts/ask_corpus.py "$1" --backend qwen --preset pro --task answer "${@:2}"
+    ;;
+  setup-dictation)
+    select_python_environment
+    "$ORIGINRAG_PYTHON" -m pip install --only-binary=:all: 'pywhispercpp>=1.5.1,<2'
+    exec "$ORIGINRAG_PYTHON" src/originrag/dictation.py --prepare
     ;;
   setup-model|model)
     if [ -s runtime/setup-python ]; then select_python_environment; fi

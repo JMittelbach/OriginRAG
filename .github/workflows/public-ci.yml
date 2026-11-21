@@ -50,6 +50,7 @@ jobs:
             tests/test_navigation_accounts.py \
             tests/test_dialog_close_browser.py \
             tests/test_web_onboarding_browser.py \
+            tests/test_dictation.py \
             tests/test_workspace_recovery_browser.py \
             tests/test_workspace_small_polish_browser.py \
             tests/test_ecosystem_design_browser.py \

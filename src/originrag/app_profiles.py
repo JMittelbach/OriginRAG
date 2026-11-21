@@ -10,7 +10,7 @@ PROFILES = ('full', 'rag', 'write')
 CHAT_ROUTES = frozenset({
     '/chat', '/api/chat', '/api/reset', '/api/sessions', '/api/session', '/api/session-title',
     '/api/session-delete', '/api/source-trace', '/api/source-request', '/api/job', '/api/jobs',
-    '/api/job/cancel', '/api/progress', '/file',
+    '/api/job/cancel', '/api/progress', '/api/dictation', '/file',
 })
 COLLECTION_ACTIONS = frozenset({'create_collection', 'rename_collection', 'collection_paper'})
 

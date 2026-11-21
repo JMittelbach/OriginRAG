@@ -13,6 +13,24 @@ The launcher opens a loopback-only service and selects a nearby port if `8765`
 is unavailable. Generated sessions remain below `outputs/web_chat_sessions/`
 and are ignored by Git.
 
+## Dictate a question
+
+Click the microphone beside **Send**, allow microphone access and speak. Click it
+again to finish. The words appear at the cursor, or replace selected text. Edit
+the draft and press **Send** when ready. **Esc** discards the recording. Short
+questions work best; each recording ends after 90 seconds. Language detection
+is automatic, or choose **Deutsch** or **English** while recording.
+
+Audio goes only to the OriginRAG host, not to a speech service. On a shared
+server this means the server transcribes it, not the laptop. Recordings are
+processed in memory and not saved by OriginRAG. An interrupted upload can be
+retried in the same tab. Use HTTPS or localhost (including an SSH tunnel).
+
+Standard full and RAG installs include multilingual Whisper large-v3-turbo.
+For an existing checkout or an apps-only install, run `./originrag setup-dictation`
+once on the host after pulling the code. Only setup downloads the model. Its
+verified weights live in `runtime/models/dictation/` and aren't tracked by Git.
+
 ## First visit and adding literature
 
 A five-step quick tour introduces uploads, literature search, chat, study overlap
