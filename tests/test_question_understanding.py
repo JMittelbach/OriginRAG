@@ -59,6 +59,8 @@ def test_invalid_or_identifier_losing_preparation_does_not_proceed(monkeypatch, 
 
 @pytest.mark.parametrize("question,subject", [
     ("What does OptiCal measure, and does it correct drift?", "OptiCal"),
+    ("What does MAPsim simulate?", "MAPsim"),
+    ("How does MAPsim compare with OptiCal?", ""),
     ("Wie funktioniert OptiCal?", "OptiCal"),
     ("How does timing affect measurements?", ""),
     ("What does OptiCal and the other meter measure?", ""),

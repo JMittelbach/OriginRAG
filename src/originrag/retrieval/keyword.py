@@ -16,6 +16,7 @@ from originrag.curation.relevance_policy import (
 )
 from originrag.retrieval.chunk_quality import classify_chunk_quality
 from originrag.retrieval.metadata import load_paper_metadata
+from originrag.retrieval.method_description import describes_named_method
 from originrag.retrieval.section_detection import (
     carries_forward_section,
     detect_section_for_chunk,
@@ -109,6 +110,7 @@ def search_chunks(
     candidate_source_paper_ids: frozenset[str] | set[str] | None = None,
     candidate_source_layout_verified: bool = False,
     candidate_records: tuple[tuple[str, int, dict], ...] | None = None,
+    description_subject: str = "",
 ) -> list[dict]:
     """Search JSONL chunk files with lightweight keyword scoring and evidence-aware filters.
 
@@ -253,6 +255,10 @@ def search_chunks(
         candidates.append(result)
 
     candidates.sort(key=lambda item: (-float(item["score"]), -float(item["raw_score"]), str(item["paper_id"]), str(item["chunk_id"])))
+    if description_subject:
+        # A focused query gets a direct methods passage into the bounded pool before fusion.
+        candidates.sort(key=lambda row: not describes_named_method(
+            row["text"], row["title"], description_subject))
     results = _diversify_results(candidates, limit=limit, max_per_paper=max_per_paper)
     for rank, result in enumerate(results, start=1):
         result["rank"] = rank

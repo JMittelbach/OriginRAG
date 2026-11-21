@@ -38,6 +38,22 @@ def test_named_method_question_keeps_description_without_evicting_results(monkey
         assert [r["chunk_id"] for r in selected] == expected
 
 
+def test_rewritten_question_keeps_the_original_subject_and_prefers_prose(monkeypatch):
+    common = {"paper_id": "P", "title": "CalibMap: optical toolbox", "section": "results"}
+    rows = [
+        {**common, "chunk_id": "table", "text": "Performance of alternative calibration metrics.",
+         "contains_flattened_table": True},
+        {**common, "chunk_id": "results", "text": "Drift measurements agreed with laboratory standards."},
+        {**common, "chunk_id": "intro", "text": "We developed CalibMap to measure sensor drift."},
+    ]
+    monkeypatch.setattr(ask_corpus, "prompt_visible_answer_quality", lambda r, **kw: ({"table": 3, "results": 2, "intro": 1}[r["chunk_id"]],))
+    selected = ask_corpus.shortlist_answer_candidates(rows, max_papers=2,
+        question="Does this method measure drift?", method_subject="CalibMap")
+    assert [r["chunk_id"] for r in selected] == ["results", "intro"]
+    assert ask_corpus.shortlist_answer_candidates(rows[:1], max_papers=1,
+        question="Does this method measure drift?", method_subject="CalibMap")[0]["chunk_id"] == "table"
+
+
 @pytest.fixture(autouse=True)
 def isolated_answer_runtime(monkeypatch):
     token = CURRENT_RUNTIME.set(None)

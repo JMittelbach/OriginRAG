@@ -3933,11 +3933,16 @@ def build_public_abstention(
                     "This is a corpus-conditional retrieval result, not evidence that no "
                     "relevant studies exist."
                 )
+            from originrag.analysis.question_understanding import named_method_subject
+            from originrag.retrieval.method_description import source_reading_excerpt
+
+            evidence = pack or {}
+            passage = source_reading_excerpt(evidence, named_method_subject(str(evidence.get("question") or "")))
             return (
                 "## More evidence needed\n\n"
                 "Even if every unresolved paper were counted separately, the retrieved "
                 "evidence would not cover all required parts of the question. OriginRAG "
-                "therefore withheld a synthesized answer."
+                "therefore withheld a synthesized answer." + passage
             )
         if backend_error:
             return (

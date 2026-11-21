@@ -47,7 +47,7 @@ def evidence_window(question: str, text: str, snippet: str = "", max_chars: int 
 
     tokens = _query_tokens(question)
     if not tokens:
-        return _trim_to_sentence_boundary(clean_text[:max_chars], trim_start=False)
+        return _bounded_prose(clean_text, 0, max_chars)
 
     lower = clean_text.lower()
     candidate_positions = _candidate_window_positions(lower, tokens)
@@ -59,12 +59,26 @@ def evidence_window(question: str, text: str, snippet: str = "", max_chars: int 
                 candidate_positions.append(snippet_pos)
 
     if not candidate_positions:
-        return _trim_to_sentence_boundary(clean_text[:max_chars], trim_start=False)
+        return _bounded_prose(clean_text, 0, max_chars)
 
     center = _best_window_center(clean_text, tokens, candidate_positions, max_chars)
     start, end, prefix, suffix = _window_bounds(len(clean_text), center, max_chars)
-    window = clean_text[start:end].strip()
-    return prefix + _trim_to_sentence_boundary(window, trim_start=start > 0) + suffix
+    return (prefix + _bounded_prose(clean_text, start, end) + suffix)[:max_chars]
+
+
+def _bounded_prose(text: str, start: int, end: int) -> str:
+    """Do not present a cut word, decimal, or identifier as a different literal."""
+    if 0 < start < len(text) and text[start - 1] != " " and text[start] != " ":
+        boundary = text.find(" ", start, end)
+        if boundary < 0:
+            return ""
+        start = boundary + 1
+    if 0 < end < len(text) and text[end - 1] != " " and text[end] != " ":
+        boundary = text.rfind(" ", start, end)
+        if boundary < 0:
+            return ""
+        end = boundary
+    return _trim_to_sentence_boundary(text[start:end], trim_start=start > 0)
 
 
 def _candidate_window_positions(lower_text: str, tokens: list[str]) -> list[int]:
@@ -130,7 +144,7 @@ def _best_window_center(text: str, tokens: list[str], positions: list[int], max_
     best_score = -1
     for position in positions:
         start, end, _prefix, _suffix = _window_bounds(len(text), position, max_chars)
-        window = _trim_to_sentence_boundary(text[start:end], trim_start=start > 0).lower()
+        window = _bounded_prose(text, start, end).lower()
         score = sum(window.count(token) for token in tokens)
         coverage = sum(1 for token in tokens if token in window)
         score += coverage * 3

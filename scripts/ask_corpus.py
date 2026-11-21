@@ -25,6 +25,7 @@ if str(SRC_DIR) not in sys.path:
 from originrag.analysis.answer_format import normalize_answer_format  # noqa: E402
 from originrag.analysis.chat import model_requests_bibliography  # noqa: E402
 from originrag.analysis.question_understanding import named_method_subject, understand_question, understanding_plan  # noqa: E402
+from originrag.retrieval.method_description import contains_flattened_table, describes_named_method  # noqa: E402
 from originrag.analysis.corpus_inventory import extract_inventory  # noqa: E402
 from originrag.summaries.reading_card import summary_request, load_paper, create_card, card_markdown  # noqa: E402
 from originrag.analysis.answer_backends import (  # noqa: E402
@@ -525,6 +526,7 @@ def run_question(
     user_question = answer_question
     retrieval_question = str(getattr(args, "retrieval_question", "") or args.question)
     task = str(getattr(args, "task", "answer") or "answer")
+    method_subject = named_method_subject(user_question) if task == "answer" else ""
     exclusive_report_doi = exclusive_single_report_doi(user_question) if task == "answer" else None
     requested_report_scope = None
     understanding = {"status": "not_requested"}
@@ -629,7 +631,7 @@ def run_question(
         evidence_selector=evidence_selector,
         max_per_paper=max_per_paper,
     )
-    if task == "answer" and evidence_selector != "current" and named_method_subject(user_question):
+    if evidence_selector != "current" and method_subject:
         # Keep a definition and evaluation passages in contention under the same overall budget.
         candidate_max_per_paper = max(8, candidate_max_per_paper)
     candidate_limit = max(evidence_limit, evidence_limit * max(candidate_multiplier, 1))
@@ -733,6 +735,7 @@ def run_question(
             )
         results = retrieve_chunks_for_queries(
             retrieval_queries=retrieval_queries,
+            description_subject=method_subject,
             chunks_dir=chunks_dir,
             papers_tsv=papers_tsv,
             candidate_limit=candidate_limit,
@@ -781,9 +784,8 @@ def run_question(
         )
 
     required_entity_groups = required_entity_anchor_groups(answer_question)
-    subject = named_method_subject(user_question) if task == "answer" else ""
-    if subject and (subject.casefold(),) not in required_entity_groups:
-        required_entity_groups = [*required_entity_groups, (subject.casefold(),)]
+    if method_subject and (method_subject.casefold(),) not in required_entity_groups:
+        required_entity_groups = [*required_entity_groups, (method_subject.casefold(),)]
     intervention_source_request = (
         task == "sources"
         and is_epcr_pfemp1_intervention_source_request(answer_question)
@@ -796,6 +798,7 @@ def run_question(
         results = retain_entity_anchored_evidence(
             results,
             entity_anchor_groups,
+            method_subject=method_subject,
             question=answer_question,
             max_chars_per_chunk=max_chars_per_chunk,
             anchor_only_evidence_window=bool(required_entity_groups),
@@ -834,6 +837,7 @@ def run_question(
             trace_candidates, answer_context_selection = budget_answer_candidates(
                 shortlist_answer_candidates(
                     results,
+                    method_subject=method_subject,
                     max_papers=max(1, len(results)),
                     question=answer_question,
                     max_chars_per_chunk=max_chars_per_chunk,
@@ -4590,6 +4594,7 @@ def retrieve_chunks_for_queries(
     retrieval_index: Path = DEFAULT_INDEX_PATH,
     validated_corpus_fingerprint: str | None = None,
     validated_candidate_record_store: bool | None = None,
+    description_subject: str = "",
 ) -> list[dict]:
     retrieval_queries = list(retrieval_queries or [])
     candidate_record_store_available = validated_candidate_record_store
@@ -4617,6 +4622,8 @@ def retrieve_chunks_for_queries(
     for retrieval_query in retrieval_queries:
         search_backend = search_chunks_bm25 if retriever == "bm25" else search_chunks
         search_kwargs = {}
+        if description_subject and not ranked_lists:
+            search_kwargs["description_subject"] = description_subject
         if retriever == "bm25":
             search_kwargs["index_path"] = retrieval_index
             search_kwargs["validate_index"] = False
@@ -4676,6 +4683,7 @@ def retain_entity_anchored_evidence(
     question: str = "",
     max_chars_per_chunk: int | None = None,
     anchor_only_evidence_window: bool = True,
+    method_subject: str = "",
 ) -> list[dict]:
     """Keep only passages that explicitly carry every required entity.
 
@@ -4699,6 +4707,8 @@ def retain_entity_anchored_evidence(
     retained = []
     for candidate in candidates:
         copy = dict(candidate)
+        if method_subject and contains_flattened_table(str(copy.get("text") or "")):
+            copy["contains_flattened_table"] = True
         copy["required_entity_anchors"] = [list(group) for group in anchor_groups]
 
 
@@ -5397,6 +5407,7 @@ def shortlist_answer_candidates(
     max_papers: int,
     question: str = "",
     max_chars_per_chunk: int = 1800,
+    method_subject: str | None = None,
 ) -> list[dict]:
     """Keep diverse papers plus one focused support passage per named report.
 
@@ -5413,11 +5424,7 @@ def shortlist_answer_candidates(
     best_by_paper: dict[str, tuple[tuple[int, ...], dict]] = {}
     rows_by_paper: defaultdict[str, list[dict]] = defaultdict(list)
     descriptions: dict[str, tuple[tuple[int, ...], dict]] = {}
-    method = named_method_subject(question)
-    definition = (re.compile(
-        rf"\bwe\s+(?:(?:have|here|also)\s+)?(?:develop(?:ed)?|introduced?|present(?:ed)?|proposed?)\b"
-        rf"[^.!?;]{{0,120}}\b(?:{re.escape(method)}|method|metric|model|algorithm|score|tool|framework|approach|package)\b",
-        re.I) if method else None)
+    method = named_method_subject(question) if method_subject is None else method_subject
     for result in results:
         paper_id = str(result.get("paper_id") or "")
         if not paper_id:
@@ -5430,9 +5437,10 @@ def shortlist_answer_candidates(
             question=question,
             max_chars_per_chunk=max_chars_per_chunk,
         )
-        if definition and contains_normalized_term(normalize_text(str(result.get("title") or "")), method):
+        if method:
+            quality = (int(not result.get("contains_flattened_table")), *quality)
             visible = freeze_prompt_visible_result(question, result, max_chars_per_chunk)
-            if (definition.search(" ".join(str(visible.get("text") or "").split()))
+            if (describes_named_method(str(visible.get("text") or ""), str(result.get("title") or ""), method)
                     and (paper_id not in descriptions or quality > descriptions[paper_id][0])):
                 descriptions[paper_id] = (quality, result)
         current = best_by_paper.get(paper_id)

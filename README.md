@@ -96,6 +96,8 @@ Ask a question in chat, open the cited passages and inspect the evidence status.
 For a reading list, try “Show me five papers on microscopy”, then “Five more”.
 The next list skips papers already shown. When searching full text, the chat
 skips matches found only in passages it identifies as bibliographies.
+For a named method, the chat can show the authors’ description with its page
+even when the retrieved studies do not support a synthesis.
 Questions can be in German; replies default to English. Ask for German explicitly
 if you prefer it. Quill keeps the manuscript’s language when suggesting edits.
 Use **Stop** to cancel your request. **Summarize** creates a reading card for one

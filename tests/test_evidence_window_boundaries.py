@@ -14,6 +14,18 @@ def test_window_at_zero_keeps_complete_setting_sentence():
     assert evidence_window("sensor calibration", text, max_chars=500).startswith(first)
 
 
+def test_clipping_a_number_never_changes_its_value():
+    text = "Observed concentration 0.0091 units in this sample."
+    for query in ("", "no-match", "concentration"):
+        assert "0.00" not in evidence_window(query, text, max_chars=text.index("91"))
+
+
+def test_flattened_table_detector_ignores_prose_and_inline_citations():
+    from originrag.retrieval.method_description import contains_flattened_table
+    assert contains_flattened_table("Table 1.\nSensor metrics\nName\nType\nUnits\nMedian\nRange")
+    assert not contains_flattened_table("The results in Table 1.\nWe repeated the measurement in five populations.")
+
+
 def test_prefix_fallback_keeps_complete_first_sentence():
     first = "The evaluation used 40 devices in Canada."
     text = first + " " + "The laboratory recorded measurements over controlled intervals. " * 20

@@ -388,7 +388,7 @@ def named_method_subject(question: str) -> str:
     match = re.search(
         r"\b(?i:what does|how does|was misst|was macht|wie funktioniert)\s+"
         r"([A-Za-z][A-Za-z0-9]{2,39})(?![\w/-])", question)
-    if not match or not re.search(r"[a-z][A-Z]", match[1]):
+    if not match or not re.search(r"[a-z][A-Z]|^[A-Z]{2,}[a-z]{2,}", match[1]):
         return ""
     if (re.match(r"\s+(?:and|und|or|oder)\b", question[match.end():], re.I)
             or re.search(r"\b(?:or|oder|versus|vs|compar\w*|differ\s+from|vergleich\w*)\b", question, re.I)):
