@@ -266,8 +266,13 @@ rejected.
 
 ## Evidence display
 
-The normal interface chooses the evidence workflow automatically. Users do not
-select a separate comparison or study-counting mode. The primary outcomes are:
+Ordinary research chat retrieves passages and cites the papers it uses. It does
+not require a certificate of independent corroboration. If the answer cannot
+be validated, the reader gets excerpts with their source and page when
+available, or a note that this search did not locate a matching passage.
+
+Start the service with `./web --evidence-selector trace_flow` to opt in to the
+separate study-origin audit. Its primary outcomes are:
 
 - `Supported`
 - `More evidence needed`
@@ -310,11 +315,11 @@ What evidence links var genes to severe malaria?
 1. Read the answer and open a linked author-year citation. Confirm the report's
    identity and inspect the source passage used for the statement. An excerpt
    is a passage from a report, not another study.
-2. Read the evidence status. `Supported` refers to the declared evidence
+2. In optional audit mode, read the evidence status. `Supported` refers to the declared evidence
    criteria; `More evidence needed` means these were not met. `Study overlap
    needs review` means that unresolved source relationships matter. Available
    reports, selected passages and cited reports can have different counts.
-3. Open **View study overlap**. Inspect the reported publication-family or
+3. In that mode, open **View study overlap**. Inspect the reported publication-family or
    shared-resource signals. Two versions of one publication do not supply
    two independent studies. An unknown independent-study count remains
    unknown until the available provenance supports a stronger conclusion.

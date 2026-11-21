@@ -266,7 +266,7 @@ def restored_state(default: ChatState, saved: dict) -> ChatState:
         raise ValueError("Saved chat has an invalid backend")
     if state.task not in {"auto", "answer", "gaps", "hypothesis", "sources"} or state.preset not in ask_corpus.PRESETS:
         raise ValueError("Saved chat has invalid task/preset settings")
-    if state.evidence_selector not in {"current", "trace_flow"}:
+    if state.evidence_selector not in {"research", "current", "trace_flow"}:
         raise ValueError("Saved chat has an invalid evidence selector")
     return state
 
@@ -338,9 +338,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-score", type=float, default=0.0)
     parser.add_argument(
         "--evidence-selector",
-        choices=["current", "trace_flow"],
-        default="trace_flow",
-        help="Default to fail-closed scientific-origin auditing; current is the paper-count baseline.",
+        choices=["research", "current", "trace_flow"],
+        default="research",
+        help="Read papers by default. Use trace_flow for a separate scientific-origin audit.",
     )
     parser.add_argument("--trace-lineage-graph")
     parser.add_argument("--trace-token-budget", type=int, default=8000)
@@ -379,7 +379,7 @@ def handle_command(command: str, state: ChatState, session_dir: Path,
         state.preset = value
         print(f"preset={state.preset}")
         return True
-    if name == "/selector" and value in {"current", "trace_flow"}:
+    if name == "/selector" and value in {"research", "current", "trace_flow"}:
         state.evidence_selector = value
         print(f"evidence_selector={state.evidence_selector}")
         return True
@@ -473,8 +473,8 @@ def print_chat_help(ui: TerminalUI | None = None, *, topic: str = "") -> None:
              "Choose a backend that is already configured"),
             ("/preset NAME", " | ".join(sorted(ask_corpus.PRESETS)) +
              "\nChoose retrieval and answer settings"),
-            ("/selector NAME", "trace_flow | current\n"
-             "Origin-aware selection or the legacy paper-count baseline"),
+            ("/selector NAME", "research | trace_flow | current\n"
+             "Read papers, audit study origins, or use the legacy baseline"),
             ("/repair N", "Maximum answer-repair attempts; 0 disables repair"),
         ]),
         ("Shell options", [

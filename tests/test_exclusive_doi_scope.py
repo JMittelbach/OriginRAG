@@ -127,7 +127,7 @@ def test_missing_report_never_substitutes_same_journal_hits(corpus, doi, expecte
 
 
 @pytest.mark.parametrize("fixed_pool", [False, True])
-@pytest.mark.parametrize("selector", ["current", "trace_flow"])
+@pytest.mark.parametrize("selector", ["current", "trace_flow", "research"])
 def test_exclusive_scope_precedes_answer_evidence_selection(
     corpus, tmp_path, monkeypatch, fixed_pool, selector,
 ):
@@ -144,14 +144,41 @@ def test_exclusive_scope_precedes_answer_evidence_selection(
         pool = tmp_path / "candidates.jsonl"
         pool.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
         args.candidate_pool = str(pool)
+    if selector == "research":
+        monkeypatch.setattr(ask_corpus, "run_trace_selection", lambda *a, **k: pytest.fail("Unexpected origin audit"))
     result = ask_corpus.run_question(args, tmp_path / "run")
 
     assert {row["paper_id"] for row in result["results"]} == {"TARGET"}
     assert {row["paper_id"] for row in result["pack"]["chunks"]} <= {"TARGET"}
     assert result["pack"]["requested_report_scope"]["doi"] == DOI
+    if selector == "research":
+        assert result["research_fallback"] == "passages"
+        assert "database query latency" in result["answer_path"].read_text().lower()
+        assert "trace_sufficiency_certificate" not in result["pack"]
     saved = json.loads((tmp_path / "run" / "run_config.json").read_text())
     assert saved["requested_report_scope"]["scope_only_not_evidence_sufficiency"] is True
     assert saved["answer_call_performed"] is False
+
+
+def test_research_reads_named_report_without_using_other_reports_or_a_rejected_draft(corpus, tmp_path, monkeypatch):
+    chunks, metadata, _ = corpus
+    metadata.with_name("paper_registry.tsv").write_text("paper_id\tauthor\nTARGET\tSmith\nOTHER\tJones\n")
+    monkeypatch.setattr(sys, "argv", [
+        "ask_corpus.py", "Did the study by Smith et al. measure database query latency?",
+        "--chunks-dir", str(chunks), "--papers", str(metadata), "--backend", "none",
+    ])
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **k: pytest.fail("Scoped lookup ran the planner"))
+    monkeypatch.setattr(ask_corpus, "run_trace_selection", lambda *a, **k: pytest.fail("Reading ran the audit"))
+    def invalid_draft(**kwargs):
+        assert kwargs["evidence_is_sufficient"] and not kwargs["force_answer"]
+        return ask_corpus.LLMResult(backend="qwen", answer="Fabricated result."), {"passed": False}, [], {}
+    monkeypatch.setattr(ask_corpus, "generate_with_qc_repair", invalid_draft)
+    result = ask_corpus.run_question(ask_corpus.parse_args(), tmp_path / "reading")
+    assert result["pack"]["research_paper_id"] == "TARGET"
+    assert {p["paper_id"] for p in result["pack"]["chunks"]} == {"TARGET"}
+    assert result["research_fallback"] == "passages"
+    assert "Fabricated result" not in result["answer_path"].read_text()
+    assert result["rejected_answer_path"].read_text().strip() == "Fabricated result."
 
 
 def test_original_exclusive_scope_survives_preparation_that_drops_only_marker(corpus, tmp_path, monkeypatch):

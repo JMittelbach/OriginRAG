@@ -219,7 +219,9 @@ class SessionStore:
             result = {"answer_qc": {"passed": config.get("answer_qc_passed")}}
 
 
-            if config.get("answer_withheld_by_lineage_certificate"):
+            if config.get("research_fallback") in {"passages", "no_passage"}:
+                result["answer_path"] = directory / "research_reading.md"
+            elif config.get("answer_withheld_by_lineage_certificate"):
                 result["withheld_answer_path"] = directory / "answer_withheld.md"
             elif config.get("answer_partial_by_lineage_certificate"):
                 result["partial_answer_path"] = directory / "answer_partial.md"

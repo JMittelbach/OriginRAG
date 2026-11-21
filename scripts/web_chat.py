@@ -142,7 +142,7 @@ TITLE_STOPWORDS = {
 PUBLIC_SOURCE_LIMIT = 30
 AUTO_TRACE_MAX_CLAIMS = 12
 AUTO_TRACE_MAX_CARRIERS = 16
-WEB_EVIDENCE_SELECTORS = {"current", "trace_flow"}
+WEB_EVIDENCE_SELECTORS = {"research", "current", "trace_flow"}
 
 
 
@@ -202,7 +202,7 @@ class WebChatSettings:
     max_chars_per_chunk: int | None = None
     min_score: float = 0.0
     profile_instruction: str | None = None
-    evidence_selector: str = "trace_flow"
+    evidence_selector: str = "research"
     retriever: str = "bm25"
     retrieval_index: str = "data/indexes/pfempire_fts.sqlite"
     trace_lineage_graph: str | None = None
@@ -636,8 +636,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--evidence-selector",
         choices=sorted(WEB_EVIDENCE_SELECTORS),
-        default="trace_flow",
-        help="Use the conservative lineage-aware audit by default or request the standard baseline explicitly.",
+        default="research",
+        help="Search papers by default; use trace_flow for the separate scientific-origin audit.",
     )
     parser.add_argument(
         "--trace-lineage-graph",
@@ -3259,10 +3259,9 @@ def serialize_turn_result(
         sources = attach_automatic_paper_search_traces(sources)
     if resolved_task != "sources" and answer_path and Path(answer_path).exists():
         raw_answer = Path(answer_path).read_text(encoding="utf-8")
-        answer = public_answer_text(
-            raw_answer,
-            chunks=list(pack.get("chunks", [])),
-        )
+        chunks = list(pack.get("chunks", []))
+        answer = (replace_internal_citations(raw_answer, chunks).strip() if result.get("research_fallback")
+                  else public_answer_text(raw_answer, chunks=chunks))
 
 
 
@@ -3346,12 +3345,18 @@ def serialize_turn_result(
         )
     claim_source_chains = (
         build_automatic_claim_source_chains(raw_answer, pack)
-        if resolved_task != "sources" and raw_answer
+        if resolved_task != "sources" and raw_answer and not result.get("research_fallback")
         else []
     )
     return {
         "answer": answer,
-        "answer_state": answer_state,
+        "answer_state": result.get("research_fallback") or answer_state,
+        "research_mode": bool(pack.get("research_mode")),
+        "cited_passages": [
+            {k: chunk.get(k) for k in ("evidence_id", "paper_id", "title", "page_range", "section", "text")}
+            for chunk in pack.get("chunks", [])
+            if chunk.get("text") and chunk.get("evidence_id") in cited_ids
+        ] if pack.get("research_mode") and raw_answer and not result.get("research_fallback") else [],
         "qc": qc,
         "attempts": attempts,
         "task": resolved_task,
@@ -4218,6 +4223,8 @@ def replace_internal_citations(answer: str, chunks: list[dict]) -> str:
         return f"({'; '.join(labels)})"
 
     text = re.sub(r"\((?:\s*E\d{3}\s*[;,]?\s*)+\)", replace_group, text)
+    text = re.sub(r"(?<!\[)\[(E\d{3})\](?!\])",
+                  lambda m: f"[[cite:{m[1]}]]" if m[1] in chunk_by_id else m[0], text)
     return re.sub(
         r"(?<!\[)\bE\d{3}\b(?!\])",
         lambda match: f"[[cite:{match.group(0)}]]",
@@ -7004,7 +7011,7 @@ INDEX_HTML = r"""<!doctype html>
       </div>
       <input id="backend" type="hidden" value="qwen" />
       <input id="preset" type="hidden" value="pro" />
-      <input id="evidenceSelector" type="hidden" value="trace_flow" />
+      <input id="evidenceSelector" type="hidden" value="research" />
       <input id="repair" type="hidden" value="1" />
       <input id="category" type="hidden" value="" />
       <input id="fallback" type="checkbox" hidden checked />
@@ -7768,6 +7775,27 @@ INDEX_HTML = r"""<!doctype html>
         summary.appendChild(makePill("Citation check failed", "bad"));
       } else {
         summary.appendChild(makePill("Citations not checked"));
+      }
+      if (data.research_mode) {
+        if (data.cited_passages?.length) {
+          const panel = document.createElement("details");
+          panel.className = "sources-box";
+          const heading = document.createElement("summary");
+          heading.textContent = `Read cited passages · ${data.cited_passages.length}`;
+          panel.appendChild(heading);
+          for (const passage of data.cited_passages) {
+            const label = document.createElement("p");
+            label.textContent = [passage.title || passage.paper_id, passage.section,
+              passage.page_range && passage.page_range !== "?" ? `p. ${passage.page_range}` : ""].filter(Boolean).join(" · ");
+            const quote = document.createElement("blockquote");
+            quote.textContent = passage.text;
+            panel.append(label, quote);
+          }
+          box.appendChild(panel);
+        }
+        if ((data.sources || []).length && data.answer_state !== "no_passage") box.appendChild(buildSourcesPanel(data.sources));
+        box.appendChild(buildAnswerDetails(summary));
+        return box;
       }
       const warnings = buildAnswerWarnings(data);
       if (warnings.childElementCount) box.appendChild(warnings);

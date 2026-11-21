@@ -1119,7 +1119,7 @@ def test_authenticated_turn_settings_keep_server_owned_paths_and_policy() -> Non
     assert merged.repair_attempts == 1
     assert merged.template_fallback is True
     assert merged.preset == "pro"
-    assert merged.evidence_selector == "trace_flow"
+    assert merged.evidence_selector == base.evidence_selector == "research"
     assert merged.task == "auto"
     assert merged.category is None
     assert merged.profile_instruction == "Use a compact table."
@@ -1325,7 +1325,7 @@ def test_authenticated_chat_payload_cannot_override_server_settings(
     assert effective.repair_attempts == 1
     assert effective.template_fallback is True
     assert effective.preset == "pro"
-    assert effective.evidence_selector == "trace_flow"
+    assert effective.evidence_selector == "research"
     assert effective.task == "auto"
     assert effective.category is None
     assert effective.profile_instruction == "Use a compact table."
@@ -2295,13 +2295,13 @@ def test_build_ask_args_uses_fast_deterministic_planner_for_normal_answers() -> 
     assert args.repair_attempts == 2
 
 
-def test_web_answers_default_to_fail_closed_lineage_audit() -> None:
+def test_web_answers_default_to_research_reading() -> None:
     settings = WebChatSettings()
 
     args = build_ask_args(settings, "A question", "answer")
 
-    assert settings.evidence_selector == "trace_flow"
-    assert args.evidence_selector == "trace_flow"
+    assert settings.evidence_selector == web_chat.parse_args([]).evidence_selector == "research"
+    assert args.evidence_selector == "research"
 
 
 def test_build_ask_args_forwards_lineage_audit_without_forcing_an_answer() -> None:
@@ -2373,6 +2373,9 @@ def test_build_ask_args_allows_planner_only_for_topical_paper_discovery() -> Non
 
 
 def test_public_answer_replaces_internal_ids_with_paper_citations() -> None:
+    assert web_chat.replace_internal_citations(
+        "In one report [E001].", [{"paper_id": "A", "evidence_id": "E001"}],
+    ) == "In one report [[cite:E001]]."
     answer = "Finding one (E001; E002).\n\n## References\n- E001: First\n- E002: Second"
     rendered = public_answer_text(
         answer,
@@ -2880,6 +2883,10 @@ A related mechanism may help explain the result (E002).
         source["evidence_ids"][0]: source["cited"] for source in public["sources"]
     }
     assert cited_by_id == {"E001": True, "E002": True, "E003": False}
+    research = serialize_turn_result({**result, "pack": {**result["pack"], "research_mode": True}},
+                                     tmp_path, "Question", "answer")
+    assert [(p["evidence_id"], p["text"]) for p in research["cited_passages"]] == [
+        (p["evidence_id"], p["text"]) for p in result["pack"]["chunks"][:2]]
     assert public["assurance"]["cited_report_count"] == 2
     assert public["assurance"]["detected_publication_family_links"] == 1
     assert public["assurance"]["publication_family_upper_bound"] == 1
@@ -3208,7 +3215,7 @@ def test_web_ui_exposes_one_auto_routed_chat_and_accessible_assurance_controls()
     assert '.session-menu.open {' in html
     assert "position: fixed;" in html
     assert 'id="evidenceSelector"' in html
-    assert 'value="trace_flow"' in html
+    assert 'id="evidenceSelector" type="hidden" value="research"' in html
     assert 'role="log"' in html
     assert 'aria-live="polite"' in html
     assert 'id="message"' in html

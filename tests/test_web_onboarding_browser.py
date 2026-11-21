@@ -138,6 +138,22 @@ def browser_page(tmp_path, request):
         browser.close()
 
 
+def test_research_chat_displays_cited_text_not_an_audit(browser_page):
+    page, _, _, _ = browser_page
+    page.locator("#guideSkip").click()
+    page.evaluate("sessionStorage.setItem('pfempire.currentSession', 'sample')")
+    result = {"task": "answer", "answer_state": "answered", "research_mode": True, "sources": [],
+              "cited_passages": [{"paper_id": "A", "title": "Instrument calibration", "page_range": "4",
+                                  "section": "methods", "text": "Calibration was performed with two sensors."}]}
+    page.route("**/api/session?*", lambda route: route.fulfill(json={
+        "session_dir": "sample", "messages": [{"role": "assistant", "text": "Two sensors.", "result": result}]}))
+    page.reload()
+    page.get_by_text("Read cited passages · 1").click()
+    assert page.get_by_text("Instrument calibration · methods · p. 4").is_visible()
+    assert page.get_by_text("Calibration was performed with two sensors.").is_visible()
+    assert not page.get_by_text("More evidence needed", exact=True).is_visible()
+
+
 def test_first_visit_replay_and_account_specific_completion(browser_page):
     page, state, requests, tmp = browser_page
     assert "Your library is empty" in page.locator("#guideText").inner_text()

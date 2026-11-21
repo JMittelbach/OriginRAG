@@ -26,6 +26,7 @@ from originrag.analysis.answer_format import normalize_answer_format  # noqa: E4
 from originrag.analysis.chat import model_requests_bibliography  # noqa: E402
 from originrag.analysis.question_understanding import named_method_subject, understand_question, understanding_plan  # noqa: E402
 from originrag.retrieval.method_description import contains_flattened_table, describes_named_method  # noqa: E402
+from originrag.retrieval.research_passages import reading_passages, reading_result, report_author  # noqa: E402
 from originrag.analysis.corpus_inventory import extract_inventory  # noqa: E402
 from originrag.summaries.reading_card import summary_request, load_paper, create_card, card_markdown  # noqa: E402
 from originrag.analysis.answer_backends import (  # noqa: E402
@@ -433,13 +434,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--evidence-selector",
-        choices=["current", "topk", "mmr", "trace_no_lineage", "trace", "trace_flow", "trace_flow_no_anchor", "trace_flow_unbounded", "trace_flow_relevance_reserve", "trace_flow_diverse_reserve"],
-        default="trace_flow",
-        help=(
-            "Evidence composition layer. The default lineage-aware route treats missing origin "
-            "relations as uncertainty and withholds unsupported answers; use current explicitly "
-            "for the established paper-count baseline."
-        ),
+        choices=["research", "current", "topk", "mmr", "trace_no_lineage", "trace", "trace_flow", "trace_flow_no_anchor", "trace_flow_unbounded", "trace_flow_relevance_reserve", "trace_flow_diverse_reserve"],
+        default="research",
+        help="Search and read papers by default. Select trace_flow for a strict scientific-origin audit.",
     )
     parser.add_argument("--trace-config", default="config/trace_rag.yaml")
     parser.add_argument("--trace-blueprint")
@@ -528,11 +525,24 @@ def run_question(
     task = str(getattr(args, "task", "answer") or "answer")
     method_subject = named_method_subject(user_question) if task == "answer" else ""
     exclusive_report_doi = exclusive_single_report_doi(user_question) if task == "answer" else None
+    scoped_paper = None
+    direct_reading = (getattr(args, "evidence_selector", None) == "research" and task == "answer"
+                      and not getattr(args, "candidate_pool", None) and not getattr(args, "adaptive", False))
+    if (direct_reading
+            and not extract_explicit_dois(user_question) and (author_year := report_author(user_question))):
+        author, year = author_year
+        matches = [pid for pid, row in load_paper_metadata(papers_tsv).items()
+                   if normalize_text(row.get("author") or "") == normalize_text(author)
+                   and (not year or year == row.get("year"))
+                   and (not args.category or args.category == row.get("category"))]
+        if len(matches) != 1:
+            raise ValueError("I couldn’t identify a unique first-author match in this catalogue. Please add the paper title or DOI.")
+        scoped_paper = matches[0]
     requested_report_scope = None
     understanding = {"status": "not_requested"}
     inventory_mode = False
     configured_model_backend = str(getattr(args, "configured_answer_backend", args.backend))
-    if (getattr(args, "understand_question", False)
+    if (getattr(args, "understand_question", False) and not scoped_paper
             and configured_model_backend in {"qwen", "ollama", "deepseek"}
             and not (task == "sources" and classify_paper_search_mode(user_question) == "targeted_lookup")
             and not getattr(args, "candidate_pool", None)
@@ -550,7 +560,8 @@ def run_question(
                                        "invalid_normalized_question", "invalid_search_queries", "invalid_search_query",
                                        "invalid_intent", "invalid_language", "ollama_returned_empty_response",
                                        "ollama_incomplete_response"))
-        if understanding["status"] != "ready" and (malformed or (task == "sources" and understanding["status"] == "unavailable")):
+        if understanding["status"] != "ready" and (malformed or
+                ((task == "sources" or direct_reading) and understanding["status"] == "unavailable")):
             understanding["fallback"] = "rule_based_original_query"
             args.planner_backend = "rule_based"
             progress("Searching with your original wording")
@@ -626,12 +637,13 @@ def run_question(
     max_per_paper = settings["max_per_paper"]
     max_chars_per_chunk = settings["max_chars_per_chunk"]
     evidence_selector = str(getattr(args, "evidence_selector", "current") or "current")
+    research_chat = evidence_selector == "research" and task == "answer"
     candidate_max_per_paper = candidate_passage_limit(
         task=task,
         evidence_selector=evidence_selector,
         max_per_paper=max_per_paper,
     )
-    if evidence_selector != "current" and method_subject:
+    if evidence_selector not in {"current", "research"} and method_subject:
         # Keep a definition and evaluation passages in contention under the same overall budget.
         candidate_max_per_paper = max(8, candidate_max_per_paper)
     candidate_limit = max(evidence_limit, evidence_limit * max(candidate_multiplier, 1))
@@ -649,7 +661,21 @@ def run_question(
         if getattr(args, "candidate_pool", None)
         else None
     )
-    if candidate_pool_path is not None:
+    if scoped_paper:
+        progress("Searching the named paper")
+        query_plan = plan_queries(user_question, planner_backend="rule_based", task=task)
+        retrieval_queries = retrieval_queries_from_plan(query_plan)
+        _, rows = load_paper(scoped_paper, papers_tsv, chunks_dir)
+        results = search_chunks(
+            user_question, chunks_dir, papers_tsv, paper_id=scoped_paper, category=args.category,
+            candidate_records=tuple((scoped_paper + ".jsonl", i, row) for i, row in enumerate(rows, 1)
+                                    if row.get("paper_id") == scoped_paper),
+            limit=evidence_limit, max_per_paper=evidence_limit, include_low_quality=args.include_low_quality,
+            exclude_tables=args.exclude_tables, exclude_figures=args.exclude_figures,
+            exclude_supplement=args.exclude_supplement, min_score=args.min_score, query_mode=args.query_mode,
+            prefer_sections=["methods", "abstract"] if re.search(r"\b(methods?|measured|compared|methode\w*|gemessen)\b", user_question, re.I) else None,
+        )
+    elif candidate_pool_path is not None:
         query_plan = plan_queries(
             retrieval_question,
             task_mode=getattr(args, "task_mode", "evidence_qa"),
@@ -829,7 +855,7 @@ def run_question(
     trace_token_budget = int(getattr(args, "trace_token_budget", None) or 8000)
     named_study_context_support: list[dict] = []
     named_study_context_reserved_tokens = 0
-    if evidence_selector != "current":
+    if evidence_selector not in {"current", "research"}:
         progress("Selecting evidence and auditing study origins")
         if task == "answer":
             answer_context_budget = plan_answer_context(args, user_question)
@@ -905,6 +931,13 @@ def run_question(
         evidence_results = merge_selected_named_study_context(
             trace_result["selected_results"],
             named_study_context_support,
+        )
+    elif research_chat:
+        progress("Finding passages for the answer")
+        answer_context_budget = plan_answer_context(args, user_question)
+        evidence_results, answer_context_selection = budget_answer_candidates(
+            results, question=answer_question, max_chars_per_chunk=max_chars_per_chunk,
+            budget=answer_context_budget, max_candidates=evidence_limit, exploration_multiplier=1,
         )
     else:
         evidence_results = results
@@ -1163,7 +1196,7 @@ def run_question(
     lineage_context_by_paper: dict[str, list[dict]] = {}
     for chunk in pack.get("chunks", []):
         paper_id = str(chunk.get("paper_id") or "")
-        if paper_id and paper_id not in design_context_by_paper:
+        if not research_chat and paper_id and paper_id not in design_context_by_paper:
             lineage_context_by_paper[paper_id] = load_document_lineage_context(
                 chunks_dir, paper_id
             )
@@ -1196,7 +1229,7 @@ def run_question(
         paper_id = str(chunk.get("paper_id") or "")
         if paper_id and paper_id not in distinct_papers:
             distinct_papers[paper_id] = chunk
-    pack["automatic_lineage_signals"] = [
+    pack["automatic_lineage_signals"] = [] if research_chat else [
         signal.model_dump(mode="json")
         for signal in suggest_lineage_signals(
             list(distinct_papers.values()), lineage_context
@@ -1204,6 +1237,10 @@ def run_question(
     ]
     evidence_grade = grade_evidence_pack(pack)
     pack["normalized_question"] = answer_question
+    if evidence_selector == "research":
+        pack["research_mode"] = True
+        if scoped_paper:
+            pack["research_paper_id"] = scoped_paper
     pack["question"] = user_question
     pack["question_understanding"] = understanding
     if requested_report_scope is not None:
@@ -1327,7 +1364,13 @@ def run_question(
         evidence_is_sufficient=evidence_is_sufficient,
     )
     pack["provisional_synthesis_authorized"] = provisional_synthesis
+    may_answer = bool(pack.get("chunks")) if research_chat else evidence_is_sufficient or provisional_synthesis
+    repair_limit = max(0, int(args.repair_attempts or 0))
     profile_instruction = str(getattr(args, "profile_instruction", "") or "")
+    if research_chat:
+        profile_instruction += ("\nAnswer the specific research question using the cited passages. "
+                                "For a question about one report, describe what that report says. "
+                                "Distinguish observations from inference and do not imply independent replication.")
 
 
     if getattr(args, "conversation_context", None):
@@ -1415,13 +1458,13 @@ def run_question(
             initial_prompt=prompt,
             evidence_pack=pack,
             output_dir=output_dir,
-            max_repair_attempts=max(0, int(args.repair_attempts or 0)),
-            use_template_fallback=not args.no_template_fallback,
+            max_repair_attempts=min(1, repair_limit) if research_chat else repair_limit,
+            use_template_fallback=not args.no_template_fallback and not research_chat,
             profile_instruction=profile_instruction,
             answer_model=getattr(args, "answer_model", None),
             answer_temperature=float(getattr(args, "answer_temperature", 0.0) or 0.0),
             answer_timeout=int(getattr(args, "answer_timeout", 120) or 120),
-            evidence_is_sufficient=(evidence_is_sufficient or provisional_synthesis),
+            evidence_is_sufficient=may_answer,
             force_answer=bool(getattr(args, "force_answer", False)),
         )
     progress("Validating claims and citations")
@@ -1446,7 +1489,13 @@ def run_question(
     final_withheld_answer_path = None
     answer_withheld_reason = None
     final_partial_answer_path = final_answer_path if provisional_synthesis else None
-    if qc_rejected_path is not None:
+    research_fallback = None
+    if pack.get("research_mode") and task != "sources" and final_answer_path is None and effective_answer_backend != "queue":
+        hits = reading_passages(answer_question, pack.get("chunks", []))
+        research_fallback = "passages" if hits else "no_passage"
+        final_answer_path = output_dir / "research_reading.md"
+        final_answer_path.write_text(reading_result(hits) + "\n", encoding="utf-8")
+    elif qc_rejected_path is not None:
         withheld_answer_path.write_text(build_qc_withheld_answer(answer_qc) + "\n", encoding="utf-8")
         final_withheld_answer_path = withheld_answer_path
         answer_withheld_reason = "answer_quality_check"
@@ -1642,7 +1691,7 @@ def run_question(
         "repair_attempts_requested": max(0, int(args.repair_attempts or 0)),
         "repair_attempts_used": sum(1 for attempt in answer_attempts if attempt.get("kind") == "repair"),
         "repair_stop_reason": answer_backend_meta.get("repair_stop_reason"),
-        "template_fallback_enabled": not args.no_template_fallback,
+        "template_fallback_enabled": not args.no_template_fallback and not research_chat,
         "template_fallback_used": any(
             attempt.get("kind") == "template_fallback" for attempt in answer_attempts
         ),
@@ -1670,6 +1719,9 @@ def run_question(
         "evidence_grade": evidence_grade.get("grade"),
         "min_evidence_grade": getattr(args, "min_evidence_grade", "usable"),
         "evidence_sufficient_for_answer": evidence_is_sufficient,
+        "research_reading": research_chat,
+        "research_fallback": research_fallback,
+        "generation_eligible": may_answer,
         "retrieval_evidence_sufficient_for_synthesis": retrieval_evidence_is_sufficient,
         "force_answer": bool(getattr(args, "force_answer", False)),
         "evidence_pack_score": evidence_grade.get("score"),
@@ -1792,6 +1844,7 @@ def run_question(
         "evidence_table_md_path": evidence_table_md_path,
         "prompt_path": prompt_path,
         "answer_path": final_answer_path,
+        "research_fallback": research_fallback,
         "partial_answer_path": final_partial_answer_path,
         "withheld_answer_path": final_withheld_answer_path,
         "rejected_answer_path": final_rejected_path,
@@ -7236,7 +7289,7 @@ def candidate_passage_limit(
     """
 
     configured = max(1, int(max_per_paper))
-    if task == "answer" and evidence_selector != "current":
+    if task == "answer" and evidence_selector not in {"current", "research"}:
         return max(4, configured)
     return configured
 

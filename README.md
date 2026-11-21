@@ -92,7 +92,11 @@ accessible PDFs. Accepted papers are organised and indexed in the background.
 They become searchable when the update finishes; uncertain imports are flagged
 for review. Catalogue-only entries are not full-text papers.
 
-Ask a question in chat, open the cited passages and inspect the evidence status.
+Ask a question in chat and open the cited passages. You can ask what a single
+paper did without needing a second study to corroborate its methods.
+**Read cited passages** shows the text behind an answer, with pages where available. If a
+summary cannot be verified, chat shows matching extracts when available.
+The stricter study-overlap audit is optional: `./web --evidence-selector trace_flow`.
 For a reading list, try “Show me the five newest papers on microscopy” or
 “Find five papers on microscopy since 2022”. “Five more” keeps the same dates
 and skips papers already shown. Dates are publication years in your catalogue.
