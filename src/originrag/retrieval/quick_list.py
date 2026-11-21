@@ -1,10 +1,38 @@
 """Recognise simple bibliography requests. More specific questions keep the normal retriever."""
 
 from dataclasses import dataclass
+import heapq
 import re
 import sqlite3
 import unicodedata
 from originrag.analysis.chat_commands import controls
+
+
+_AUTHOR = re.compile(r"(?<![\w-])([^\W\d_]+(?:[-’'][^\W\d_]+)*)\s+et\s+al\b", re.I)
+
+
+def named_catalogue_request(question):
+    """An explicit presence check, or a potentially ambiguous author/year methods question."""
+    text = " ".join(question.strip().rstrip("?! .").split())
+    authors = _AUTHOR.findall(text)
+    if len(authors) != 1:
+        return None
+    name = re.escape(authors[0]) + r"\s+et\s+al\.?"
+    subject = rf"(?:{name} (?:paper|article|study)|(?:paper|article|study) by {name})(?: (?:on|about|from) [\w ’'–-]+)?"
+    de_subject = rf"(?:(?:paper|artikel|studie) von {name}|{name} (?:paper|artikel|studie))(?: (?:zu|über|von) [\w ’'–-]+)?"
+    presence = bool(re.fullmatch(
+        rf"(?:is|do (?:you|we|i) have) (?:the )?{subject} in (?:my|our|the) (?:corpus|library)"
+        rf"|(?:ist|haben wir|hast du) (?:das |der |die )?{de_subject} (?:im (?:korpus|bestand)|in (?:der|meiner|unserer) bibliothek)",
+        text, re.I)) and not re.search(r"\b(?:and (?:tell|explain|summarize)|und (?:erklär\w*|fass\w*))\b", text, re.I)
+    years = re.findall(r"\b[12][0-9]{3}\b", text)
+    if len(years) > 1:
+        return None
+    methods = (years and re.search(r"\b(?:paper|article|study|studie|artikel)\b", text, re.I)
+               and re.search(r"\b(?:methods?|methoden?|verfahren)\b", text, re.I)
+               and not re.search(r"\b(?:other|others|andere\w*|across|literature|papers|studies|studien)\b", text, re.I))
+    if not presence and not methods:
+        return None
+    return authors[0], years[0] if years else "", presence
 
 
 @dataclass(frozen=True)
@@ -12,6 +40,13 @@ class PaperList:
     topic: str
     limit: int
     language: str
+    newest: bool = False
+    since: int = 0
+
+
+def publication_year(row):
+    year = str(row.get("year") or "").strip()
+    return int(year) if re.fullmatch(r"[12][0-9]{3}", year) else 0
 
 
 _COUNTS = dict(zip("one two three four five six seven eight nine ten".split(), range(1, 11)))
@@ -49,9 +84,9 @@ def more_list_request(message):
     return None
 _REQUESTS = {
     "en": re.compile(r"(?:(?:hey[, ]+)?(?:(?:can|could|would) you )?(?:please )?(?:give|show|find|list|suggest|recommend)(?: me)? )?"
-                     + _COUNT + r"(?:papers?|articles?|studies) (?:on|about|covering) (?P<topic>.+)", re.I),
+                     + r"(?:the )?" + _COUNT + r"(?:(?P<recent>latest|newest|most recent|recent|newer) )?(?:papers?|articles?|studies) (?:on|about|covering) (?P<topic>.+)", re.I),
     "de": re.compile(r"(?:(?:hey[, ]+)?(?:kannst du )?(?:bitte )?(?:gib|gibst du|zeig[e]?|finde|liste|nenn[e]?)(?: mir)? (?:bitte )?)?"
-                     + _COUNT + r"(?:papers?|artikel|studien) (?:zu[mr]?|über|ueber) (?P<topic>.+)", re.I),
+                     + r"(?:die )?" + _COUNT + r"(?:(?P<recent>neuesten?|neusten?|neuere[n]?|aktuell(?:e|en|sten)) )?(?:papers?|artikel|studien) (?:zu[mr]?|über|ueber) (?P<topic>.+)", re.I),
     "fr": re.compile(r"(?:(?:montre|donne|trouve)(?:-moi| moi)? )?" + _COUNT
                      + r"(?:articles?|études?|papers?) sur (?P<topic>.+)", re.I),
     "es": re.compile(r"(?:(?:dame|busca|muéstrame|muestra)(?:me)? )?" + _COUNT
@@ -76,6 +111,14 @@ def paper_list_request(message):
         if not match:
             continue
         topic = match["topic"]
+        newest = bool(match.groupdict().get("recent"))
+        since = 0
+        date_pattern = {"en": r"\s+(?:published\s+)?(since|after)\s+([12][0-9]{3})$",
+                        "de": r"\s+(seit|ab|nach)\s+([12][0-9]{3})$"}.get(language)
+        if date_pattern and (date := re.search(date_pattern, topic, re.I)):
+            since = int(date[2]) + int(date[1].casefold() in {"after", "nach"})
+            topic = topic[:date.start()].strip()
+            newest = True
         # A second instruction, filter, or relative clause needs interpretation.
         if (not re.fullmatch(r"[\w /+’'–-]{1,140}", topic)
                 or len(topic.split()) > 12 or re.search(
@@ -87,7 +130,7 @@ def paper_list_request(message):
                     r"luego|después|dime|indica\w*|que|resum\w*|explica\w*|compara\w*|sin|excepto|desde|antes|no|ni|pas)\b", topic, re.I)):
             return None
         count = (match["count"] or "10").casefold()
-        return PaperList(topic, int(count) if count.isdecimal() else _COUNTS[count], language)
+        return PaperList(topic, int(count) if count.isdecimal() else _COUNTS[count], language, newest, since)
     return None
 
 
@@ -111,6 +154,8 @@ def indexed_list_ids(request, index, chunks, papers, *, eligible, limit):
     """Return ranked distinct IDs; None means full text could not be searched."""
     from originrag.retrieval.fts_index import RetrievalIndexError, ensure_current_index
     from originrag.retrieval.index_cache import RetrievalIndexCacheError, resolve_read_bundle
+    if limit <= 0:
+        return []
     words = _words(request.topic)
     terms = list(dict.fromkeys(w for w in words if w not in {"the", "of", "and", "in", "der", "die", "das", "und", "von"}))
     if not terms or not index.is_file():
@@ -127,17 +172,27 @@ def indexed_list_ids(request, index, chunks, papers, *, eligible, limit):
             )
             selected = []
             selected_ids = set()
+            newest_hits = []
             required = frozenset(terms)
-            for paper_id, rowid in matches:
+            for rank, (paper_id, rowid) in enumerate(matches):
                 if paper_id not in eligible or paper_id in selected_ids:
                     continue
+                if request.newest:
+                    year = publication_year(eligible[paper_id])
+                    if year < max(1, request.since) or (len(newest_hits) == limit and year <= newest_hits[0][0]):
+                        continue
                 title, text = db.execute("SELECT title, text FROM chunk_fts WHERE rowid=?", (rowid,)).fetchone()
                 if _body_match(text or "", title or "", required):
                     selected_ids.add(paper_id)
+                    if request.newest:
+                        heapq.heappush(newest_hits, (year, -rank, paper_id))
+                        if len(newest_hits) > limit:
+                            heapq.heappop(newest_hits)
+                        continue
                     selected.append(paper_id)
                     if len(selected) == limit:
                         break
-            return selected
+            return [pid for _, _, pid in sorted(newest_hits, reverse=True)] if request.newest else selected
         finally:
             db.close()
     except (OSError, sqlite3.Error, RetrievalIndexError, RetrievalIndexCacheError):

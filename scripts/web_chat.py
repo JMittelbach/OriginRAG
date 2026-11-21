@@ -313,9 +313,10 @@ class WebChatApp:
                 target_session,
                 infer_session_title(clean_message, resolved_task),
             )
-            from originrag.retrieval.quick_list import more_list_request, paper_list_request
+            from originrag.retrieval.quick_list import more_list_request, named_catalogue_request, paper_list_request
 
             language = presence_language(clean_message)
+            named = named_catalogue_request(clean_message) if settings.task == "auto" else None
             listing = paper_list_request(clean_message) if resolved_task == "sources" else None
             selection = reading_selection(clean_message)
             command = controls(clean_message)
@@ -373,15 +374,18 @@ class WebChatApp:
                               "for example: “Summarize the first two papers.”"}
                 else:
                     turn_args.reading_group = [(p["paper_id"], "de" if "zusammen" in group[0].lower() else "en") for p in refs]
-            if direct is None and (language or listing or relative or selection):
+            if direct is None and (language or listing or relative or selection or named):
                 papers = REPO_ROOT / settings.papers
                 catalogue = library_catalog(str(papers.with_name("paper_registry.tsv")), str(papers),
                                             chunks_dir=str(REPO_ROOT / settings.chunks_dir))
                 if language:
                     direct = {"resolved_task": "library_status", "answer": presence_answer(catalogue, language)}
+                elif named:
+                    direct = named_catalogue_answer(named, catalogue, settings.category)
                 elif listing:
                     direct = quick_paper_list(listing, catalogue, settings, seen_ids=seen_ids)
                     direct["list_page"] = {"topic": listing.topic, "limit": listing.limit,
+                                           "newest": listing.newest, "since": listing.since,
                                            "scope": list_scope(settings), "first": not more}
                 else:
                     refs = last_list if selection else prior.get("sources") or []
@@ -1660,6 +1664,24 @@ def list_scope(settings):
     return hashlib.sha256(json.dumps(fields, default=str).encode()).hexdigest()
 
 
+def named_catalogue_answer(named, catalogue, category):
+    author, year, presence = named
+    matches = [p for p in catalogue if _catalog_words(p.get("author") or "") == _catalog_words(author)
+               and (not year or p.get("year") == year) and (not category or p.get("category") == category)]
+    if not matches or (not presence and len(matches) == 1):
+        return None
+    label = f"{author} et al." + (f" ({year})" if year else "")
+    answer = (f"I found this first-author match for {label} in the catalogue:" if len(matches) == 1 else
+              f"I found {len(matches)} first-author matches for {label}. Which title do you mean?")
+    matches = matches[:10]
+    for paper in matches:
+        title = paper["title"]
+        status = "searchable full text" if paper.get("searchable") else "full text not indexed"
+        answer += f"\n- {title} ({paper.get('year') or 'year unknown'}; {status})"
+    return {"resolved_task": "library_status", "answer": answer, "sources": [
+        {k: p.get(k) for k in ("paper_id", "title", "year", "doi", "local_pdf")} for p in matches]}
+
+
 def resume_quick_list(more, saved_turns, settings):
     from originrag.retrieval.quick_list import PaperList
 
@@ -1675,8 +1697,9 @@ def resume_quick_list(more, saved_turns, settings):
         if not result.get("quick_list") or not page or page.get("scope") != scope:
             break
         if request is None:
-            request = PaperList(page["topic"], count or page["limit"], lang)
-        if page["topic"] != request.topic:
+            request = PaperList(page["topic"], count or page["limit"], lang,
+                                page.get("newest", False), page.get("since", 0))
+        if (page["topic"], page.get("newest", False), page.get("since", 0)) != (request.topic, request.newest, request.since):
             break
         seen.update(p["paper_id"] for p in result["sources"])
         if page["first"]:
@@ -1685,25 +1708,35 @@ def resume_quick_list(more, saved_turns, settings):
 
 
 def quick_paper_list(request, catalogue, settings, *, seen_ids=frozenset()):
+    from originrag.retrieval.quick_list import publication_year
+
     if settings.category:
         catalogue = tuple(p for p in catalogue if p.get("category") == settings.category)
     total_catalogue = len(catalogue)
     if seen_ids:
         catalogue = tuple(p for p in catalogue if p["paper_id"] not in seen_ids)
-    page = search_library_catalog(request.topic, limit=request.limit, catalogue=catalogue)
+    if request.newest:
+        catalogue = tuple(p for p in catalogue if publication_year(p) >= max(1, request.since))
+    page = search_library_catalog(request.topic, limit=request.limit, catalogue=catalogue,
+                                  newest_first=request.newest, include_topic_labels=False)
     rows = page["items"]
     ids = {p["paper_id"] for p in rows}
     de = request.language == "de"
     scope = "Katalog" if de else "catalogue"
-    if request.topic and len(rows) < request.limit:
+    if request.topic and (request.newest or len(rows) < request.limit):
         from originrag.retrieval.quick_list import indexed_list_ids
 
-        available = {p["paper_id"]: p for p in catalogue if p["searchable"] and p["paper_id"] not in ids}
+        cutoff = publication_year(rows[-1]) if request.newest and len(rows) == request.limit else 0
+        available = {p["paper_id"]: p for p in catalogue if p["searchable"] and p["paper_id"] not in ids
+                     and (not cutoff or publication_year(p) > cutoff)}
+        slots = request.limit if request.newest else request.limit - len(rows)
         ranked = indexed_list_ids(request, REPO_ROOT / settings.retrieval_index, REPO_ROOT / settings.chunks_dir,
-                                  REPO_ROOT / settings.papers, eligible=available, limit=request.limit - len(rows)) if available else None
+                                  REPO_ROOT / settings.papers, eligible=available, limit=slots) if available else None
         if ranked is not None:
             scope = "Katalog und Volltextindex" if de else "catalogue + full-text index"
             rows.extend(available[k] for k in ranked)
+            if request.newest:
+                rows = sorted(rows, key=publication_year, reverse=True)[:request.limit]
     count = len(rows)
     answer = (f"{count} Treffer zu „{request.topic}“" if de else
               f"{count} {'match' if count == 1 else 'matches'} for “{request.topic}”")
@@ -1714,6 +1747,12 @@ def quick_paper_list(request, catalogue, settings, *, seen_ids=frozenset()):
         elif request.language == "es":
             answer = f"{count} resultado{'s' if count != 1 else ''} para «{request.topic}»"
             scope = "catálogo e índice de texto completo" if "+" in scope else "catálogo"
+        if request.newest:
+            ordering, floor = {"de": ("neuestes Publikationsjahr zuerst", "ab"),
+                               "en": ("newest publication year first", "since"),
+                               "fr": ("années les plus récentes en premier", "depuis"),
+                               "es": ("años más recientes primero", "desde")}[request.language]
+            scope += f"; {ordering}" + (f", {floor} {request.since}" if request.since else "")
         answer += f" ({scope}):" if count else f" ({scope})."
     else:
         total = total_catalogue
@@ -1724,7 +1763,12 @@ def quick_paper_list(request, catalogue, settings, *, seen_ids=frozenset()):
                   "en": f"No more matches in this search ({scope}).",
                   "fr": f"Aucun autre résultat pour cette recherche ({scope}).",
                   "es": f"No hay más resultados para esta búsqueda ({scope})."}[request.language]
-    answer += "".join(f"\n- {p['title']}" + (f" ({p['year']})" if p.get("year") else "") for p in rows)
+    body_label = {"de": "Volltexttreffer", "en": "full-text match", "fr": "texte intégral", "es": "texto completo"}[request.language]
+    for p in rows:
+        labels = [str(p["year"])] if p.get("year") else []
+        if request.topic and p["paper_id"] not in ids:
+            labels.append(body_label)
+        answer += f"\n- {p['title']}" + (f" ({'; '.join(labels)})" if labels else "")
     return {"resolved_task": "sources", "quick_list": True, "answer": answer,
             "sources": [{k: p.get(k) for k in ("paper_id", "title", "year", "doi", "local_pdf")} for p in rows]}
 
@@ -1736,6 +1780,8 @@ def search_library_catalog(
     limit: int = 40,
     scope: str = "",
     catalogue: tuple[dict[str, object], ...] | None = None,
+    newest_first: bool = False,
+    include_topic_labels: bool = True,
 ) -> dict[str, object]:
     """Search author/title metadata deterministically and paginate the result."""
     clean_query = _catalog_text(query).casefold()
@@ -1757,13 +1803,10 @@ def search_library_catalog(
     def match_score(item):
         title = _catalog_words(str(item.get("title") or ""))
         author = _catalog_words(str(item.get("author") or ""))
-        other = " ".join(
-            str(item.get(field) or "").casefold()
-            for field in (
-                "journal", "year", "doi", "paper_id", "category", "collection", "topic",
-                "topic_label", "falciparum_topic", "falciparum_topic_label",
-            )
-        )
+        fields = ("journal", "year", "doi", "paper_id")
+        if include_topic_labels:
+            fields += ("category", "collection", "topic", "topic_label", "falciparum_topic", "falciparum_topic_label")
+        other = " ".join(str(item.get(field) or "").casefold() for field in fields)
         coauthors = _catalog_words(str(item.get("full_authors") or item.get("authors") or ""))
         searchable_text = " ".join((title, author, coauthors, other))
         if not all(token in searchable_text for token in query_tokens):
@@ -1791,6 +1834,9 @@ def search_library_catalog(
         matches = [item for _, item in ranked]
     else:
         matches = list(source)
+    if newest_first:
+        from originrag.retrieval.quick_list import publication_year
+        matches.sort(key=publication_year, reverse=True)
     safe_offset = max(0, int(offset))
     safe_limit = max(1, min(100, int(limit)))
     page = matches[safe_offset : safe_offset + safe_limit]

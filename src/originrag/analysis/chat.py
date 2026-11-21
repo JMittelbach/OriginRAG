@@ -201,6 +201,14 @@ def resolve_chat_task(
         re.search(r"\b10\.\d{4,9}/\S+", question, flags=re.IGNORECASE)
         or re.search(r"\bpm(?:id|cid)\s*[:#]?\s*(?:pmc)?\d+\b", question, flags=re.IGNORECASE)
     )
+    if identifier_lookup and re.search(
+        r"\b(?:which|what) (?:clinical |experimental |statistical )?(?:groups?|cohorts?|methods?|assays?|outcomes?|findings?|results?)\b"
+        r"|\bhow (?:did (?:they|the authors)|was .+? measured|were .+? measured)\b"
+        r"|\bwelche[rsn]? (?:klinischen? |statistischen? )?(?:gruppen|kohorten|methoden?|ergebnisse)\b"
+        r"|\bwie (?:wurde[n]? .+? gemessen|haben (?:sie|die autoren))\b",
+        lowered,
+    ):
+        return "answer"
     structured_source_request = any(
         re.search(pattern, lowered) for pattern in SOURCE_LOOKUP_PATTERNS
     )

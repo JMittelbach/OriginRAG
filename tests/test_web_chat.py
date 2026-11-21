@@ -194,6 +194,51 @@ def test_consecutive_paper_lists_survive_reopen_and_do_not_repeat(tmp_path, monk
     assert "Which topic" in app.run_turn("Five more", {})["answer"]
 
 
+def test_recent_lists_merge_title_and_body_dates_and_continue(tmp_path, monkeypatch):
+    from originrag.retrieval.fts_index import build_fts_index
+    monkeypatch.setattr(web_chat, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(web_chat, "manager_for", lambda *a: pytest.fail("List contacted model"))
+    papers, chunks, index = tmp_path / "papers.tsv", tmp_path / "chunks", tmp_path / "index.sqlite"
+    chunks.mkdir()
+    rows = [
+        ("A", "Microscopy A", "2018", "Controls"),
+        ("B", "Microscopy B", "2023", "Controls"),
+        ("C", "New instrument", "2025", "We used microscopy to measure the samples."),
+        ("D", "Microscopy D", "", "Controls"),
+        ("E", "Optical instrument", "2026", "We measured the samples.\nReferences\n1. Microscopy for scientists."),
+        ("F", "Microscopy F", "2022", "Controls"),
+    ]
+    papers.write_text("paper_id\ttitle\tyear\n" + "".join(f"{i}\t{t}\t{y}\n" for i,t,y,_ in rows))
+    for pid, _, _, body in rows:
+        (chunks / f"{pid}.jsonl").write_text(json.dumps({"paper_id": pid, "chunk_id": pid+"_1", "text": body})+"\n")
+    build_fts_index(chunks, papers, index)
+    settings = WebChatSettings(papers=str(papers), chunks_dir=str(chunks), retrieval_index=str(index))
+    app = WebChatApp(settings, str(tmp_path / "sessions"))
+    first = app.run_turn("Show me the two newest papers on microscopy since 2022", {})
+    assert [p["paper_id"] for p in first["sources"]] == ["C", "B"]
+    assert "full-text match" in first["answer"]
+    second = app.run_turn("Noch drei weitere", {})
+    assert [p["paper_id"] for p in second["sources"]] == ["F"]
+    assert second["list_page"]["since"] == 2022
+    assert not app.run_turn("Two more", {})["sources"]
+
+
+def test_catalogue_presence_and_ambiguous_study_design(tmp_path, monkeypatch):
+    monkeypatch.setattr(web_chat, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(web_chat, "manager_for", lambda *a: pytest.fail("Lookup contacted model"))
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tyear\tauthor\nA\tOptical sensors\t2014\tKlein\n"
+                      "B\tElectrical sensors\t2014\tKlein\nC\tThermal imaging\t2020\tGarcía-López\n")
+    app = WebChatApp(WebChatSettings(papers=str(papers)), str(tmp_path / "sessions"))
+    result = app.run_turn("Is the Garcia-Lopez et al. paper on thermal imaging in my corpus?", {})
+    assert [p["paper_id"] for p in result["sources"]] == ["C"] and "full text not indexed" in result["answer"]
+    ambiguous = app.run_turn("Which method did Klein et al. use in their 2014 paper?", {})
+    assert {p["paper_id"] for p in ambiguous["sources"]} == {"A","B"} and "Which title" in ambiguous["answer"]
+    from originrag.retrieval.quick_list import named_catalogue_request
+    assert named_catalogue_request("Is the result of Klein et al. replicated in my corpus?") is None
+    assert named_catalogue_request("Which methods did Klein et al. and Smith et al. use in their 2014 study?") is None
+
+
 def test_quick_lists_and_reading_followup(tmp_path, monkeypatch):
     from originrag.retrieval.fts_index import build_fts_index
     monkeypatch.setattr(web_chat, "REPO_ROOT", tmp_path)

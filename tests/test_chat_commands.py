@@ -33,6 +33,26 @@ def test_only_the_command_is_corrected(message, topic, n, lang):
     assert resolve_chat_task(message) == "sources"
 
 
+@pytest.mark.parametrize("message,since", [
+    ("Show me the six newest papers on microscopy", 0),
+    ("Nenn mir die sechs neuesten Paper zu microscopy", 0),
+    ("Find six papers on microscopy since 2022", 2022),
+    ("Find six papers on microscopy after 2022", 2023),
+    ("Gib mir sechs Studien zu microscopy nach 2022", 2023),
+])
+def test_temporal_lists_keep_the_topic_separate(message, since):
+    req = paper_list_request(message)
+    assert req and (req.newest, req.since, req.limit, req.topic) == (True, since, 6, "microscopy")
+
+
+def test_paper_identifier_is_not_the_deliverable():
+    doi = "10.1234/test"
+    assert resolve_chat_task(f"Which clinical groups were compared in {doi}?") == "answer"
+    assert resolve_chat_task(f"Welche Methode wurde im Artikel {doi} verwendet?") == "answer"
+    assert resolve_chat_task(f"Find the paper with DOI {doi}") == "sources"
+    assert not paper_list_request("Show me six recent papers on microscopy and tell me which method they used")
+
+
 @pytest.mark.parametrize("text,result", [
     ("Hey, summraize paper #12", ReadingSelection(12, "en")),
     ("Nee, den dritten!", ReadingSelection(3, "de", True)),

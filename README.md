@@ -93,8 +93,10 @@ They become searchable when the update finishes; uncertain imports are flagged
 for review. Catalogue-only entries are not full-text papers.
 
 Ask a question in chat, open the cited passages and inspect the evidence status.
-For a reading list, try “Show me five papers on microscopy”, then “Five more”.
-The next list skips papers already shown. When searching full text, the chat
+For a reading list, try “Show me the five newest papers on microscopy” or
+“Find five papers on microscopy since 2022”. “Five more” keeps the same dates
+and skips papers already shown. Dates are publication years in your catalogue.
+When searching full text, the chat
 skips matches found only in passages it identifies as bibliographies.
 For a named method, the chat can show the authors’ description with its page
 even when the retrieved studies do not support a synthesis.
