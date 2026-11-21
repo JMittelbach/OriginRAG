@@ -94,9 +94,9 @@ accessible PDFs. Accepted papers are organised and indexed in the background.
 They become searchable when the update finishes; uncertain imports are flagged
 for review. Catalogue-only entries are not full-text papers.
 
-To read one paper together, use **Attach paper** beside the chat box. Choose an
-indexed paper or upload a research PDF. Ask for a summary, a specific result,
-or its bibliography. The paper stays attached to that chat until you click **×**.
+To talk about one paper, just mention its title or DOI, or attach its PDF with
+the paperclip. Ask follow-ups in the same chat, then ask about other studies
+whenever you like.
 
 Ask a question in chat and open the cited passages. You can ask what a single
 paper did without needing a second study to corroborate its methods. For example,

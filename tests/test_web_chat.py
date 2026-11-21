@@ -119,7 +119,7 @@ def isolated_default_library_resolver(synthetic_library_resources, monkeypatch: 
 def synthetic_library(synthetic_library_resources, monkeypatch: pytest.MonkeyPatch):
     """Route HTTP catalogue defaults only for tests opting into this fixture."""
     _, catalogue = synthetic_library_resources
-    monkeypatch.setattr(web_chat, "library_catalog", lambda: catalogue)
+    monkeypatch.setattr(web_chat, "library_catalog", lambda *args, **kwargs: catalogue)
     return catalogue
 
 

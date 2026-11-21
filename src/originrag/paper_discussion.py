@@ -3,8 +3,67 @@
 import json
 import re
 from collections import Counter
+from functools import lru_cache
+import unicodedata
 
 from originrag.analysis.context_budget import estimate_prompt_tokens as cost
+from originrag.retrieval.report_scope import extract_explicit_dois
+
+
+@lru_cache(maxsize=16000)
+def _name(value):
+    folded = unicodedata.normalize("NFKD", value.casefold())
+    return " ".join(re.findall(r"[^\W_]+", "".join(c for c in folded if not unicodedata.combining(c))))
+
+
+def wants_corpus(text):
+    return bool(re.search(
+        r"\b(?:other|more|similar|related|additional|newer|recent|independent|andere\w*|weiter\w*|ähnliche\w*|neuere\w*)\s+"
+        r"(?:relevant\w*\s+)?(?:papers?|studies|articles?|groups?|teams?|studien|artikel|arbeiten|gruppen)\b"
+        r"|\b(?:across (?:papers|studies)|(?:in|search) (?:my|our|the|your) (?:corpus|library|literature)"
+        r"|im (?:korpus|bestand)|in (?:der|meiner|unserer) (?:bibliothek|literatur)|new topic|anderes thema)\b"
+        r"|\b(?:compare|contrast|vergleich\w*)\b.{0,160}\b(?:papers|studies|articles|literature|studien|literatur|with|mit)\b",
+        text, re.I))
+
+
+def mentioned_papers(text, catalogue):
+    """Resolve report identities, not general topics. Never break a tie by ranking."""
+    dois = extract_explicit_dois(text)
+    words = " " + _name(text) + " "
+    quoted = {_name(x) for x in re.findall(r'["„“«]([^"“”»]{3,220})["“”»]', text)}
+    years = set(re.findall(r"\b(?:19|20)\d\d\b", text))
+    authors = set(re.findall(r"\b(?:paper|article|study|studie|artikel|arbeit) (?:by|von) ([\w-]+)", words))
+    authors.update(re.findall(r"\b(\w+) et al\b", words))
+    exact, partial, by_author = [], [], []
+    for row in catalogue:
+        title = _name(row.get("title") or "")
+        if dois:
+            if (row.get("doi") or "").casefold() in dois:
+                exact.append(row)
+        elif title and (title in quoted or title == words.strip() or (len(title.split()) >= 3 and f" {title} " in words)):
+            exact.append(row)
+        elif title and any(len(q.split()) >= 2 and f" {q} " in f" {title} " for q in quoted):
+            partial.append(row)
+        elif (years and row.get("year") in years) or (not years and authors):
+            author = _name(row.get("author") or "")
+            if author and (f" {author} " in words if years else author in authors):
+                by_author.append(row)
+    return exact or partial or by_author
+
+
+def refers_to_paper(text):
+    """A follow-up about the last paper, rather than a new standalone topic."""
+    return reference_request(text) or bool(re.search(
+        r"\b(?:this|that|the|dies\w*|das|dem|der|die) (?:paper|article|study|authors?|autor\w*|studie|artikel)\b"
+        r"|\b(?:did they|they (?:find|use|show)|their|its|haben sie|hatten sie|haben die|darin|daraus|damit|dabei|davon|deren)\b"
+        r"|\b(?:summari[sz]e (?:it|that)|fass\w* (?:es|das) .{0,15}zusammen|tell me more|what else|erzähl mehr)\b"
+        r"|\b(?:was (?:waren|sind)|welche\w* (?:waren|sind)|what (?:were|are|was|is)) (?:die |das |the )?"
+        r"(?:(?:main|key|major|wichtigst\w*|zentral\w*) )?(?:findings|limitations|results|sample size|ergebnisse|grenzen|einschränkungen|fazit)\b"
+        r"|\b(?:how (?:large|big) was the sample|how many (?:participants|patients) were (?:included|enrolled)"
+        r"|wie groß war die stichprobe|wie viele (?:personen|patienten|teilnehmer) (?:waren|wurden))\b"
+        r"|^(?:(?:and|und|what about|was ist mit)\s+)?(?:(?:what|which|welche\w*|die|the|its)\s+)?"
+        r"(?:methods?|methoden?|limitations?|einschränkungen|ergebnisse|results|sample size|stichprobe)\s*[?.!]*$",
+        text.strip(), re.I))
 
 
 def reference_request(question):

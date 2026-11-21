@@ -284,9 +284,49 @@ class WebChatApp:
         with cancellable_lock(session_lock):
             settings = merge_settings(self.settings, settings_update)
             saved_turns = read_session_turns(target_session)
-            if settings_update.get("_discussion_id"):
-                return self.discuss(target_session, clean_message, settings, settings_update["_discussion_id"],
-                                    saved_turns, progress_callback, started_at)
+            from originrag.paper_discussion import mentioned_papers, refers_to_paper, wants_corpus
+            from originrag.retrieval.quick_list import more_list_request, named_catalogue_request, paper_list_request
+
+            attachment = settings_update.get("_discussion_id")
+            matches = []
+            paper_id = None
+            clarified = None
+            broad = wants_corpus(clean_message) or paper_list_request(clean_message) or more_list_request(clean_message)
+            named = named_catalogue_request(clean_message)
+            if settings.task == "auto" and not broad and not presence_language(clean_message) and not (named and named[2]):
+                papers = REPO_ROOT / settings.papers
+                catalogue = library_catalog(str(papers.with_name("paper_registry.tsv")), str(papers),
+                                            chunks_dir=str(REPO_ROOT / settings.chunks_dir), for_chat=True)
+                matches = mentioned_papers(clean_message, catalogue)
+                if saved_turns and saved_turns[-1].get("task") == "library_status" and not attachment:
+                    last_result = saved_turn_result(saved_turns[-1], target_session)
+                    if last_result.get("pending_paper_question"):
+                        choices = last_result.get("sources") or []
+                        ordinal = reading_selection("Summarize " + clean_message) or reading_selection("Fass " + clean_message + " zusammen")
+                        if not matches and ordinal and 1 <= ordinal.number <= len(choices):
+                            matches = [choices[ordinal.number - 1]]
+                        if len(matches) == 1 and any(row["paper_id"] == matches[0]["paper_id"] for row in choices):
+                            clarified = last_result["pending_paper_question"]
+                if len(matches) == 1 and matches[0].get("searchable"):
+                    paper_id = matches[0]["paper_id"]
+                elif not matches:
+                    paper_id = attachment
+                    if (not paper_id and saved_turns and refers_to_paper(clean_message)
+                        and not re.search(r"10\.\d{4,9}/|\bet al\b|\b(?:19|20)\d\d\b", clean_message, re.I)):
+                        last = saved_turns[-1]
+                        if last["task"] == "paper_discussion":
+                            paper_id = last.get("paper_id")
+                        elif last["task"] in {"paper_summary", "sources", "library_status"}:
+                            sources = saved_turn_result(last, target_session).get("sources", [])
+                            ids = {row["paper_id"] for row in sources if row.get("paper_id")}
+                            if len(ids) == 1:
+                                paper_id = next((row["paper_id"] for row in catalogue
+                                                 if row["paper_id"] in ids and row.get("searchable")), None)
+            if paper_id:
+                result = self.discuss(target_session, clean_message, settings, paper_id,
+                                      saved_turns, progress_callback, started_at, clarified=clarified)
+                self.finish_attachment(target_session, settings_update)
+                return result
             previous_turns = [
                 turn_context_from_saved_turn(turn)
                 for turn in saved_turns[-2:]
@@ -297,6 +337,15 @@ class WebChatApp:
                 previous_turns,
             )
             previous_task = previous_turns[-1].resolved_task if previous_turns else ""
+            related_to_last = ""
+            if broad and previous_task == "paper_discussion" and (
+                more_list_request(clean_message) or re.search(
+                    r"\b(?:this|that|these|those|similar|related|dazu|diese\w*|ähnlich\w*|darüber|das auch)\b", clean_message, re.I)
+            ):
+                sources = saved_turn_result(saved_turns[-1], target_session).get("sources", [])
+                if sources:
+                    related_to_last = sources[0].get("title", "")
+                    retrieval_question = f"{clean_message}\nTopic of the previous paper: {related_to_last}"
             resolved_task = resolve_chat_task(
                 clean_message,
                 settings.task,
@@ -327,8 +376,6 @@ class WebChatApp:
                 target_session,
                 infer_session_title(clean_message, resolved_task),
             )
-            from originrag.retrieval.quick_list import more_list_request, named_catalogue_request, paper_list_request
-
             language = presence_language(clean_message)
             named = named_catalogue_request(clean_message) if settings.task == "auto" else None
             listing = paper_list_request(clean_message) if resolved_task == "sources" else None
@@ -339,9 +386,19 @@ class WebChatApp:
                 r"|(?:bitte )?fass(?:e)? (?:mir )?(?:bitte )?(?:mein|dieses|das|das erste|das zweite) paper zusammen",
                 command, re.I)
             direct = None
+            if len(matches) > 1:
+                options = matches[:8]
+                direct = {"resolved_task": "library_status", "sources": options, "pending_paper_question": clean_message, "answer":
+                          "Which title do you mean?\n\n" + "\n".join("- " + p["title"] for p in options)}
+            elif len(matches) == 1 and not matches[0].get("searchable"):
+                direct = {"resolved_task": "library_status", "sources": matches, "answer":
+                          f"I found “{matches[0]['title']}”, but its full text isn't indexed. Attach the PDF and we can read it together."}
             seen_ids = set()
             more = more_list_request(clean_message) if settings.task in {"auto", "sources"} else None
-            if more:
+            if more and related_to_last:
+                # A paper is the topic, not a previous page of search results.
+                more = None
+            elif more:
                 listing, seen_ids = resume_quick_list(more, saved_turns, settings)
                 if listing is None and command not in {"more", "mehr"}:
                     direct = {"resolved_task": "library_status", "answer": {
@@ -448,6 +505,8 @@ class WebChatApp:
                 resolved_task=resolved_task,
             )
             public_result["elapsed_seconds"] = round(time.monotonic() - started_at, 3)
+            if result.get("pending_paper_question"):
+                public_result["pending_paper_question"] = result["pending_paper_question"]
             if result.get("list_page"):
                 public_result["list_page"] = result["list_page"]
             if confirm_reading:
@@ -474,9 +533,19 @@ class WebChatApp:
                     latest = read_session_turns(target_session)[-1]
                     self.previous_turns = previous_turns[-1:] + [turn_context_from_saved_turn(latest)]
                     self.turn_index = turn_index + 1
+            self.finish_attachment(target_session, settings_update)
             return public_result
 
-    def discuss(self, session, question, settings, paper_id, turns, progress, started):
+    def finish_attachment(self, session, settings):
+        snapshot = settings.get("_attachment_snapshot")
+        if not snapshot:
+            return
+        path = session / "paper_focus.json"
+        with self.lock:
+            if path.exists() and json.loads(path.read_text()) == snapshot:
+                write_json_atomically(path, {}, mode=0o600)
+
+    def discuss(self, session, question, settings, paper_id, turns, progress, started, *, clarified=None):
         from originrag.paper_discussion import bibliography, discussion_prompt, reference_request
         from originrag.summaries.reading_card import load_paper
 
@@ -486,7 +555,8 @@ class WebChatApp:
         compacted = False
         if progress:
             progress("Reading the selected paper")
-        if reference_request(question):
+        prompt_question = f"{clarified}\nThe reader clarified: {question}" if clarified else question
+        if reference_request(prompt_question):
             extracted = (REPO_ROOT / settings.chunks_dir).parent / "extracted_text" / f"{paper_id}.json"
             def pdf_pages():
                 import fitz
@@ -525,7 +595,7 @@ class WebChatApp:
                 model = (runtime or {}).get("model") or settings.answer_model
                 window = ask_corpus.effective_model_context(settings, model=model)
                 reserve = min(ask_corpus.answer_num_predict(None), max(192, window // 4))
-                prompt, shortened = discussion_prompt(question, paper["title"], chunks, history[::-1], window, reserve)
+                prompt, shortened = discussion_prompt(prompt_question, paper["title"], chunks, history[::-1], window, reserve)
                 compacted = compacted or shortened
                 if progress:
                     progress("Discussing your paper")
@@ -2446,7 +2516,8 @@ def build_handler(
                         if not paper:
                             raise ValueError("Choose a paper with indexed full text.")
                         focus = {"status": "ready", "paper_id": paper_id, "title": paper["title"]}
-                    write_json_atomically(target / "paper_focus.json", focus, mode=0o600)
+                    with current_app.lock:
+                        write_json_atomically(target / "paper_focus.json", focus, mode=0o600)
                     self.respond_json(focus)
                 except (ValueError, OSError) as exc:
                     self.respond_json({"error": str(exc)}, status=400)
@@ -2701,7 +2772,8 @@ def build_handler(
                         ),
                     )
                     if target:
-                        write_json_atomically(target / "paper_focus.json", {"upload_id": response["upload_id"]}, mode=0o600)
+                        with current_app.lock:
+                            write_json_atomically(target / "paper_focus.json", {"upload_id": response["upload_id"]}, mode=0o600)
                 except Exception as exc:
                     self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                     return
@@ -2748,9 +2820,15 @@ def build_handler(
 
                 settings_update["task"] = "auto"
                 settings_update.pop("_discussion_id", None)
-                focus = self.paper_focus(target_session)
+                settings_update.pop("_attachment_snapshot", None)
+                with current_app.lock:
+                    focus = self.paper_focus(target_session)
+                    if focus.get("paper_id"):
+                        settings_update["_attachment_snapshot"] = json.loads((target_session / "paper_focus.json").read_text())
                 if "expected_paper_id" in payload and payload["expected_paper_id"] != focus.get("paper_id", ""):
-                    raise ValueError("The attached paper changed. Reopen this chat and retry.")
+                    latest = read_session_turns(target_session)[-1:] if not focus else []
+                    if not latest or latest[0].get("paper_id") != payload["expected_paper_id"]:
+                        raise ValueError("The attachment changed. Reload this chat and retry.")
                 if focus and not focus.get("paper_id"):
                     raise ValueError(focus.get("reason") or "Your paper is not ready. Wait for indexing or remove the attachment.")
                 if focus:
@@ -4313,7 +4391,7 @@ def turn_context_from_saved_turn(turn: dict) -> ChatTurnContext:
             evidence_table = output_dir / "evidence_table.tsv"
             if evidence_table.exists() and evidence_table.is_file():
                 titles = titles_from_evidence_table(evidence_table)
-            elif turn.get("task") in {"sources", "paper_summaries"}:
+            elif turn.get("task") in {"sources", "paper_summaries", "paper_discussion"}:
                 titles = [str(p["title"]) for p in saved_turn_result(turn).get("sources", [])[:6] if p.get("title")]
     return ChatTurnContext(
         user_question=str(turn.get("user") or ""),
@@ -6861,10 +6939,7 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--muted);
     }
     #paperContext { display:flex; align-items:center; gap:.5rem; min-width:0; }
-    #attachMenu { position:relative; flex:none; }
-    #attachMenu summary { cursor:pointer; }
-    #attachMenu div { position:absolute; bottom:100%; left:0; z-index:5; background:var(--panel,#172027); padding:.6rem; border-radius:.7rem; width:max-content; box-shadow:0 4px 18px #0006; }
-    #attachMenu button:not([hidden]) { display:block; width:100%; text-align:left; }
+    #focusUpload { padding:.28rem .5rem; }
     #focusTitle { max-width:min(50vw,32rem); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     :root:not([data-theme="light"]) .msg.paper-discussion .bubble { background:rgba(13,15,16,.96); box-shadow:none; }
     .composer {
@@ -7319,13 +7394,12 @@ INDEX_HTML = r"""<!doctype html>
       <form class="composer" id="form">
         <div class="composer-context">
           <div id="paperContext">
-            <details id="attachMenu"><summary>Attach paper</summary><div>
-              <button type="button" id="focusBrowse">From Library</button>
-              <button type="button" id="focusUpload" hidden>Upload PDF to library…</button>
-            </div></details>
+            <button type="button" id="focusUpload" hidden aria-label="Attach PDF" title="Attach a research PDF and add it to the library">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2m3 6-9 9a1.5 1.5 0 0 1-2-2l8-8"/></svg>
+            </button>
             <input type="file" id="focusFile" accept=".pdf,application/pdf" hidden>
             <span id="focusTitle" role="status"></span>
-            <button type="button" id="focusClear" aria-label="Remove paper from chat" title="Return to corpus chat" hidden>×</button>
+            <button type="button" id="focusClear" aria-label="Remove attachment" title="Remove attachment" hidden>×</button>
           </div>
           <button id="composerStop" type="button" hidden aria-label="Stop current request">■ Stop</button>
         </div>
@@ -9591,7 +9665,6 @@ INDEX_HTML = r"""<!doctype html>
       focusEl("focusTitle").textContent = label;
       focusEl("focusTitle").title = label;
       focusEl("focusClear").hidden = !data.status;
-      message.placeholder = data.paper_id ? "Ask about this paper…" : "Ask a question about your corpus...";
     }
     async function refreshFocus() {
       const session = currentSessionDir, version = ++focusVersion;
@@ -9628,8 +9701,7 @@ INDEX_HTML = r"""<!doctype html>
         return false;
       } finally { focusChanging = false; }
     }
-    focusEl("focusBrowse").onclick = () => { focusEl("attachMenu").open = false; openLibraryBrowser(); };
-    focusEl("focusUpload").onclick = () => { focusEl("attachMenu").open = false; focusEl("focusFile").click(); };
+    focusEl("focusUpload").onclick = () => focusEl("focusFile").click();
     focusEl("focusFile").onchange = event => {
       const file = event.target.files[0]; event.target.value = "";
       if (file) changeFocus("", file);
@@ -9664,11 +9736,6 @@ INDEX_HTML = r"""<!doctype html>
         ? "● searchable full text"
         : (paper.local_pdf ? "○ PDF present · indexing pending" : "○ metadata only");
       links.appendChild(status);
-      const discuss = document.createElement("button");
-      discuss.type = "button"; discuss.className = "ghost"; discuss.textContent = "Discuss";
-      discuss.disabled = !paper.searchable;
-      discuss.onclick = async () => { if (await changeFocus(paper.paper_id)) { closeLibraryBrowser(); message.focus(); } };
-      links.append(discuss);
       const summarize = document.createElement("button");
       summarize.type = "button";
       summarize.className = "ghost";
@@ -9680,7 +9747,6 @@ INDEX_HTML = r"""<!doctype html>
           libraryResultCount.textContent = "Send or clear your current draft before starting a summary.";
           return;
         }
-        if (!(await changeFocus(paper.searchable ? paper.paper_id : ""))) return;
         closeLibraryBrowser();
         const prefix = "Summarize this paper: ";
         message.value = prefix + (paper.doi || paper.title);

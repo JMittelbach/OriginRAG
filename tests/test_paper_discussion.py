@@ -10,6 +10,7 @@ import pytest
 
 from originrag.analysis.context_budget import estimate_prompt_tokens
 from originrag.paper_discussion import bibliography, discussion_prompt, reference_request
+from originrag.paper_discussion import mentioned_papers, refers_to_paper, wants_corpus
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import import_paper_inbox as inbox
@@ -74,6 +75,36 @@ def test_reference_scope_and_unreadable_list(tmp_path):
     assert "couldn't reliably" in bibliography(tmp_path / "missing", "ONE")
 
 
+def test_natural_paper_references_resolve_only_unambiguous_identities():
+    a = dict(title="Measuring variation across observations", author="Klein", year="2017", doi="10.1234/aa")
+    b = dict(title="Methods for ocean surveys", author="Klein", year="2019", doi="10.1234/bb")
+    for question in ("Was sagt Klein (2017)?", "Was steht in „Measuring variation“?",
+                     "How did they measure it in https://doi.org/10.1234/aa?"):
+        assert mentioned_papers(question, [a, b]) == [a]
+    assert mentioned_papers("Tell me about the paper by Klein", [a, b]) == [a, b]
+    assert not mentioned_papers("What are ocean surveys?", [a, b])
+    assert refers_to_paper("Was waren die wichtigsten Ergebnisse?")
+    assert not refers_to_paper("What is quantum tunnelling?")
+    assert wants_corpus("Welche anderen Studien zeigen das auch?")
+
+
+def test_clarifying_a_title_keeps_the_original_question(tmp_path):
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tauthor\tyear\nA\tA first survey\tKlein\t2017\nB\tA second survey\tKlein\t2017\n")
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    extracted = tmp_path / "extracted_text"
+    extracted.mkdir()
+    for key in ("A", "B"):
+        (chunks / (key + ".jsonl")).write_text(json.dumps({"paper_id": key, "text": "Example."}))
+        (extracted / (key + ".json")).write_text(json.dumps({"paper_id": key, "pages": [
+            {"page": 2, "text": "References\n1. Reference for " + key}]}))
+    app = web.WebChatApp(web.WebChatSettings(papers=str(papers), chunks_dir=str(chunks)), str(tmp_path / "sessions"))
+    assert "Which title" in app.run_turn("Show all references in Klein (2017).", {})["answer"]
+    result = app.run_turn("The second one", {})
+    assert result["paper_id"] == "B" and "Reference for B" in result["answer"]
+
+
 def test_cited_doi_cannot_identify_an_unrelated_upload(tmp_path, monkeypatch):
     monkeypatch.setattr(inbox, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(inbox, "fetch_crossref", lambda *a, **kw: {
@@ -93,10 +124,18 @@ def test_browser_attach_upload_read_reload_and_detach(tmp_path, monkeypatch):
     settings = web.WebChatSettings(papers=str(tmp_path / "data/metadata/papers.tsv"),
                                    chunks_dir=str(tmp_path / "data/chunks"))
     catalogue = web.library_catalog
-    monkeypatch.setattr(web, "library_catalog", lambda **kw: catalogue(
+    monkeypatch.setattr(web, "library_catalog", lambda *args, **kw: catalogue(
         str(tmp_path / "data/metadata/paper_registry.tsv"), settings.papers,
-        str(tmp_path / "bib"), settings.chunks_dir, **kw))
+        str(tmp_path / "bib"), settings.chunks_dir, for_chat=kw.get("for_chat", False)))
     app = web.WebChatApp(settings, str(tmp_path / "sessions"))
+    corpus_requests = []
+    def corpus_reply(args, turn_dir, progress_callback=None):
+        corpus_requests.append(args.retrieval_question)
+        turn_dir.mkdir(parents=True)
+        path = turn_dir / "answer.md"
+        path.write_text("Searched across the library.")
+        return {"answer_path": path, "pack": {"chunks": []}, "answer_qc": {"passed": True}}
+    monkeypatch.setattr(web.ask_corpus, "run_question", corpus_reply)
     mgr = web.LibrarySyncManager(tmp_path / "bib/inbox", auto_worker=False, read_cache_refresh=lambda: None,
                                  refresh_callback=lambda: None)
     handler = web.build_handler(app, library_manager=mgr)
@@ -112,7 +151,6 @@ def test_browser_attach_upload_read_reload_and_detach(tmp_path, monkeypatch):
             page = browser.new_page()
             page.goto(f"http://127.0.0.1:{server.server_port}")
             page.locator("#guideSkip").click()
-            page.get_by_text("Attach paper", exact=True).click()
             pw.expect(page.locator("#focusUpload")).to_be_visible()
             with page.expect_response(lambda r: "/api/library-upload" in r.url) as response:
                 page.locator("#focusFile").set_input_files(dict(name="research.pdf", mimeType="application/pdf", buffer=article()))
@@ -124,17 +162,20 @@ def test_browser_attach_upload_read_reload_and_detach(tmp_path, monkeypatch):
             page.locator("#send").click()
             pw.expect(page.locator("#chat")).to_contain_text("Banks. Sampling.", timeout=15000)
             page.reload()
-            pw.expect(page.locator("#focusTitle")).to_contain_text("Measuring variation")
-            pw.expect(page.locator("#chat")).to_contain_text("Banks. Sampling.")
-            page.locator("#focusClear").click()
             pw.expect(page.locator("#focusClear")).to_be_hidden()
-            pw.expect(page.locator("#message")).to_have_attribute("placeholder", "Ask a question about your corpus...")
-            page.locator("#attachMenu summary").click()
-            page.locator("#focusBrowse").click()
-            page.get_by_role("button", name="Discuss", exact=True).click()
-            pw.expect(page.locator("#focusTitle")).to_contain_text("Measuring variation")
+            pw.expect(page.locator("#chat")).to_contain_text("Banks. Sampling.")
+            page.locator("#message").fill("Zeig mir nochmal alle Quellen daraus.")
+            page.locator("#send").click()
+            pw.expect(page.locator("#chat .paper-discussion")).to_have_count(2)
+            page.locator("#message").fill("Welche anderen Studien zeigen das auch?")
+            page.locator("#send").click()
+            pw.expect(page.locator("#chat")).to_contain_text("Searched across the library.", timeout=15000)
+            assert len(corpus_requests) == 1 and "Measuring variation" in corpus_requests[0]
             page.locator("#newChat").click()
             pw.expect(page.locator("#focusClear")).to_be_hidden()
+            page.locator("#message").fill("Show all references from Measuring variation across repeated observations.")
+            page.locator("#send").click()
+            pw.expect(page.locator("#chat")).to_contain_text("Banks. Sampling.")
             browser.close()
     finally:
         server.shutdown()
