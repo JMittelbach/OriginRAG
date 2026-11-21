@@ -367,3 +367,20 @@ Which PfEMP1 features are associated with cerebral malaria?
 ```text
 Find papers about RIFIN binding to human immune receptors.
 ```
+
+## Discuss one paper
+
+Use **Attach paper** in the message box to choose an indexed paper or upload a PDF.
+Uploads join the host's library, which may be shared. OriginRAG checks the article
+identity before indexing it. A scan without readable text, an unrelated cited DOI,
+or uncertain manuscript metadata may need review. There is no subject filter.
+
+The paper name stays beside the message box, even after you reopen the chat.
+Ask follow-up questions normally. Ask for the bibliography to read the references
+extracted from the article itself. PDF column order and line breaks can affect
+the result; **Open paper** takes you to the original.
+
+Long threads keep their visible history. To fit the model's configured context,
+the assistant condenses earlier exchanges and selects relevant excerpts when the
+entire paper won't fit. Use **×** to return to corpus search, or **New chat** for
+a fresh conversation.

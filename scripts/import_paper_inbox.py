@@ -186,7 +186,8 @@ def import_inbox(
             )
         except DuplicatePaper as exc:
             duplicates.append((source, str(exc)))
-            reports.append(report_row(source, status="duplicate", reason=str(exc)))
+            reports.append(report_row(source, status="duplicate", reason=str(exc),
+                                      paper_id=exc.paper_id, title=exc.title))
             continue
         except ReviewRequired as exc:
             review_files.append((source, str(exc)))
@@ -711,14 +712,28 @@ def inspect_candidate(
     if signature != b"%PDF-":
         raise ValueError("file does not have a PDF signature")
     digest = sha256_file(source)
+    sidecar = source.with_suffix(source.suffix + ".upload.json")
+    discussion = sidecar.is_file() and not sidecar.is_symlink() and json.loads(sidecar.read_text()).get("discussion") is True
+    def existing_paper(*, doi="", title=""):
+        rows = read_tsv(REPO_ROOT / "data/metadata/papers.tsv")[0]
+        matches = [r for r in rows if r["paper_id"] == f"USR_{digest[:12].upper()}"
+                   or (doi and normalize_doi(r.get("doi")) == doi)
+                   or (title and normalize_title(r.get("title")) == normalize_title(title))]
+        if len(matches) == 1 and (REPO_ROOT / "data/chunks" / (matches[0]["paper_id"] + ".jsonl")).is_file():
+            raise DuplicatePaper("This paper is already in the library.", matches[0]["paper_id"], matches[0]["title"])
     if digest in known_hashes:
-        raise DuplicatePaper("identical PDF content already exists in the product library")
+        if discussion:
+            existing_paper()
+        else:
+            raise DuplicatePaper("identical PDF content already exists in the product library")
     with fitz.open(source) as document:
         if document.needs_pass:
             raise ValueError("password-protected PDFs cannot be ingested")
         if document.page_count < 1:
             raise ValueError("PDF has no pages")
         metadata = document.metadata or {}
+        front = document[0].get_text("text")
+        last = document[-1].get_text("text") if discussion else ""
         sample = "\n".join(
             document[index].get_text("text") for index in range(min(4, document.page_count))
         )
@@ -726,16 +741,36 @@ def inspect_candidate(
         raise ReviewRequired("too little machine-readable article text; OCR or manual review is required")
     sidecar_doi = read_doi_sidecar(source)
     doi = normalize_doi(sidecar_doi or first_doi(f"{metadata.get('subject', '')}\n{sample}"))
-    if not doi:
+    if discussion:
+        header = re.split(r"(?im)^\s*(?:references|bibliography|literaturverzeichnis)\s*$", front)[0]
+        doi = normalize_doi(sidecar_doi or first_doi(str(metadata.get("subject") or "")) or first_doi(header))
+    if not doi and not discussion:
         raise ReviewRequired(
             "no DOI was found; add a sidecar named PAPER.pdf.doi.txt containing the DOI"
         )
-    if doi in known_dois:
+    if doi in known_dois and not discussion:
         raise DuplicatePaper(f"DOI already exists in the product registry: {doi}")
-    crossref = fetch_crossref(doi, timeout=timeout)
+    crossref = fetch_crossref(doi, timeout=timeout) if doi else None
+    if discussion and not doi:
+        title = clean_text(metadata.get("title"))
+        author = clean_text(metadata.get("author"))
+        sections = re.findall(r"(?im)^\s*(?:\d+[.\s]+)?(abstract|introduction|methods|results|discussion|references|bibliography|zusammenfassung|einleitung|methoden|ergebnisse|literaturverzeichnis)\s*[:.]?\s*$", sample + "\n" + last)
+        if not (len(title.split()) >= 3 and author and len(set(s.casefold() for s in sections)) >= 3):
+            raise ReviewRequired("No verifiable article DOI or clear scholarly front matter, author and sections were found.")
+        crossref = {"title": title, "author": author, "paper_type": "manuscript"}
     if not crossref:
         raise ReviewRequired("exact DOI metadata could not be verified through Crossref")
     title = clean_text(crossref.get("title"))
+    if discussion:
+        kind = clean_text(crossref.get("paper_type")).casefold()
+        def norm(s):
+            return " ".join(re.findall(r"\w+", normalize_title(re.sub(r"(?<=\w)-\s*\n\s*(?=\w)", "", s))))
+        structure = re.search(r"\b(abstract|introduction|methods|results|references|bibliography|conclusion|correspondence|received|accepted|zusammenfassung|einleitung|ergebnisse|literaturverzeichnis)\b", sample + "\n" + last, re.I)
+        if not structure or kind not in {"journal article", "proceedings article", "preprint", "posted content", "manuscript"} or norm(title) not in norm(header):
+            raise ReviewRequired("The paper title or publication type could not be verified against the first page. It was not indexed.")
+        if (doi and doi in known_dois) or digest in known_hashes or normalize_title(title) in known_titles:
+            existing_paper(doi=doi, title=title)
+            raise DuplicatePaper("Already present. Select the existing paper from Library.")
     author = clean_text(crossref.get("author")) or "Unknown"
     year = clean_year(crossref.get("year")) or "nd"
     journal = clean_text(crossref.get("journal"))
@@ -785,7 +820,9 @@ class ReviewRequired(ValueError):
 class DuplicatePaper(ReviewRequired):
     """The uploaded work is already represented in the active library."""
 
-    pass
+    def __init__(self, message, paper_id="", title=""):
+        super().__init__(message)
+        self.paper_id, self.title = paper_id, title
 
 
 def fetch_crossref(doi: str, *, timeout: int) -> dict[str, object] | None:
@@ -834,7 +871,7 @@ def paper_metadata_row(candidate: Candidate, fields: list[str]) -> dict[str, str
         "fulltext_status": "chunked" if candidate.chunks else "pdf_available",
         "local_pdf_relpath": candidate.target_relpath,
         "extracted_text_relpath": f"data/extracted_text/{candidate.paper_id}.json" if candidate.pages else '',
-        "notes": "local_inbox; DOI metadata verified through Crossref",
+        "notes": "local_inbox; DOI metadata verified through Crossref" if candidate.doi else "local_inbox; PDF front matter",
     }
     return {field: values.get(field, "") for field in fields}
 
@@ -850,13 +887,13 @@ def registry_metadata_row(candidate: Candidate, fields: list[str]) -> dict[str, 
         "title": candidate.title,
         "journal": candidate.journal,
         "doi": candidate.doi,
-        "landing_url": f"https://doi.org/{candidate.doi}",
+        "landing_url": f"https://doi.org/{candidate.doi}" if candidate.doi else "",
         "local_pdf_relpath": candidate.target_relpath,
         "filename": Path(candidate.target_relpath).name,
         "citation_short": f"{candidate.author} et al., {candidate.year}",
-        "citation_apa": f"{candidate.author} et al. ({candidate.year}). {candidate.title}. {candidate.journal}. https://doi.org/{candidate.doi}",
-        "metadata_source": "local_inbox;crossref_exact_doi",
-        "notes": "DOI identity verified automatically; source/origin relations remain unreviewed",
+        "citation_apa": f"{candidate.author} et al. ({candidate.year}). {candidate.title}. {candidate.journal}." + (f" https://doi.org/{candidate.doi}" if candidate.doi else ""),
+        "metadata_source": "local_inbox;crossref_exact_doi" if candidate.doi else "local_inbox;pdf_front_matter",
+        "notes": "Source/origin relations remain unreviewed",
     }
     return {field: values.get(field, "") for field in fields}
 
@@ -1247,7 +1284,7 @@ def bibtex_entry(candidate: Candidate) -> str:
         ("note", "Preprint" if candidate.paper_type == "preprint" else ""),
         ("year", "" if candidate.year == "nd" else candidate.year),
         ("doi", candidate.doi),
-        ("url", f"https://doi.org/{candidate.doi}"),
+        ("url", f"https://doi.org/{candidate.doi}" if candidate.doi else ""),
     ]
     lines = [f"@article{{{candidate.bib_key},"]
     lines.extend(

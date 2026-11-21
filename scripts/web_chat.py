@@ -37,7 +37,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from originrag.app_profiles import app_profile, PROFILES, COLLECTION_ACTIONS, CHAT_ROUTES, LazyModule, lazy_function  # noqa: E402
 from originrag.cancellation import Cancellation, TurnCancelled, cancellation_scope, cancellable_lock, checkpoint, commit_answer  # noqa: E402
-from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
+from originrag.analysis.chat import ChatTurnContext, answer_context, build_chat_retrieval_question, resolve_chat_task  # noqa: E402
 from originrag.analysis.faithfulness import citation_claim_blocks, direct_evidence_text  # noqa: E402
 from originrag.paths import OriginRAGConfigError, get_bib_dir, load_project_env  # noqa: E402
 from originrag.web_local_access import local_browser_request  # noqa: E402
@@ -284,6 +284,9 @@ class WebChatApp:
         with cancellable_lock(session_lock):
             settings = merge_settings(self.settings, settings_update)
             saved_turns = read_session_turns(target_session)
+            if settings_update.get("_discussion_id"):
+                return self.discuss(target_session, clean_message, settings, settings_update["_discussion_id"],
+                                    saved_turns, progress_callback, started_at)
             previous_turns = [
                 turn_context_from_saved_turn(turn)
                 for turn in saved_turns[-2:]
@@ -310,6 +313,16 @@ class WebChatApp:
                 resolved_task,
                 retrieval_question=retrieval_question,
             )
+            if retrieval_question != clean_message:
+                turn_args.conversation_context = answer_context(previous_turns)
+                earlier = saved_turns[:-2]
+                if earlier:
+                    terms = set(re.findall(r"\w{4,}", clean_message.casefold()))
+                    def relevance(turn):
+                        return len(terms.intersection(re.findall(r"\w{4,}", turn["user"].casefold())))
+                    recalled = max(earlier, key=relevance)
+                    anchors = [earlier[0]] + ([recalled] if recalled is not earlier[0] and relevance(recalled) else [])
+                    turn_args.conversation_context[:0] = answer_context([turn_context_from_saved_turn(t) for t in anchors])
             ensure_session_title(
                 target_session,
                 infer_session_title(clean_message, resolved_task),
@@ -462,6 +475,81 @@ class WebChatApp:
                     self.previous_turns = previous_turns[-1:] + [turn_context_from_saved_turn(latest)]
                     self.turn_index = turn_index + 1
             return public_result
+
+    def discuss(self, session, question, settings, paper_id, turns, progress, started):
+        from originrag.paper_discussion import bibliography, discussion_prompt, reference_request
+        from originrag.summaries.reading_card import load_paper
+
+        paper, chunks = load_paper(paper_id, REPO_ROOT / settings.papers, REPO_ROOT / settings.chunks_dir)
+        if paper["paper_id"] != paper_id:
+            raise ValueError("Choose a paper from the library first.")
+        compacted = False
+        if progress:
+            progress("Reading the selected paper")
+        if reference_request(question):
+            extracted = (REPO_ROOT / settings.chunks_dir).parent / "extracted_text" / f"{paper_id}.json"
+            def pdf_pages():
+                import fitz
+                try:
+                    bib = get_bib_dir()
+                except OriginRAGConfigError:
+                    bib = REPO_ROOT / "bib"
+                try:
+                    with open_registered_pdf(paper_id, metadata_files=[REPO_ROOT / settings.papers],
+                                             bib_roots=[bib, REPO_ROOT / "bib"]) as handle:
+                        if os.fstat(handle.fileno()).st_size <= 32_000_000:
+                            with fitz.open(stream=handle.read(), filetype="pdf") as pdf:
+                                for index, page in enumerate(pdf, 1):
+                                    yield {"page": index, "text": page.get_text()}
+                except FileNotFoundError:
+                    return
+            answer = bibliography(extracted, paper_id, pdf_pages)
+        else:
+            history = []
+            words = set(re.findall(r"\w{4,}", question.casefold()))
+            for turn in reversed(turns):
+                if turn.get("task") != "paper_discussion":
+                    break
+                if turn.get("paper_id"):
+                    if turn["paper_id"] != paper_id:
+                        break
+                    if len(history) >= 64 and not words.intersection(re.findall(r"\w{4,}", turn["user"].casefold())):
+                        history.append((turn["user"], ""))
+                        compacted = True
+                        continue
+                previous = saved_turn_result(turn, session)
+                if previous.get("paper_id") != paper_id:
+                    break
+                history.append((turn["user"], previous.get("answer", "")))
+            with manager_for(REPO_ROOT).session() as runtime:
+                model = (runtime or {}).get("model") or settings.answer_model
+                window = ask_corpus.effective_model_context(settings, model=model)
+                reserve = min(ask_corpus.answer_num_predict(None), max(192, window // 4))
+                prompt, shortened = discussion_prompt(question, paper["title"], chunks, history[::-1], window, reserve)
+                compacted = compacted or shortened
+                if progress:
+                    progress("Discussing your paper")
+                reply = ask_corpus.generate_answer_with_backend(prompt, backend=settings.backend, model=model,
+                    num_ctx=window, num_predict=reserve, timeout=180).llm_result
+                answer = (reply.answer or "").strip()
+                if not answer:
+                    if re.search(r"context (?:length|window|limit)|prompt (?:is )?too long", str(reply.error or ""), re.I):
+                        raise ValueError("The model's context is full. Start a new chat and reattach the paper, or shorten this question.")
+                    raise ValueError("The model did not return an answer. Check Models and retry; your paper is still attached.")
+        index = next_session_turn_index(session)
+        turn_dir = session / f"turn_{index:03d}_{ask_corpus.slugify(question)}"
+        commit_answer()
+        turn_dir.mkdir(parents=True, exist_ok=True)
+        path = turn_dir / "answer.md"
+        path.write_text(answer, encoding="utf-8")
+        result = dict(task="paper_discussion", paper_id=paper_id, answer=answer, answer_state="answered",
+                      sources=[{"paper_id": paper_id, "title": paper["title"]}], history_compacted=compacted,
+                      output_dir=relative_path(turn_dir), answer_path=relative_path(path),
+                      elapsed_seconds=round(time.monotonic() - started, 3))
+        write_json(turn_dir / "public_result.json", result)
+        ensure_session_title(session, paper["title"])
+        append_turn_summary(session, question, question, "paper_discussion", result, turn_dir)
+        return result
 
     def load_session(self, session_dir_text: str) -> dict:
         with self.lock:
@@ -1359,6 +1447,7 @@ class LibrarySyncManager:
         schedule_import: bool = True,
         collection_directory: Path | None = None,
         collection: str = '',
+        discussion: bool = False,
     ) -> dict[str, object]:
         if content_length < 5:
             raise ValueError("Uploaded PDF is empty.")
@@ -1392,7 +1481,6 @@ class LibrarySyncManager:
             with temporary.open("rb") as handle:
                 if handle.read(5) != b"%PDF-":
                     raise ValueError("Uploaded file does not have a PDF signature.")
-            temporary.replace(target)
             if clean_doi:
                 target.with_suffix(target.suffix + ".doi.txt").write_text(
                     clean_doi + "\n", encoding="utf-8"
@@ -1403,6 +1491,7 @@ class LibrarySyncManager:
                         "schema_version": "pfempire_web_upload_v1",
                         "upload_id": upload_id,
                         "original_filename": original,
+                        "discussion": discussion,
                         "uploaded_by_user_id": str(uploaded_by or ""),
                         "uploaded_at": datetime.now().isoformat(timespec="seconds"),
                     },
@@ -1412,9 +1501,14 @@ class LibrarySyncManager:
                 + "\n",
                 encoding="utf-8",
             )
+            if discussion:
+                write_json_atomically(self.inbox / ".discussion" / (upload_id + ".json"),
+                                      {"status": "pending", "title": original}, mode=0o600)
+            temporary.replace(target)
         except Exception:
             self.collection_uploads.discard(upload_id)
             temporary.unlink(missing_ok=True)
+            (self.inbox / ".discussion" / (upload_id + ".json")).unlink(missing_ok=True)
             target.unlink(missing_ok=True)
             target.with_suffix(target.suffix + ".doi.txt").unlink(missing_ok=True)
             target.with_suffix(target.suffix + ".upload.json").unlink(missing_ok=True)
@@ -1465,6 +1559,14 @@ class LibrarySyncManager:
                     self.read_cache_refresh()
                 self._update(stage="Refreshing the library and linking collections", progress=98)
                 self.refresh_callback()
+                for entry in summary.get("results", []):
+                    token = entry.get("upload_id", "")
+                    if not re.fullmatch(r"[0-9a-f]{20}", token):
+                        continue
+                    receipt = self.inbox / ".discussion" / (token + ".json")
+                    if receipt.exists():
+                        write_json_atomically(receipt, {k: entry.get(k, "") for k in
+                            ("status", "paper_id", "title", "reason")}, mode=0o600)
                 if self.collection_uploads.path.exists():
                     self.collection_uploads.finish(summary.get('results', []), library_catalog())
             except Exception as exc:
@@ -2152,6 +2254,13 @@ def build_handler(
                 else:
                     self.respond_json(library_manager.status())
                 return
+            if parsed.path == "/api/paper-focus":
+                try:
+                    target = discussion_session(current_app.out_dir, parse_qs(parsed.query).get("session_dir", [""])[0])
+                    self.respond_json(self.paper_focus(target))
+                except (ValueError, OSError) as exc:
+                    self.respond_json({"error": str(exc)}, status=400)
+                return
             if parsed.path == "/api/paper-imports":
                 self.respond_json({"jobs": paper_imports.snapshot(owner_key)})
                 return
@@ -2319,6 +2428,28 @@ def build_handler(
                     self.respond_json({'error': 'Reload the local chat or sign in.'}, status=403)
                     return
                 self.handle_dictation()
+                return
+            if parsed.path == "/api/paper-focus":
+                if not auth_store and not local_browser_request(self.server.server_address, self.client_address, self.headers):
+                    self.respond_json({"error": "Open the local chat or sign in."}, status=403)
+                    return
+                if self.headers.get_content_type() != "application/json":
+                    self.respond_json({"error": "Use a JSON request."}, status=415)
+                    return
+                try:
+                    data = self.read_json_body()
+                    target = discussion_session(current_app.out_dir, str(data.get("session_dir") or ""))
+                    paper_id = str(data.get("paper_id") or "")
+                    focus = {}
+                    if paper_id:
+                        paper = next((p for p in library_catalog(for_chat=True) if p["paper_id"] == paper_id and p["searchable"]), None)
+                        if not paper:
+                            raise ValueError("Choose a paper with indexed full text.")
+                        focus = {"status": "ready", "paper_id": paper_id, "title": paper["title"]}
+                    write_json_atomically(target / "paper_focus.json", focus, mode=0o600)
+                    self.respond_json(focus)
+                except (ValueError, OSError) as exc:
+                    self.respond_json({"error": str(exc)}, status=400)
                 return
             if parsed.path == '/api/document-sync':
                 self.handle_document_sync(current_app, post=True)
@@ -2552,18 +2683,25 @@ def build_handler(
                     return
                 try:
                     length = int(self.headers.get("Content-Length") or "0")
+                    session = self.headers.get("X-Discussion-Session")
+                    if session and not runtime_profile.rag:
+                        raise ValueError("Paper discussions require the chat workspace.")
+                    target = discussion_session(current_app.out_dir, unquote(session)) if session else None
                     response = library_manager.store_upload(
                         self.rfile,
                         content_length=length,
                         filename=unquote(str(self.headers.get("X-Paper-Filename") or "paper.pdf")),
                         doi=str(self.headers.get("X-Paper-DOI") or ""),
                         uploaded_by=owner_key,
+                        discussion=bool(target),
                         collection_directory=REPO_ROOT / current_app.out_dir,
                         collection=str(self.headers.get('X-OriginRAG-Collection') or ''),
                         schedule_import=(
                             str(self.headers.get("X-Paper-Defer-Sync") or "") != "1"
                         ),
                     )
+                    if target:
+                        write_json_atomically(target / "paper_focus.json", {"upload_id": response["upload_id"]}, mode=0o600)
                 except Exception as exc:
                     self.respond_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                     return
@@ -2609,6 +2747,14 @@ def build_handler(
 
 
                 settings_update["task"] = "auto"
+                settings_update.pop("_discussion_id", None)
+                focus = self.paper_focus(target_session)
+                if "expected_paper_id" in payload and payload["expected_paper_id"] != focus.get("paper_id", ""):
+                    raise ValueError("The attached paper changed. Reopen this chat and retry.")
+                if focus and not focus.get("paper_id"):
+                    raise ValueError(focus.get("reason") or "Your paper is not ready. Wait for indexing or remove the attachment.")
+                if focus:
+                    settings_update["_discussion_id"] = focus["paper_id"]
                 if auth_store and user:
                     enforce_saved_chat_limit(
                         current_app,
@@ -2861,6 +3007,19 @@ def build_handler(
                 self.respond_json({'error': 'Transcription could not finish. Try again.'}, status=503)
             finally:
                 dictation_slot.release()
+
+        def paper_focus(self, target):
+            path = target / "paper_focus.json"
+            state = json.loads(path.read_text()) if path.is_file() else {}
+            token = state.get("upload_id", "")
+            if re.fullmatch(r"[0-9a-f]{20}", token):
+                receipt = library_manager.inbox / ".discussion" / (token + ".json") if library_manager else None
+                if not receipt or not receipt.is_file():
+                    return {"status": "error", "reason": "Upload receipt unavailable. Select the paper from Library."}
+                state = json.loads(receipt.read_text())
+                if state["status"] == "pending" and library_manager.status().get("state") == "error":
+                    return {"status": "error", "reason": "Indexing failed. Check the library update or retry."}
+            return state
 
         def library_access(self, user) -> dict:
             if not library_manager:
@@ -4766,6 +4925,7 @@ def append_turn_summary(
                 f"\n## Turn: {user_text}",
                 f"Retrieval question: {retrieval_question}",
                 f"Task: {resolved_task}",
+                *([f"Paper focus: {result['paper_id']}"] if resolved_task == "paper_discussion" else []),
                 f"Output: {relative_path(turn_dir)}",
                 f"QC passed: {qc.get('passed')}",
                 f"Attempts: {', '.join(str(item.get('kind')) for item in attempts) or 'none'}",
@@ -4857,6 +5017,9 @@ def read_session_turns(session_dir: Path) -> list[dict]:
         elif current is not None and line.startswith("Output: "):
             current["output"] = line.removeprefix("Output: ").strip()
             reading_sources = False
+        elif current is not None and line.startswith("Paper focus: "):
+            current["paper_id"] = line.removeprefix("Paper focus: ").strip()
+            reading_sources = False
         elif current is not None and line == "Sources:":
             current["sources"] = []
             reading_sources = True
@@ -4875,7 +5038,7 @@ def session_messages(session_dir: Path) -> list[dict]:
         user_text = str(turn.get("user") or "").strip()
         if user_text:
             messages.append({"role": "user", "text": user_text})
-        saved_result = saved_turn_result(turn)
+        saved_result = saved_turn_result(turn, session_dir)
         answer = str(saved_result.get("answer") or "") or saved_turn_answer(turn)
         if answer:
             message = {"role": "assistant", "text": answer}
@@ -4885,12 +5048,17 @@ def session_messages(session_dir: Path) -> list[dict]:
     return messages
 
 
-def saved_turn_result(turn: dict) -> dict:
+def saved_turn_result(turn: dict, session_dir: Path | None = None) -> dict:
     output_text = str(turn.get("output") or "")
     if not output_text:
         return {}
     try:
-        output_dir = safe_repo_file(output_text)
+        if session_dir is None:
+            output_dir = safe_repo_file(output_text)
+        else:
+            output_dir = (REPO_ROOT / output_text).resolve()
+            if output_dir.parent != session_dir.resolve():
+                return {}
     except ValueError:
         return {}
     result_path = output_dir / "public_result.json"
@@ -5044,6 +5212,13 @@ def rename_saved_session(
     if session_dir.resolve() == current_session_dir.resolve():
         return written_title
     return written_title
+
+
+def discussion_session(out_dir, value):
+    path = safe_session_dir(out_dir, value)
+    if path.parent != (REPO_ROOT / out_dir).resolve() or not (path / "session.md").is_file():
+        raise ValueError("Select an existing chat.")
+    return path
 
 
 def safe_session_dir(out_dir: Path, session_dir_text: str) -> Path:
@@ -6685,6 +6860,13 @@ INDEX_HTML = r"""<!doctype html>
       padding-left: 18px;
       color: var(--muted);
     }
+    #paperContext { display:flex; align-items:center; gap:.5rem; min-width:0; }
+    #attachMenu { position:relative; flex:none; }
+    #attachMenu summary { cursor:pointer; }
+    #attachMenu div { position:absolute; bottom:100%; left:0; z-index:5; background:var(--panel,#172027); padding:.6rem; border-radius:.7rem; width:max-content; box-shadow:0 4px 18px #0006; }
+    #attachMenu button:not([hidden]) { display:block; width:100%; text-align:left; }
+    #focusTitle { max-width:min(50vw,32rem); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    :root:not([data-theme="light"]) .msg.paper-discussion .bubble { background:rgba(13,15,16,.96); box-shadow:none; }
     .composer {
       grid-area: composer;
       position: relative;
@@ -7136,7 +7318,15 @@ INDEX_HTML = r"""<!doctype html>
       </section>
       <form class="composer" id="form">
         <div class="composer-context">
-          <span>Enter to send · Shift+Enter for a new line</span>
+          <div id="paperContext">
+            <details id="attachMenu"><summary>Attach paper</summary><div>
+              <button type="button" id="focusBrowse">From Library</button>
+              <button type="button" id="focusUpload" hidden>Upload PDF to library…</button>
+            </div></details>
+            <input type="file" id="focusFile" accept=".pdf,application/pdf" hidden>
+            <span id="focusTitle" role="status"></span>
+            <button type="button" id="focusClear" aria-label="Remove paper from chat" title="Return to corpus chat" hidden>×</button>
+          </div>
           <button id="composerStop" type="button" hidden aria-label="Stop current request">■ Stop</button>
         </div>
         <div id="dictationPanel" hidden>
@@ -7419,6 +7609,7 @@ INDEX_HTML = r"""<!doctype html>
       if (hero) hero.remove();
       const wrap = document.createElement("div");
       wrap.className = `msg ${role}`;
+      if (result?.task === "paper_discussion") wrap.classList.add("paper-discussion");
       const roleEl = document.createElement("div");
       roleEl.className = "role";
       roleEl.textContent = role === "user" ? "You" : "OriginRAG";
@@ -7596,6 +7787,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function setSessionNavigationPending(isPending) {
+      if (!isPending) refreshFocus();
       if (isPending) form.dispatchEvent(new Event('origin:cancel-dictation'));
       sessionNavigationPending = isPending;
       updateComposerStop();
@@ -7766,6 +7958,14 @@ INDEX_HTML = r"""<!doctype html>
 
     function resultMeta(data) {
       const box = document.createElement("div");
+      if (data.task === "paper_discussion") {
+        const link = document.createElement("a");
+        link.href = "/reader?paper_id=" + encodeURIComponent(data.paper_id);
+        link.textContent = "Open paper ↗";
+        box.append(link);
+        if (data.history_compacted) box.append(" · Earlier conversation condensed");
+        return box;
+      }
       if (data.task === "paper_summaries") {
         for (const part of data.parts || []) {
           const details = document.createElement("details");
@@ -8744,6 +8944,10 @@ INDEX_HTML = r"""<!doctype html>
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (submittingTurn || libraryBusy || sessionNavigationPending || form.dataset.dictating === 'yes') return;
+      if (focusChanging || (paperFocus.status && !paperFocus.paper_id)) {
+        statusEl.textContent = "Wait for the paper or remove the attachment to search the corpus.";
+        return;
+      }
       const text = message.value.trim();
       if (!text) return;
       const submittedSession = currentSessionDir;
@@ -8763,6 +8967,7 @@ INDEX_HTML = r"""<!doctype html>
           timeout: 60000,
           payload: {
             message: text,
+            expected_paper_id: paperFocus.paper_id || "",
             settings: settings(),
             session_dir: submittedSession
           }
@@ -9378,6 +9583,59 @@ INDEX_HTML = r"""<!doctype html>
       libraryButton.focus();
     }
 
+    const focusEl = id => document.getElementById(id);
+    let paperFocus = {}, focusChanging = false, focusVersion = 0;
+    function drawFocus(data) {
+      paperFocus = data;
+      const label = data.paper_id ? data.title : data.status === "pending" ? "Indexing paper…" : data.reason || "";
+      focusEl("focusTitle").textContent = label;
+      focusEl("focusTitle").title = label;
+      focusEl("focusClear").hidden = !data.status;
+      message.placeholder = data.paper_id ? "Ask about this paper…" : "Ask a question about your corpus...";
+    }
+    async function refreshFocus() {
+      const session = currentSessionDir, version = ++focusVersion;
+      if (!session) { drawFocus({}); return; }
+      try {
+        const response = await fetch("/api/paper-focus?session_dir=" + encodeURIComponent(session));
+        if (!response.ok) throw new Error("Could not check the attached paper.");
+        const data = await response.json();
+        if (session === currentSessionDir && version === focusVersion) drawFocus(data);
+      } catch (error) {
+        if (session === currentSessionDir && version === focusVersion) statusEl.textContent = error.message;
+      }
+    }
+    async function changeFocus(paperId, file) {
+      const session = currentSessionDir;
+      if (!session || focusChanging || sessionNavigationPending) return false;
+      focusChanging = true;
+      ++focusVersion;
+      try {
+        const response = file ? await fetch("/api/library-upload", {method:"POST", headers:{
+          "Content-Type":"application/pdf", "X-Paper-Filename":encodeURIComponent(file.name),
+          "X-Discussion-Session":encodeURIComponent(session)}, body:file})
+          : await fetch("/api/paper-focus", {method:"POST", headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({session_dir:session, paper_id:paperId})});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not attach paper.");
+        if (session !== currentSessionDir) return false;
+        drawFocus(file ? {status:"pending"} : data);
+        if (file) await refreshFocus();
+        message.focus();
+        return true;
+      } catch (error) {
+        if (session === currentSessionDir) statusEl.textContent = error.message;
+        return false;
+      } finally { focusChanging = false; }
+    }
+    focusEl("focusBrowse").onclick = () => { focusEl("attachMenu").open = false; openLibraryBrowser(); };
+    focusEl("focusUpload").onclick = () => { focusEl("attachMenu").open = false; focusEl("focusFile").click(); };
+    focusEl("focusFile").onchange = event => {
+      const file = event.target.files[0]; event.target.value = "";
+      if (file) changeFocus("", file);
+    };
+    focusEl("focusClear").onclick = () => changeFocus("");
+
     function libraryPaperCard(paper) {
       const article = document.createElement("article");
       article.className = "library-paper";
@@ -9406,17 +9664,23 @@ INDEX_HTML = r"""<!doctype html>
         ? "● searchable full text"
         : (paper.local_pdf ? "○ PDF present · indexing pending" : "○ metadata only");
       links.appendChild(status);
+      const discuss = document.createElement("button");
+      discuss.type = "button"; discuss.className = "ghost"; discuss.textContent = "Discuss";
+      discuss.disabled = !paper.searchable;
+      discuss.onclick = async () => { if (await changeFocus(paper.paper_id)) { closeLibraryBrowser(); message.focus(); } };
+      links.append(discuss);
       const summarize = document.createElement("button");
       summarize.type = "button";
       summarize.className = "ghost";
       summarize.textContent = "Summarize";
       summarize.disabled = !(paper.summary_available || paper.searchable);
       summarize.title = summarize.disabled ? "Add an accessible PDF and wait for indexing first" : "Read a short summary with source passages";
-      summarize.addEventListener("click", () => {
+      summarize.addEventListener("click", async () => {
         if (submittingTurn || message.value.trim()) {
           libraryResultCount.textContent = "Send or clear your current draft before starting a summary.";
           return;
         }
+        if (!(await changeFocus(paper.searchable ? paper.paper_id : ""))) return;
         closeLibraryBrowser();
         const prefix = "Summarize this paper: ";
         message.value = prefix + (paper.doi || paper.title);
@@ -9624,6 +9888,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function renderLibraryStatus(data) {
+      if (paperFocus.status === "pending" && !focusChanging) refreshFocus();
       const state = String(data.state || "idle");
       libraryBusy = state === "queued" || state === "running";
       const batchId = String(data.batch_id || "");
@@ -9827,6 +10092,8 @@ INDEX_HTML = r"""<!doctype html>
           logoutButton.hidden = false;
         }
         paperUploadButton.hidden = !data.library_access?.enabled;
+        focusEl("focusUpload").hidden = paperUploadButton.hidden;
+        if (initializeSession) refreshFocus();
         for (const key of ["backend", "preset"]) {
           const el = document.getElementById(key);
           if (el && s[key]) el.value = s[key];
