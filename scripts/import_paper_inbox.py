@@ -53,6 +53,7 @@ REPORT_FIELDS = (
     "author",
     "year",
     "journal",
+    "paper_type",
     "category",
     "local_pdf_relpath",
     "chunk_count",
@@ -74,6 +75,7 @@ class Candidate:
     target_relpath: str
     pages: list[dict]
     chunks: list[dict]
+    paper_type: str = ""
 
 
 def parse_args() -> argparse.Namespace:
@@ -211,6 +213,7 @@ def import_inbox(
                 author=candidate.author,
                 year=candidate.year,
                 journal=candidate.journal,
+                paper_type=candidate.paper_type,
                 category=candidate.category,
                 local_pdf_relpath=candidate.target_relpath,
                 chunk_count=str(len(candidate.chunks)),
@@ -490,12 +493,14 @@ def recover_imported_metadata(*, timeout: int = 5) -> dict:
             or (existing_paper or {}).get("journal")
             or report.get("journal")
         )
-        if doi and not all((title, author, year, journal)):
+        paper_type = clean_text((existing_paper or {}).get("paper_type") or report.get("paper_type"))
+        if doi and (not all((title, author, year, journal)) or (not existing_paper and not paper_type)):
             crossref = fetch_crossref(doi, timeout=timeout) or {}
             title = title or clean_text(crossref.get("title"))
             author = author or clean_text(crossref.get("author"))
             year = year or clean_year(crossref.get("year"))
             journal = journal or clean_text(crossref.get("journal"))
+            paper_type = paper_type or clean_text(crossref.get("paper_type"))
         author = author or "Unknown"
         year = year or "nd"
         category = clean_text(
@@ -514,6 +519,7 @@ def recover_imported_metadata(*, timeout: int = 5) -> dict:
 
         candidate = Candidate(
             source=pdf_path,
+            paper_type=paper_type,
             sha256=sha256_file(pdf_path),
             doi=doi,
             title=title,
@@ -756,6 +762,7 @@ def inspect_candidate(
         raise ReviewRequired("no searchable text chunks could be produced")
     return Candidate(
         source=source,
+        paper_type=clean_text(crossref.get("paper_type")),
         sha256=digest,
         doi=doi,
         title=title,
@@ -800,8 +807,16 @@ def fetch_crossref(doi: str, *, timeout: int) -> dict[str, object] | None:
         "author": str(author or ""),
         "year": crossref_year(item),
         "journal": first_list_value(item.get("container-title")),
+        "paper_type": crossref_paper_type(item),
         "subjects": [clean_text(value) for value in item.get("subject") or [] if clean_text(value)],
     }
+
+
+def crossref_paper_type(item: dict) -> str:
+    kind = clean_text(item.get("type")).lower()
+    if kind == "posted-content" and clean_text(item.get("subtype")).lower() == "preprint":
+        return "preprint"
+    return kind.replace("-", " ")
 
 
 def paper_metadata_row(candidate: Candidate, fields: list[str]) -> dict[str, str]:
@@ -815,7 +830,7 @@ def paper_metadata_row(candidate: Candidate, fields: list[str]) -> dict[str, str
         "doi": candidate.doi,
         "domain": paper_domain(candidate.category),
         "topics": candidate.category,
-        "paper_type": "journal article",
+        "paper_type": candidate.paper_type,
         "fulltext_status": "chunked" if candidate.chunks else "pdf_available",
         "local_pdf_relpath": candidate.target_relpath,
         "extracted_text_relpath": f"data/extracted_text/{candidate.paper_id}.json" if candidate.pages else '',
@@ -1229,6 +1244,7 @@ def bibtex_entry(candidate: Candidate) -> str:
         ("author", candidate.author),
         ("title", candidate.title),
         ("journal", candidate.journal),
+        ("note", "Preprint" if candidate.paper_type == "preprint" else ""),
         ("year", "" if candidate.year == "nd" else candidate.year),
         ("doi", candidate.doi),
         ("url", f"https://doi.org/{candidate.doi}"),

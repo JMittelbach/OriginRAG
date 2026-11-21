@@ -26,7 +26,8 @@ from originrag.analysis.answer_format import normalize_answer_format  # noqa: E4
 from originrag.analysis.chat import model_requests_bibliography  # noqa: E402
 from originrag.analysis.question_understanding import named_method_subject, understand_question, understanding_plan  # noqa: E402
 from originrag.retrieval.method_description import contains_flattened_table, describes_named_method  # noqa: E402
-from originrag.retrieval.research_passages import reading_passages, reading_result, report_author  # noqa: E402
+from originrag.retrieval.research_passages import interleave_passages, reading_passages, reading_result, report_author, report_queries  # noqa: E402
+from originrag.retrieval.report_scope import exclusive_single_report_doi, extract_explicit_dois, normalize_doi_text  # noqa: E402
 from originrag.analysis.corpus_inventory import extract_inventory  # noqa: E402
 from originrag.summaries.reading_card import summary_request, load_paper, create_card, card_markdown  # noqa: E402
 from originrag.analysis.answer_backends import (  # noqa: E402
@@ -528,6 +529,14 @@ def run_question(
     scoped_paper = None
     direct_reading = (getattr(args, "evidence_selector", None) == "research" and task == "answer"
                       and not getattr(args, "candidate_pool", None) and not getattr(args, "adaptive", False))
+    if direct_reading and exclusive_report_doi and report_queries(user_question, exclusive_report_doi):
+        matches = [pid for pid, row in load_paper_metadata(papers_tsv).items()
+                   if normalize_doi_text(row.get("doi") or "") == exclusive_report_doi]
+        if not matches:
+            raise ValueError(f"Requested single-report DOI {exclusive_report_doi} is not present in the local catalogue. "
+                             "No other reports were substituted.")
+        if len(matches) == 1 and (chunks_dir / f"{matches[0]}.jsonl").is_file():
+            scoped_paper = matches[0]
     if (direct_reading
             and not extract_explicit_dois(user_question) and (author_year := report_author(user_question))):
         author, year = author_year
@@ -666,15 +675,20 @@ def run_question(
         query_plan = plan_queries(user_question, planner_backend="rule_based", task=task)
         retrieval_queries = retrieval_queries_from_plan(query_plan)
         _, rows = load_paper(scoped_paper, papers_tsv, chunks_dir)
-        results = search_chunks(
-            user_question, chunks_dir, papers_tsv, paper_id=scoped_paper, category=args.category,
-            candidate_records=tuple((scoped_paper + ".jsonl", i, row) for i, row in enumerate(rows, 1)
-                                    if row.get("paper_id") == scoped_paper),
-            limit=evidence_limit, max_per_paper=evidence_limit, include_low_quality=args.include_low_quality,
-            exclude_tables=args.exclude_tables, exclude_figures=args.exclude_figures,
-            exclude_supplement=args.exclude_supplement, min_score=args.min_score, query_mode=args.query_mode,
-            prefer_sections=["methods", "abstract"] if re.search(r"\b(methods?|measured|compared|methode\w*|gemessen)\b", user_question, re.I) else None,
-        )
+        records = tuple((scoped_paper + ".jsonl", i, row) for i, row in enumerate(rows, 1)
+                        if row.get("paper_id") == scoped_paper)
+        rankings = []
+        for clause in report_queries(user_question, exclusive_report_doi):
+            ranked = search_chunks(
+                clause, chunks_dir, papers_tsv, paper_id=scoped_paper, category=args.category,
+                candidate_records=records, limit=evidence_limit, max_per_paper=evidence_limit,
+                include_low_quality=args.include_low_quality, exclude_tables=args.exclude_tables,
+                exclude_figures=args.exclude_figures, exclude_supplement=args.exclude_supplement,
+                min_score=args.min_score, query_mode=args.query_mode,
+                prefer_sections=["methods", "abstract"] if re.search(r"\b(methods?|measured|compared|methode\w*|gemessen)\b", clause, re.I) else None,
+            )
+            rankings.append([{**row, "report_search_clause": clause} for row in ranked])
+        results = interleave_passages(rankings, evidence_limit)
     elif candidate_pool_path is not None:
         query_plan = plan_queries(
             retrieval_question,
@@ -1194,8 +1208,11 @@ def run_question(
     )
     design_context_by_paper: dict[str, str] = {}
     lineage_context_by_paper: dict[str, list[dict]] = {}
+    reading_metadata = load_paper_metadata(papers_tsv) if research_chat and pack.get("chunks") else {}
     for chunk in pack.get("chunks", []):
         paper_id = str(chunk.get("paper_id") or "")
+        if reading_metadata.get(paper_id, {}).get("paper_type", "").casefold() == "preprint":
+            chunk["publication_status"] = "preprint"
         if not research_chat and paper_id and paper_id not in design_context_by_paper:
             lineage_context_by_paper[paper_id] = load_document_lineage_context(
                 chunks_dir, paper_id
@@ -6542,38 +6559,6 @@ def named_study_summary_excerpt(text: str, *, max_chars: int = 3_500) -> str:
     return raw[:max_chars].strip()
 
 
-def extract_explicit_dois(text: str) -> set[str]:
-    matches = re.findall(r"10\.\d{4,9}/[^\s<>\]\[{}]+", text or "", flags=re.IGNORECASE)
-    return {normalize_doi_text(match) for match in matches if normalize_doi_text(match)}
-
-
-def exclusive_single_report_doi(question: str) -> str | None:
-    """Recognize explicit single-report instructions, never infer them from a DOI alone."""
-    requested = extract_explicit_dois(question)
-    if len(requested) != 1:
-        return None
-    normalized = normalize_text(question.casefold())
-    if re.search(
-        r"\b(?:compare|contrast|versus|vs|vergleiche|vergleichen|vergleich|gegenuber)\b|"
-        r"\b(?:not|nicht) (?:only|exclusively|solely|nur|ausschliesslich)\b|"
-        r"\b(?:not|dont|nicht) (?:limit|restrict|confine|beschrank\w*)\b|"
-        r"\b(?:other|additional|related|independent|weitere|anderen|andere|zusatzliche) "
-        r"(?:papers?|reports?|studies|articles?|literature|studien|artikel|berichte)\b",
-        normalized,
-    ):
-        return None
-    explicit_only = re.search(
-        r"\b(?:describe|discuss|explain|analyse|analyze|use|review|consider) "
-        r"(?:this|that|the|one) (?:single )?(?:paper|report|study|article) only\b|"
-        r"\b(?:describe|discuss|explain|analyse|analyze|use|review|consider) "
-        r"(?:only|exclusively|solely) (?:this|that|the|one) (?:single )?"
-        r"(?:paper|report|study|article)\b|"
-        r"\b(?:beschreibe|analysiere|verwende|nutze|erlautere|bitte) "
-        r"(?:nur|ausschliesslich) (?:dieses|diesen|diese|das|den|die) "
-        r"(?:(?:einzelne[nmsr]?|eine[nmsr]?) )?(?:paper|bericht|artikel|studie)\b",
-        normalized,
-    )
-    return next(iter(requested)) if explicit_only else None
 
 
 def retain_single_report_doi_candidates(
@@ -6622,9 +6607,6 @@ def paper_search_record_matches_requested_doi(
     )
 
 
-def normalize_doi_text(value: str) -> str:
-    clean = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", value.strip(), flags=re.IGNORECASE)
-    return clean.rstrip(".,;:!?)]}\"").lower()
 
 
 def identifier_anchor_chunk_priority(chunk: dict) -> tuple[int, int]:

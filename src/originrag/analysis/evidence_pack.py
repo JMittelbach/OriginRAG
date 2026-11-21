@@ -159,7 +159,7 @@ def evidence_text_for_pack(
             else NAMED_STUDY_SUMMARY_MIN_CHARS
         )
         return truncate_text(clean_evidence_text(text), max(max_chars_per_chunk, named_limit))
-    window_question = question
+    window_question = result.get("report_search_clause") or question
     required_anchor_groups = result.get("required_entity_anchors") or []
     if (
         result.get("required_entity_anchors_verified")

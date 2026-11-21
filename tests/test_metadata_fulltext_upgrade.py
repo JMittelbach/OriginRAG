@@ -61,6 +61,23 @@ def test_metadata_only_record_is_upgraded_without_duplicate_ids(tmp_path, monkey
     assert repeated["imported"] == 0 and repeated["duplicates"] == 1
 
 
+def test_import_distinguishes_preprints_from_journal_articles(tmp_path, monkeypatch):
+    source, metadata = setup_library(tmp_path, monkeypatch)
+    assert inbox.crossref_paper_type({"type":"journal-article"}) == "journal article"
+    assert inbox.crossref_paper_type({"type":"posted-content"}) == "posted content"
+    assert inbox.crossref_paper_type({}) == ""
+    kind = inbox.crossref_paper_type({"type":"posted-content", "subtype":"preprint"})
+    assert kind == "preprint"
+    fields, path = ["paper_id", "bib_key", "doi", "title", "paper_type", "fulltext_status"], metadata / "papers.tsv"
+    rows, _ = inbox.read_tsv(path)
+    inbox.write_tsv_atomic(path, rows, fields)
+    fetch = inbox.fetch_crossref
+    monkeypatch.setattr(inbox, "fetch_crossref", lambda doi, *, timeout: {**fetch(doi, timeout=timeout), "paper_type": kind})
+    assert inbox.import_inbox(source.parent)["imported"] == 1
+    assert inbox.read_tsv(path)[0][0]["paper_type"] == "preprint"
+    assert "note = {Preprint}" in (tmp_path / "bib/pfempire_library.bib").read_text()
+
+
 def test_real_import_accepts_product_source_manifest(tmp_path, monkeypatch):
     import json
     source, _ = setup_library(tmp_path, monkeypatch)

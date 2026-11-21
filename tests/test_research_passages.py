@@ -1,4 +1,20 @@
 from originrag.retrieval.research_passages import reading_passages, reading_result, report_author
+from originrag.retrieval.research_passages import interleave_passages, report_queries
+
+
+def test_scoped_query_does_not_search_for_the_identifier_or_mix_question_parts():
+    doi = "10.1234/example.b"
+    assert report_queries("Where were sensors placed and how were they calibrated? "
+                          f"Describe this single report only: https://doi.org/{doi}.", doi) == [
+        "Where were sensors placed", "how were they calibrated"]
+    assert report_queries(f"Beschreibe nur diesen einzelnen Bericht: DOI {doi}.", doi) == []
+    assert report_queries("Were both length and width measured?") == ["Were both length and width measured"]
+
+
+def test_clause_rankings_share_budget_and_never_duplicate_evidence():
+    a,b,c,d = ({"chunk_id": key} for key in "abcd")
+    assert interleave_passages([[a,b,c], [d,a]], 3) == [a,d,b]
+    assert interleave_passages([[], [c,a]], 5) == [c,a]
 
 
 def chunk(i, text, **extra):
@@ -19,6 +35,13 @@ def test_no_hit_does_not_answer_from_title_or_rejected_draft():
             chunk(2, "Optical sensor calibration with two probes.", section="references")]
     assert not reading_passages("Optical sensor calibration?", rows)
     assert "in this search" in reading_result([])
+
+
+def test_front_page_affiliations_are_not_presented_as_findings():
+    quote = "Paired measurements reduced the calibration error in both instruments."
+    r = chunk(1, "RESEARCH ARTICLE Calibration error in paired instruments Department of Calibration Abstract " + quote,
+              page_range="1-2")
+    assert reading_passages("What was the calibration error?", [r]) == [(r, quote)]
 
 
 def test_singular_author_scope_is_not_a_comparison():

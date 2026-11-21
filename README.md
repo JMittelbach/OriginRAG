@@ -93,7 +93,8 @@ They become searchable when the update finishes; uncertain imports are flagged
 for review. Catalogue-only entries are not full-text papers.
 
 Ask a question in chat and open the cited passages. You can ask what a single
-paper did without needing a second study to corroborate its methods.
+paper did without needing a second study to corroborate its methods. For example,
+“In the paper with DOI …, where were participants recruited and how long were they followed?”
 **Read cited passages** shows the text behind an answer, with pages where available. If a
 summary cannot be verified, chat shows matching extracts when available.
 The stricter study-overlap audit is optional: `./web --evidence-selector trace_flow`.

@@ -133,14 +133,15 @@ def _enrich_from_manifest(metadata: dict[str, dict[str, str]], manifest_path: Pa
 
 
 def _enrich_from_registry(metadata: dict[str, dict[str, str]], registry_path: Path) -> None:
+    rows = _read_tsv(registry_path)
     registry_by_relpath = {
         row.get("local_pdf_relpath", ""): row
-        for row in _read_tsv(registry_path)
+        for row in rows
         if row.get("local_pdf_relpath")
     }
     registry_by_paper_id = {
         row.get("paper_id", ""): row
-        for row in _read_tsv(registry_path)
+        for row in rows
         if row.get("paper_id")
     }
     for paper_id, record in metadata.items():

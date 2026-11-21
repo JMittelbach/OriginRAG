@@ -188,6 +188,11 @@ def resolve_chat_task(
     # The deliverable takes precedence over topic words such as "gap junctions".
     if paper_list_request(question):
         return "sources"
+    if "10." in question:
+        from originrag.retrieval.report_scope import exclusive_single_report_doi
+
+        if exclusive_single_report_doi(question):
+            return "answer"
     if any(re.search(pattern, lowered) for pattern in SYNTHESIS_REQUEST_PATTERNS):
         return "answer"
     reported_hypothesis = re.search(r"\b(?:what|which|whose|welche)\s+hypothes\w*\b", lowered) and re.search(

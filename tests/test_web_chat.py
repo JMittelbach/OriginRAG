@@ -350,6 +350,16 @@ def test_library_catalog_merges_metadata_and_searches_without_model(tmp_path: Pa
     assert search_library_catalog("turn nature", catalogue=catalogue)["total"] == 1
 
 
+def test_chat_catalogue_skips_retired_records_and_browsing_clusters(tmp_path, monkeypatch):
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tfulltext_status\nA\tSensors\tchunked\nB\tWrong acronym\tarchived\n"
+                      "C\tMetadata only\tmetadata_only\nD\tDuplicate\tduplicate\n")
+    args = (str(tmp_path / "registry.tsv"), str(papers), str(tmp_path), str(tmp_path))
+    assert len(library_catalog(*args)) == 4
+    monkeypatch.setattr(web_chat, "assign_library_topics", lambda *_: pytest.fail("Chat ran dashboard clustering"))
+    assert {p["paper_id"] for p in library_catalog(*args, for_chat=True)} == {"A", "C"}
+
+
 def test_library_catalog_matches_author_accents_and_title_dashes_but_keeps_ids_literal():
     catalogue = (
         {"paper_id": "P_01", "author": "García", "authors": "García; Frédéric Noël",

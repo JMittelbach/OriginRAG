@@ -11,6 +11,7 @@ from pathlib import Path
 from originrag.analysis.ollama_client import answer_model, call_ollama_generate
 from originrag.analysis.chat_commands import controls
 from originrag.retrieval.llm_query_planner import parse_json_object
+from originrag.retrieval.metadata import load_paper_metadata
 
 VERSION = "reading_card_v4"
 FIELDS = ("overview", "question", "methods", "findings", "limitations")
@@ -97,13 +98,15 @@ def load_paper(target: str, papers_path: Path, chunks_dir: Path) -> tuple[dict, 
               if len(key.split()) >= 2 and len(key) >= 8 and not key.startswith("10.") else None)
     partial = []
     matches = []
+    catalogue = load_paper_metadata(papers_path)
     with papers_path.open(encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle, delimiter="\t"):
-            title = identity(row.get("title"))
-            if key and key in {identity(row.get("paper_id")), identity(row.get("doi")), title}:
-                matches.append(row)
+            record = catalogue.get(row.get("paper_id"), row)
+            title = identity(record.get("title"))
+            if key and key in {identity(record.get("paper_id")), identity(record.get("doi")), title}:
+                matches.append({**row, **record})
             elif phrase and phrase.search(title):
-                partial.append(row)
+                partial.append({**row, **record})
     if not matches:
         matches = partial
     if len(matches) != 1:

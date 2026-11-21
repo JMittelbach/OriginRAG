@@ -8,6 +8,17 @@ from originrag.library_presence import presence_language
 from originrag.retrieval.quick_list import more_list_request, paper_list_request
 
 
+@pytest.mark.parametrize("question", [
+    "Find three papers in my library on sensor calibration",
+    "Find three papers on sensor calibration in our corpus",
+    "Zeig mir drei Artikel aus meiner Bibliothek zu sensor calibration",
+])
+def test_local_list_keeps_requested_count_and_only_searches_topic(question):
+    request = paper_list_request(question)
+    assert (request.limit, request.topic) == (3, "sensor calibration")
+    assert paper_list_request(question + " and explain their findings") is None
+
+
 @pytest.mark.parametrize("text,expected", [
     ("Five more", ("en", 5)), ("Show me 7 more papers, please", ("en", 7)),
     ("Zeig mir fünf weitere", ("de", 5)), ("Noch mehr!", ("de", None)),

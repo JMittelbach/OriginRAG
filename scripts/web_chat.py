@@ -377,7 +377,7 @@ class WebChatApp:
             if direct is None and (language or listing or relative or selection or named):
                 papers = REPO_ROOT / settings.papers
                 catalogue = library_catalog(str(papers.with_name("paper_registry.tsv")), str(papers),
-                                            chunks_dir=str(REPO_ROOT / settings.chunks_dir))
+                                            chunks_dir=str(REPO_ROOT / settings.chunks_dir), for_chat=True)
                 if language:
                     direct = {"resolved_task": "library_status", "answer": presence_answer(catalogue, language)}
                 elif named:
@@ -1579,6 +1579,8 @@ def library_catalog(
     papers_path: str = str(REPO_ROOT / "data/metadata/papers.tsv"),
     bib_dir: str = "",
     chunks_dir: str = str(REPO_ROOT / "data/chunks"),
+    *,
+    for_chat: bool = False,
 ) -> tuple[dict[str, object], ...]:
     """Return the local paper catalogue without exposing filesystem paths."""
     registry_file = Path(registry_path)
@@ -1614,6 +1616,8 @@ def library_catalog(
 
     catalogue = []
     for paper_id, row in records.items():
+        if for_chat and row.get("fulltext_status", "").casefold() in {"archived", "duplicate", "excluded_no_doi"}:
+            continue
         title = _catalog_text(row.get("title")) or paper_id
         author = _catalog_text(row.get("author"))
         year = _catalog_text(row.get("year"))
@@ -1649,7 +1653,7 @@ def library_catalog(
         )
     return tuple(
         sorted(
-            assign_library_topics(catalogue),
+            catalogue if for_chat else assign_library_topics(catalogue),
             key=lambda item: (
                 str(item["author"]).casefold() or "~",
                 str(item["year"]),

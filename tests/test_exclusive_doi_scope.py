@@ -25,6 +25,9 @@ QUESTION = f"What query latency was measured in the paper with DOI {DOI}? Descri
     f"Beschreibe nur diesen einzelnen Bericht: {DOI}.",
     f"Bitte ausschließlich dieses Paper: {DOI}.",
     f"Describe this single report only: {DOI} ({DOI}).",
+    f"In the paper with DOI {DOI}, where were participants recruited?",
+    f"According to https://doi.org/{DOI}, how long did follow-up last?",
+    f"In der Studie mit DOI {DOI}: Wo wurden die Teilnehmenden rekrutiert?",
     f"Beschreibe ausschließlich dieses Paper mit DOI {DOI.upper()}; {DOI}.",
 ])
 def test_exclusive_single_report_scope_requires_explicit_user_intent(question):
@@ -42,11 +45,37 @@ def test_exclusive_single_report_scope_requires_explicit_user_intent(question):
     f"Beschreibe nicht nur dieses Paper: {DOI}.",
     f"Use only this paper and related studies: {DOI}.",
     f"Does this paper only include software benchmarks? DOI {DOI}.",
+    f"In DOI {DOI}, which other papers have replicated the findings?",
+    f"According to DOI {DOI}, how does this compare to later reports?",
     f"Describe only this paper's introduction and other literature: {DOI}.",
     "Describe this single report only.",
 ])
 def test_ambiguous_or_broader_requests_do_not_gain_exclusive_scope(question):
     assert ask_corpus.exclusive_single_report_doi(question) is None
+
+
+def test_scoped_design_question_is_not_a_request_for_a_link():
+    from originrag.analysis.chat import resolve_chat_task
+    q = f"Where were participants recruited and how long were they followed? Describe this single report only: DOI {DOI}."
+    assert resolve_chat_task(q) == "answer"
+    assert resolve_chat_task(f"Find the paper with DOI {DOI}") == "sources"
+    assert resolve_chat_task(q, configured_task="sources") == "sources"
+
+
+def test_single_report_qc_keeps_citation_checks_without_mandatory_speculation():
+    from originrag.analysis.answer_qc import assess_answer_quality
+    from originrag.analysis.prompts import build_answer_repair_prompt, build_citation_answer_prompt
+    pack = {"research_mode": True, "research_paper_id": "P1",
+            "chunks": [{"paper_id": "P1", "evidence_id": "E001", "text": "The authors surveyed eighteen patients."}]}
+    text = "## Evidence-backed statements\nThe authors surveyed eighteen patients (E001).\n\n## References\nE001"
+    assert assess_answer_quality(text, pack, "answer")["passed"]
+    assert not assess_answer_quality(text.replace("E001", "E999"), pack, "answer")["passed"]
+    assert not assess_answer_quality(text, {**pack, "research_mode": False}, "answer")["passed"]
+    assert "single heading" in build_citation_answer_prompt("How many?", pack)
+    assert "single heading" in build_answer_repair_prompt("How many?", pack, "answer", "Bad draft.", {"warnings":[]})
+    assert "Publication status:" not in build_citation_answer_prompt("How many?", pack)
+    pack["chunks"][0]["publication_status"] = "preprint"
+    assert "Publication status: preprint" in build_citation_answer_prompt("How many?", pack)
 
 
 @pytest.fixture

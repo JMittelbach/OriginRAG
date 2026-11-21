@@ -377,6 +377,8 @@ def assess_answer_quality(answer: str | None, evidence_pack: dict, task: str) ->
         if not re.fullmatch(r"E\d{3}", citation_id)
     )
     required_sections = REQUIRED_SECTIONS.get(normalized_task, [])
+    if normalized_task == "answer" and evidence_pack.get("research_mode"):
+        required_sections = ["## Evidence-backed statements", "## References"]
     missing_sections = [section for section in required_sections if section not in text]
     empty_sections = [
         section

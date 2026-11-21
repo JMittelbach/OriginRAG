@@ -79,6 +79,17 @@ def test_ambiguous_and_unknown_targets_fail(tmp_path):
             rc.load_paper(target, *paths)
 
 
+def test_reader_resolves_same_corrected_identity_as_library_and_retains_abstract(tmp_path):
+    paths = corpus(tmp_path, [dict(PAPER, title="Publisher copyright notice", abstract=TEXT)], chunks=None)
+    paths[0].with_name("paper_registry.tsv").write_text("paper_id\ttitle\tdoi\nP1\tEstimating measurement uncertainty\t10.1234/correct\n")
+    for target in ("Estimating measurement uncertainty", "10.1234/correct", "P1"):
+        paper, passages = rc.load_paper(target, *paths)
+        assert paper["title"] == "Estimating measurement uncertainty"
+        assert passages[0]["text"] == TEXT
+    with pytest.raises(ValueError, match="uniquely"):
+        rc.load_paper("Publisher copyright notice", *paths)
+
+
 def test_cannot_follow_text_symlink_outside_corpus(tmp_path):
     papers, root = corpus(tmp_path, chunks=None)
     outside = tmp_path / "private.jsonl"

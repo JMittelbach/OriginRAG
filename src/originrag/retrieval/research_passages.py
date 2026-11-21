@@ -1,10 +1,44 @@
 """Short, attributable extracts from the actual retrieval window, not generated claims."""
 
 import re
+from itertools import zip_longest
 
 from originrag.analysis.evidence_pack_grading import question_relevance_terms
 from originrag.retrieval.chunk_quality import REFERENCE_HEADING, reference_like_passage
 from originrag.retrieval.keyword import normalize_text
+from originrag.retrieval.report_scope import report_question_body
+
+
+def report_queries(question, doi=None):
+    """Search what was asked *inside* a resolved report, not its repeated DOI footer."""
+    if doi:
+        question = report_question_body(question, doi) or question
+        question = re.sub(r"(?:https?://(?:dx\.)?doi\.org/|\bDOI\s*:?\s*)?" + re.escape(doi),
+                          " ", question, flags=re.I)
+        question = re.sub(r"\b(?:describe|use|discuss|review|consider|explain|analy[sz]e) "
+                          r"(?:(?:this|that|the|one) (?:single )?(?:paper|report|study|article) only|"
+                          r"(?:only|exclusively|solely) (?:this|that|the|one) (?:single )?(?:paper|report|study|article))\b",
+                          " ", question, flags=re.I)
+        question = re.sub(r"\b(?:beschreibe|analysiere|verwende|nutze|erläutere|bitte)\s+"
+                          r"(?:nur|ausschlie(?:ß|ss)lich)\s+(?:dieses|diesen|diese|das|den|die)\s+"
+                          r"(?:(?:einzelne\w*|eine\w*)\s+)?(?:paper|bericht|artikel|studie)\b",
+                          " ", question, flags=re.I)
+    parts = re.split(r"(?:\?\s+|\b(?:and|und)\s+)(?=(?:how|which|what|who|where|when|"
+                     r"wie|welche\w*|wer|wo|wann)\b)", question, maxsplit=2, flags=re.I)
+    return [p.strip(" \t.,:;?!") for p in parts if re.search(r"\w", p)]
+
+
+def interleave_passages(rankings, limit):
+    """Give each explicitly asked subquestion a turn within the existing passage budget."""
+    result, seen = [], set()
+    for layer in zip_longest(*rankings):
+        for row in layer:
+            if row and row["chunk_id"] not in seen:
+                seen.add(row["chunk_id"])
+                result.append(row)
+                if len(result) >= limit:
+                    return result
+    return result
 
 
 def report_author(question):
@@ -34,10 +68,16 @@ def reading_passages(question, chunks, limit=3):
         if reference_like_passage(body):
             continue
         text = " ".join(body.split())
+        if str(chunk.get("page_range") or "").split("-")[0] == "1" or re.match(r"(?:research article|original article|open access)\b", text, re.I):
+            heading = re.search(r"\bAbstract\b\s*[:.]?\s+(?=[A-Z])", text)
+            if heading:
+                text = text[heading.end():]
         for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9“])", text):
             if not 35 <= len(sentence) <= 580 or not sentence.endswith((".", "!", "?")):
                 continue
             if any(mark in sentence for mark in ("[[", "[...]", "…")) or re.search(r"10\.\d{4,9}/|doi\.org/", sentence, re.I):
+                continue
+            if re.match(r"(?:research article|original article|copyright|open access|received:|editor:)\b", sentence, re.I):
                 continue
             matched = terms.intersection(normalize_text(sentence).split())
             if matched:

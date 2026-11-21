@@ -84,9 +84,11 @@ def more_list_request(message):
     return None
 _REQUESTS = {
     "en": re.compile(r"(?:(?:hey[, ]+)?(?:(?:can|could|would) you )?(?:please )?(?:give|show|find|list|suggest|recommend)(?: me)? )?"
-                     + r"(?:the )?" + _COUNT + r"(?:(?P<recent>latest|newest|most recent|recent|newer) )?(?:papers?|articles?|studies) (?:on|about|covering) (?P<topic>.+)", re.I),
+                     + r"(?:the )?" + _COUNT + r"(?:(?P<recent>latest|newest|most recent|recent|newer) )?(?:papers?|articles?|studies) "
+                     r"(?:(?:in|from) (?:my|our|the) (?:library|corpus|catalogue|catalog) )?(?:on|about|covering) (?P<topic>.+)", re.I),
     "de": re.compile(r"(?:(?:hey[, ]+)?(?:kannst du )?(?:bitte )?(?:gib|gibst du|zeig[e]?|finde|liste|nenn[e]?)(?: mir)? (?:bitte )?)?"
-                     + r"(?:die )?" + _COUNT + r"(?:(?P<recent>neuesten?|neusten?|neuere[n]?|aktuell(?:e|en|sten)) )?(?:papers?|artikel|studien) (?:zu[mr]?|über|ueber) (?P<topic>.+)", re.I),
+                     + r"(?:die )?" + _COUNT + r"(?:(?P<recent>neuesten?|neusten?|neuere[n]?|aktuell(?:e|en|sten)) )?(?:papers?|artikel|studien) "
+                     r"(?:(?:im Korpus|(?:in|aus) (?:meiner|unserer|der) Bibliothek|aus (?:dem|meinem|unserem) Korpus) )?(?:zu[mr]?|über|ueber) (?P<topic>.+)", re.I),
     "fr": re.compile(r"(?:(?:montre|donne|trouve)(?:-moi| moi)? )?" + _COUNT
                      + r"(?:articles?|études?|papers?) sur (?P<topic>.+)", re.I),
     "es": re.compile(r"(?:(?:dame|busca|muéstrame|muestra)(?:me)? )?" + _COUNT
@@ -111,6 +113,11 @@ def paper_list_request(message):
         if not match:
             continue
         topic = match["topic"]
+        if language == "en":
+            topic = re.sub(r"\s+(?:in|from) (?:my|our) (?:corpus|library|catalogue|catalog)$", "", topic, flags=re.I)
+        elif language == "de":
+            topic = re.sub(r"\s+(?:in|aus) (?:meiner Bibliothek|unserer Bibliothek|meinem Korpus|unserem Korpus)$",
+                           "", topic, flags=re.I)
         newest = bool(match.groupdict().get("recent"))
         since = 0
         date_pattern = {"en": r"\s+(?:published\s+)?(since|after)\s+([12][0-9]{3})$",
