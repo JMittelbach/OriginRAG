@@ -63,6 +63,12 @@ _REFERENCE_YEAR_VOLUME = re.compile(
     re.IGNORECASE,
 )
 _REFERENCE_LINK_MARKER = re.compile(r"\[(?:crossref|pubmed)\]", re.IGNORECASE)
+REFERENCE_HEADING = re.compile(r"^[^\S\n]*(?:references|bibliography|literature cited)[^\S\n]*:?[^\S\n]*$", re.I | re.M)
+
+
+def reference_like_passage(text: str) -> bool:
+    """Check bibliography density without calculating unrelated quality metrics."""
+    return _is_reference_like(text.lower(), [line.strip() for line in text.splitlines() if line.strip()])
 
 
 def classify_chunk_quality(text: str) -> ChunkQuality:
@@ -146,7 +152,7 @@ def classify_chunk_quality(text: str) -> ChunkQuality:
 
 
 def _is_reference_like(lower: str, lines: list[str]) -> bool:
-    if re.search(r"(^|\n)\s*(references|bibliography)\s*($|\n)", lower):
+    if REFERENCE_HEADING.search(lower):
         return True
     doi_count = lower.count("doi") + lower.count("https://doi.org")
     numbered_reference_lines = sum(1 for line in lines if re.match(r"^\[?\d{1,3}\]?[\).]\s+", line))

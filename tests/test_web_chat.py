@@ -305,6 +305,42 @@ def test_library_catalog_merges_metadata_and_searches_without_model(tmp_path: Pa
     assert search_library_catalog("turn nature", catalogue=catalogue)["total"] == 1
 
 
+def test_library_catalog_matches_author_accents_and_title_dashes_but_keeps_ids_literal():
+    catalogue = (
+        {"paper_id": "P_01", "author": "García", "authors": "García; Frédéric Noël",
+         "title": "Cross-site calibration of sensors", "doi": "10.123/test-a"},
+        {"paper_id": "P_02", "title": "Sensor response", "doi": "10.123/test a"},
+    )
+    for query in ("garcia cross site", "Noel cross–site", "Frédéric calibration", "10.123/test-a", "P_01"):
+        assert [r["paper_id"] for r in search_library_catalog(query, catalogue=catalogue)["items"]] == ["P_01"]
+
+
+def test_quick_list_keeps_body_discussion_but_not_reference_only_hits(tmp_path):
+    from originrag.retrieval.fts_index import build_fts_index
+    from originrag.retrieval.quick_list import PaperList, indexed_list_ids
+
+    papers = tmp_path / "papers.tsv"
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    reference = "References\n1. Smith et al. Optical calibration. 2021."
+    rows = {
+        "ONLY": ["Other results.\n" + reference],
+        "MIXED": ["Optical calibration was compared across the devices.\n" + reference],
+        "SPLIT": ["The optical system was described.\n" + reference],
+        "SECOND": [reference, "We used optical calibration (Smith et al. 2021)."],
+        "DENSITY": ["\n".join(f"{i}. Smith et al. Optical calibration. 2021." for i in range(1, 8))],
+    }
+    papers.write_text("paper_id\ttitle\n" + "".join(f"{pid}\tMeasurement report\n" for pid in rows))
+    for pid, texts in rows.items():
+        (chunks / f"{pid}.jsonl").write_text("".join(json.dumps(
+            {"paper_id": pid, "chunk_id": f"{pid}_{i}", "text": s}) + "\n" for i,s in enumerate(texts)))
+    index = tmp_path / "index.sqlite"
+    build_fts_index(chunks, papers, index)
+    result = indexed_list_ids(PaperList("optical calibration", 10, "en"), index, chunks, papers,
+                              eligible=set(rows), limit=10)
+    assert sorted(result) == ["MIXED", "SECOND"]
+
+
 def test_library_catalog_paginates_and_bounds_page_size() -> None:
     catalogue = tuple(
         {

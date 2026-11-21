@@ -57,6 +57,26 @@ def test_invalid_or_identifier_losing_preparation_does_not_proceed(monkeypatch, 
     assert result["status"] == "needs_clarification"
 
 
+@pytest.mark.parametrize("question,subject", [
+    ("What does OptiCal measure, and does it correct drift?", "OptiCal"),
+    ("Wie funktioniert OptiCal?", "OptiCal"),
+    ("How does timing affect measurements?", ""),
+    ("What does OptiCal and the other meter measure?", ""),
+    ("How does OptiCal compare with MeasureIt?", ""),
+    ("What does OptiCal-Lite measure?", ""),
+])
+def test_named_measurement_subject_is_not_inferred_for_comparisons(question, subject):
+    assert understanding.named_method_subject(question) == subject
+
+
+def test_named_subject_stays_in_each_planned_search_without_an_extra_query():
+    record = {"original_question": "What does CalibMap measure?", "model": "local",
+              "normalized_question": "What does CalibMap measure?",
+              "search_queries": ["optical drift", "CalibMap calibration"]}
+    plan = understanding.understanding_plan(record, task_mode="evidence_qa", max_queries=2)
+    assert [q["query"] for q in plan["subqueries"]] == ["CalibMap optical drift", "CalibMap calibration"]
+
+
 def test_negation_must_be_preserved(monkeypatch):
     monkeypatch.setattr(understanding, "call_ollama_generate", lambda *a, **k: model_reply(prepared(
         normalized_question="Which methods occur in the corpus?")))

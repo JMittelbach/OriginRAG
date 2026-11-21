@@ -13,6 +13,7 @@ import sqlite3
 import sys
 import threading
 import time
+import unicodedata
 import webbrowser
 from collections import Counter, deque
 from http.cookies import SimpleCookie
@@ -1556,6 +1557,18 @@ def _catalog_text(value: object) -> str:
     return " ".join(str(value or "").split())
 
 
+_WORD_DASH = re.compile(r"(?<=[^\W\d_])[-‐‑‒–—](?=[^\W\d_])")
+
+
+@lru_cache(maxsize=8192)
+def _catalog_words(value: str) -> str:
+    folded = value.casefold()
+    if not folded.isascii():
+        folded = "".join(c for c in unicodedata.normalize("NFD", folded)
+                         if not unicodedata.combining(c))
+    return _WORD_DASH.sub(" ", folded)
+
+
 @lru_cache(maxsize=4)
 def library_catalog(
     registry_path: str = str(REPO_ROOT / "data/metadata/paper_registry.tsv"),
@@ -1726,6 +1739,8 @@ def search_library_catalog(
 ) -> dict[str, object]:
     """Search author/title metadata deterministically and paginate the result."""
     clean_query = _catalog_text(query).casefold()
+    # Keep punctuation literal for identifiers even when words in a title use different dashes.
+    clean_query = " ".join(t if "/" in t or "_" in t else _catalog_words(t) for t in clean_query.split())
     query_tokens = clean_query.split()
     source = catalogue if catalogue is not None else library_catalog()
     clean_scope = _catalog_text(scope).casefold()
@@ -1740,8 +1755,8 @@ def search_library_catalog(
         )
 
     def match_score(item):
-        title = str(item.get("title") or "").casefold()
-        author = str(item.get("author") or "").casefold()
+        title = _catalog_words(str(item.get("title") or ""))
+        author = _catalog_words(str(item.get("author") or ""))
         other = " ".join(
             str(item.get(field) or "").casefold()
             for field in (
@@ -1749,7 +1764,8 @@ def search_library_catalog(
                 "topic_label", "falciparum_topic", "falciparum_topic_label",
             )
         )
-        searchable_text = " ".join((title, author, other))
+        coauthors = _catalog_words(str(item.get("full_authors") or item.get("authors") or ""))
+        searchable_text = " ".join((title, author, coauthors, other))
         if not all(token in searchable_text for token in query_tokens):
             return None
         rank = 0
@@ -1765,6 +1781,7 @@ def search_library_catalog(
             rank += 230
         rank += 40 * sum(token in title for token in query_tokens)
         rank += 35 * sum(token in author for token in query_tokens)
+        rank += 20 * sum(token in coauthors and token not in author for token in query_tokens)
         rank += 10 * sum(token in other for token in query_tokens)
         return (-rank, author or "~", title)
 

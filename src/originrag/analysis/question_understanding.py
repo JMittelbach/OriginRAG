@@ -383,6 +383,19 @@ def understand_question(question: str, *, context: str = "", model: str | None =
     return record
 
 
+def named_method_subject(question: str) -> str:
+    """Recognise a single, explicitly named subject, not a list of comparison arms."""
+    match = re.search(
+        r"\b(?i:what does|how does|was misst|was macht|wie funktioniert)\s+"
+        r"([A-Za-z][A-Za-z0-9]{2,39})(?![\w/-])", question)
+    if not match or not re.search(r"[a-z][A-Z]", match[1]):
+        return ""
+    if (re.match(r"\s+(?:and|und|or|oder)\b", question[match.end():], re.I)
+            or re.search(r"\b(?:or|oder|versus|vs|compar\w*|differ\s+from|vergleich\w*)\b", question, re.I)):
+        return ""
+    return match[1]
+
+
 def understanding_plan(record: dict, *, task_mode: str, max_queries: int) -> dict:
     query_limit = max(1, max_queries)
     available_queries = record["search_queries"]
@@ -411,6 +424,10 @@ def understanding_plan(record: dict, *, task_mode: str, max_queries: int) -> dic
         if not queries:
             raise ValueError("Search query limit would discard conditional context")
         warnings.append("search_queries_reordered_to_preserve_conditional_context")
+    subject = named_method_subject(record.get("original_question", ""))
+    if subject:
+        queries = [q if preserves_protected_terms({subject}, q) or len(q) + len(subject) + 1 > MAX_QUERY_CHARS
+                   else f"{subject} {q}" for q in queries]
     plan = {"question": record["normalized_question"], "task_mode": task_mode,
             "planner_backend": "ollama", "subqueries": [
                 {"query_id": f"Q{i:03d}", "query": q, "query_type": "exact_terms",

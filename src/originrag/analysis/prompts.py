@@ -79,6 +79,7 @@ Global rules:
 - In subtype, cluster, state, or group enumerations, apply a marker-positive label only to members that the evidence explicitly labels marker-positive. A colon heading such as "SPP1-positive subtypes:" must not sweep contrast groups such as FCN1-high or FABP4-positive into the SPP1-positive set. Preserve each exact label and its membership.
 - For an explicit "Which MARKER-positive states/groups/subtypes?" question, include every explicit marker-bearing state/group/subtype label in the evidence you cite. Preserve compound labels such as "FCN1loSPP1+ group 2"; do not shorten them to a different marker-positive label or silently omit them.
 - Do not use a paper title, section heading, or general background knowledge to add biological detail that is absent from the cited evidence text.
+- For a named method, distinguish what it does from metrics or alternatives the paper compares. Attribute a capability to the method only when the passage makes that link.
 - Do not combine details from different evidence IDs into a new combined claim unless the same evidence ID supports the whole combination.
 - Interpret "clinical syndromes" as malaria disease phenotypes and clinical outcomes named or supported by the retrieved evidence.
 - Distinguish parasite transcription from host or whole-blood host transcription. A host-transcriptome paper does not support a parasite-expression claim unless the evidence text explicitly reports parasite measurements.

@@ -25,6 +25,19 @@ import ask_corpus  # noqa: E402
 QUESTION = "What evidence describes query latency in database benchmarks?"
 
 
+def test_named_method_question_keeps_description_without_evicting_results(monkeypatch):
+    common = {"paper_id": "P", "title": "CalibMap: an optical method", "section": "results"}
+    rows = [
+        {**common, "chunk_id": "table", "text": "We present results for five optical metrics. "
+         "Competing methods measure drift, absolute difference and residuals."},
+        {**common, "chunk_id": "definition", "text": "We developed CalibMap to measure drift between sensors."},
+    ]
+    monkeypatch.setattr(ask_corpus, "prompt_visible_answer_quality", lambda r, **kw: (int(r["chunk_id"] == "table"),))
+    for limit, expected in [(1, ["table"]), (2, ["table", "definition"])]:
+        selected = ask_corpus.shortlist_answer_candidates(rows, max_papers=limit, question="What does CalibMap measure?")
+        assert [r["chunk_id"] for r in selected] == expected
+
+
 @pytest.fixture(autouse=True)
 def isolated_answer_runtime(monkeypatch):
     token = CURRENT_RUNTIME.set(None)

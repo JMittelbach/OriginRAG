@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import re
 import sqlite3
+import unicodedata
 from originrag.analysis.chat_commands import controls
 
 
@@ -90,11 +91,27 @@ def paper_list_request(message):
     return None
 
 
+def _words(text):
+    folded = unicodedata.normalize("NFD", text.casefold())
+    return re.findall(r"[^\W_]+", "".join(c for c in folded if not unicodedata.combining(c)))
+
+
+def _body_match(text, title, terms):
+    from originrag.retrieval.chunk_quality import REFERENCE_HEADING, reference_like_passage
+
+    heading = REFERENCE_HEADING.search(text)
+    if heading:
+        # The last paragraph and the start of the bibliography can share a PDF chunk.
+        body = text[:heading.start()].strip()
+        return bool(body) and terms.issubset(_words(title + " " + body)) and not reference_like_passage(body)
+    return not reference_like_passage(text)
+
+
 def indexed_list_ids(request, index, chunks, papers, *, eligible, limit):
     """Return ranked distinct IDs; None means full text could not be searched."""
     from originrag.retrieval.fts_index import RetrievalIndexError, ensure_current_index
     from originrag.retrieval.index_cache import RetrievalIndexCacheError, resolve_read_bundle
-    words = re.findall(r"[^\W_]+", request.topic.casefold())
+    words = _words(request.topic)
     terms = list(dict.fromkeys(w for w in words if w not in {"the", "of", "and", "in", "der", "die", "das", "und", "von"}))
     if not terms or not index.is_file():
         return None
@@ -105,12 +122,18 @@ def indexed_list_ids(request, index, chunks, papers, *, eligible, limit):
         db = sqlite3.connect(bundle.index_path.resolve().as_uri() + "?mode=ro", uri=True)
         try:
             matches = db.execute(
-                "SELECT DISTINCT paper_id FROM chunk_fts WHERE chunk_fts MATCH ? ORDER BY rank",
+                "SELECT paper_id, rowid FROM chunk_fts WHERE chunk_fts MATCH ? ORDER BY rank",
                 (" AND ".join(f'"{w}"' for w in terms),),
             )
             selected = []
-            for (paper_id,) in matches:
-                if paper_id in eligible:
+            selected_ids = set()
+            required = frozenset(terms)
+            for paper_id, rowid in matches:
+                if paper_id not in eligible or paper_id in selected_ids:
+                    continue
+                title, text = db.execute("SELECT title, text FROM chunk_fts WHERE rowid=?", (rowid,)).fetchone()
+                if _body_match(text or "", title or "", required):
+                    selected_ids.add(paper_id)
                     selected.append(paper_id)
                     if len(selected) == limit:
                         break

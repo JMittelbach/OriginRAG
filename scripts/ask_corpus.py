@@ -24,7 +24,7 @@ if str(SRC_DIR) not in sys.path:
 
 from originrag.analysis.answer_format import normalize_answer_format  # noqa: E402
 from originrag.analysis.chat import model_requests_bibliography  # noqa: E402
-from originrag.analysis.question_understanding import understand_question, understanding_plan  # noqa: E402
+from originrag.analysis.question_understanding import named_method_subject, understand_question, understanding_plan  # noqa: E402
 from originrag.analysis.corpus_inventory import extract_inventory  # noqa: E402
 from originrag.summaries.reading_card import summary_request, load_paper, create_card, card_markdown  # noqa: E402
 from originrag.analysis.answer_backends import (  # noqa: E402
@@ -629,6 +629,9 @@ def run_question(
         evidence_selector=evidence_selector,
         max_per_paper=max_per_paper,
     )
+    if task == "answer" and evidence_selector != "current" and named_method_subject(user_question):
+        # Keep a definition and evaluation passages in contention under the same overall budget.
+        candidate_max_per_paper = max(8, candidate_max_per_paper)
     candidate_limit = max(evidence_limit, evidence_limit * max(candidate_multiplier, 1))
     adaptive_result = None
     validated_corpus_fingerprint: str | None = None
@@ -778,6 +781,9 @@ def run_question(
         )
 
     required_entity_groups = required_entity_anchor_groups(answer_question)
+    subject = named_method_subject(user_question) if task == "answer" else ""
+    if subject and (subject.casefold(),) not in required_entity_groups:
+        required_entity_groups = [*required_entity_groups, (subject.casefold(),)]
     intervention_source_request = (
         task == "sources"
         and is_epcr_pfemp1_intervention_source_request(answer_question)
@@ -5406,6 +5412,12 @@ def shortlist_answer_candidates(
     paper_order: list[str] = []
     best_by_paper: dict[str, tuple[tuple[int, ...], dict]] = {}
     rows_by_paper: defaultdict[str, list[dict]] = defaultdict(list)
+    descriptions: dict[str, tuple[tuple[int, ...], dict]] = {}
+    method = named_method_subject(question)
+    definition = (re.compile(
+        rf"\bwe\s+(?:(?:have|here|also)\s+)?(?:develop(?:ed)?|introduced?|present(?:ed)?|proposed?)\b"
+        rf"[^.!?;]{{0,120}}\b(?:{re.escape(method)}|method|metric|model|algorithm|score|tool|framework|approach|package)\b",
+        re.I) if method else None)
     for result in results:
         paper_id = str(result.get("paper_id") or "")
         if not paper_id:
@@ -5418,6 +5430,11 @@ def shortlist_answer_candidates(
             question=question,
             max_chars_per_chunk=max_chars_per_chunk,
         )
+        if definition and contains_normalized_term(normalize_text(str(result.get("title") or "")), method):
+            visible = freeze_prompt_visible_result(question, result, max_chars_per_chunk)
+            if (definition.search(" ".join(str(visible.get("text") or "").split()))
+                    and (paper_id not in descriptions or quality > descriptions[paper_id][0])):
+                descriptions[paper_id] = (quality, result)
         current = best_by_paper.get(paper_id)
         current_is_named_anchor = bool(
             current and current[1].get("explicit_named_study_anchor")
@@ -5481,6 +5498,13 @@ def shortlist_answer_candidates(
                     )
         if len(shortlisted) >= limit:
             break
+    if descriptions and len(shortlisted) < limit:
+        used = {r.get("chunk_id") for r in shortlisted}
+        for _, row in descriptions.values():
+            if row.get("chunk_id") not in used:
+                shortlisted.append(row)
+                if len(shortlisted) >= limit:
+                    break
     return shortlisted[:limit]
 
 
