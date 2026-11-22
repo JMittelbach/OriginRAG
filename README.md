@@ -94,8 +94,8 @@ accessible PDFs. Accepted papers are organised and indexed in the background.
 They become searchable when the update finishes; uncertain imports are flagged
 for review. Catalogue-only entries are not full-text papers.
 
-To talk about one paper, just mention its title or DOI, or attach its PDF with
-the paperclip. Ask follow-ups in the same chat, then ask about other studies
+To talk about one paper, just mention its title or DOI, or drag its PDF into
+the chat. Ask follow-ups in the same chat, then ask about other studies
 whenever you like.
 
 Ask a question in chat and open the cited passages. You can ask what a single

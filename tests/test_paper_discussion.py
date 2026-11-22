@@ -118,7 +118,8 @@ def test_cited_doi_cannot_identify_an_unrelated_upload(tmp_path, monkeypatch):
     assert result["review_required"] == 1 and not result["imported"]
 
 
-def test_browser_attach_upload_read_reload_and_detach(tmp_path, monkeypatch):
+@pytest.mark.parametrize("browser_name", ["chromium", "firefox"])
+def test_browser_drop_upload_read_reload_and_detach(tmp_path, monkeypatch, browser_name):
     pw = pytest.importorskip("playwright.sync_api")
     monkeypatch.setattr(inbox, "REPO_ROOT", tmp_path)
     settings = web.WebChatSettings(papers=str(tmp_path / "data/metadata/papers.tsv"),
@@ -147,18 +148,34 @@ def test_browser_attach_upload_read_reload_and_detach(tmp_path, monkeypatch):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         with pw.sync_playwright() as driver:
-            browser = driver.chromium.launch()
+            browser = getattr(driver, browser_name).launch()
             page = browser.new_page()
             page.goto(f"http://127.0.0.1:{server.server_port}")
             page.locator("#guideSkip").click()
-            pw.expect(page.locator("#focusUpload")).to_be_visible()
+            pw.expect(page.locator("#paperUploadButton")).to_be_visible()
+            pw.expect(page.locator("#form button[aria-label='Attach PDF'], #form input[type=file]")).to_have_count(0)
+            draft = page.locator("#message")
+            draft.fill("Show all references.")
+            def drag(filename, content, mime):
+                return page.evaluate_handle("""([name, bytes, type]) => {
+                    const data = new DataTransfer();
+                    data.items.add(new File([new Uint8Array(bytes)], name, {type}));
+                    return data;
+                }""", [filename, list(content), mime])
+            bad = drag("picture.png", b"test", "image/png")
+            draft.dispatch_event("drop", {"dataTransfer": bad})
+            pw.expect(page.locator("#paperDropNote")).to_have_text("Drop one research PDF at a time.")
+            pdf = drag("research.pdf", article(), "application/pdf")
+            page.locator("#chat").dispatch_event("dragenter", {"dataTransfer": pdf})
+            pw.expect(page.locator("#paperDropNote")).to_contain_text("Drop a research PDF")
             with page.expect_response(lambda r: "/api/library-upload" in r.url) as response:
-                page.locator("#focusFile").set_input_files(dict(name="research.pdf", mimeType="application/pdf", buffer=article()))
+                draft.dispatch_event("drop", {"dataTransfer": pdf})
             assert response.value.status == 202, response.value.text()
             mgr.run_pending_now()
             catalogue.cache_clear()
             pw.expect(page.locator("#focusTitle")).to_contain_text("Measuring variation")
-            page.locator("#message").fill("Show all references.")
+            pw.expect(draft).to_have_value("Show all references.")
+            pw.expect(page.locator("#chat .msg.user")).to_have_count(0)
             page.locator("#send").click()
             pw.expect(page.locator("#chat")).to_contain_text("Banks. Sampling.", timeout=15000)
             page.reload()

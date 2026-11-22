@@ -370,7 +370,8 @@ Find papers about RIFIN binding to human immune receptors.
 
 ## Discuss one paper
 
-Mention the paper by title, DOI or first author and year, or attach a PDF with the paperclip.
+Mention the paper by title, DOI or first author and year, or drop its PDF directly
+onto the conversation or the message box. Dropping a PDF doesn't send your draft.
 Uploads join the host's library, which may be shared. OriginRAG checks the article
 identity before indexing it. A scan without readable text, an unrelated cited DOI,
 or uncertain manuscript metadata may need review. There is no subject filter.

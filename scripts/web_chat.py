@@ -6939,7 +6939,8 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--muted);
     }
     #paperContext { display:flex; align-items:center; gap:.5rem; min-width:0; }
-    #focusUpload { padding:.28rem .5rem; }
+    #paperDropNote:empty, #focusTitle:empty { display:none; }
+    main.paper-dragging .composer-inner { outline:2px dashed var(--accent-2); outline-offset:3px; }
     #focusTitle { max-width:min(50vw,32rem); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     :root:not([data-theme="light"]) .msg.paper-discussion .bubble { background:rgba(13,15,16,.96); box-shadow:none; }
     .composer {
@@ -7394,10 +7395,7 @@ INDEX_HTML = r"""<!doctype html>
       <form class="composer" id="form">
         <div class="composer-context">
           <div id="paperContext">
-            <button type="button" id="focusUpload" hidden aria-label="Attach PDF" title="Attach a research PDF and add it to the library">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2m3 6-9 9a1.5 1.5 0 0 1-2-2l8-8"/></svg>
-            </button>
-            <input type="file" id="focusFile" accept=".pdf,application/pdf" hidden>
+            <span id="paperDropNote" role="status"></span>
             <span id="focusTitle" role="status"></span>
             <button type="button" id="focusClear" aria-label="Remove attachment" title="Remove attachment" hidden>×</button>
           </div>
@@ -9658,6 +9656,9 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     const focusEl = id => document.getElementById(id);
+    const chatSurface = form.closest("main");
+    const dropNote = focusEl("paperDropNote");
+    let chatUploadsAllowed = false;
     let paperFocus = {}, focusChanging = false, focusVersion = 0;
     function drawFocus(data) {
       paperFocus = data;
@@ -9697,15 +9698,55 @@ INDEX_HTML = r"""<!doctype html>
         message.focus();
         return true;
       } catch (error) {
-        if (session === currentSessionDir) statusEl.textContent = error.message;
+        if (session === currentSessionDir) dropNote.textContent = error.message;
         return false;
       } finally { focusChanging = false; }
     }
-    focusEl("focusUpload").onclick = () => focusEl("focusFile").click();
-    focusEl("focusFile").onchange = event => {
-      const file = event.target.files[0]; event.target.value = "";
-      if (file) changeFocus("", file);
-    };
+    const draggingFiles = event => Array.from(event.dataTransfer?.types || []).includes("Files");
+    let dragDepth = 0;
+    function endPaperDrag() {
+      dragDepth = 0;
+      if (chatSurface.classList.contains("paper-dragging")) dropNote.textContent = "";
+      chatSurface.classList.remove("paper-dragging");
+    }
+    chatSurface.addEventListener("dragenter", event => {
+      if (!draggingFiles(event)) return;
+      event.preventDefault();
+      dragDepth++;
+      if (chatUploadsAllowed) {
+        chatSurface.classList.add("paper-dragging");
+        dropNote.textContent = "Drop a research PDF to chat and add it to the library";
+      }
+    });
+    chatSurface.addEventListener("dragover", event => {
+      if (!draggingFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = chatUploadsAllowed ? "copy" : "none";
+    });
+    chatSurface.addEventListener("dragleave", event => {
+      if (draggingFiles(event) && --dragDepth <= 0) endPaperDrag();
+    });
+    chatSurface.addEventListener("dragend", endPaperDrag);
+    chatSurface.addEventListener("drop", event => {
+      if (!draggingFiles(event)) return;
+      event.preventDefault();
+      endPaperDrag();
+      const files = event.dataTransfer.files;
+      if (!chatUploadsAllowed) { dropNote.textContent = "PDF uploads are unavailable here."; return; }
+      if (!currentSessionDir || sessionNavigationPending || focusChanging) {
+        dropNote.textContent = "Wait for the chat to be ready, then drop the PDF again."; return;
+      }
+      if (files.length !== 1 || !/\.pdf$/i.test(files[0].name)) {
+        dropNote.textContent = "Drop one research PDF at a time."; return;
+      }
+      if (files[0].size > 100 * 1024 * 1024) {
+        dropNote.textContent = "The PDF exceeds the 100 MB upload limit."; return;
+      }
+      dropNote.textContent = "Uploading PDF…";
+      changeFocus("", files[0]).finally(() => {
+        if (dropNote.textContent === "Uploading PDF…") dropNote.textContent = "";
+      });
+    });
     focusEl("focusClear").onclick = () => changeFocus("");
 
     function libraryPaperCard(paper) {
@@ -10158,7 +10199,7 @@ INDEX_HTML = r"""<!doctype html>
           logoutButton.hidden = false;
         }
         paperUploadButton.hidden = !data.library_access?.enabled;
-        focusEl("focusUpload").hidden = paperUploadButton.hidden;
+        chatUploadsAllowed = Boolean(data.library_access?.enabled);
         if (initializeSession) refreshFocus();
         for (const key of ["backend", "preset"]) {
           const el = document.getElementById(key);
