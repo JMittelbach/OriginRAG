@@ -178,6 +178,28 @@ def test_clarifying_a_title_keeps_the_original_question(tmp_path):
     assert result["paper_id"] == "B" and "Reference for B" in result["answer"]
 
 
+@pytest.mark.parametrize("second_cited", [False, True])
+def test_this_paper_after_regular_answer_uses_citations_not_retrieval(tmp_path, monkeypatch, second_cited):
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\nA\tFirst survey report\nB\tSecond survey report\n")
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+    for pid in ("A", "B"):
+        (chunks / (pid + ".jsonl")).write_text(json.dumps({"paper_id": pid, "text": "Example."}))
+    app = web.WebChatApp(web.WebChatSettings(papers=str(papers), chunks_dir=str(chunks)), str(tmp_path / "sessions"))
+    turn = app.session_dir / "turn_001_example"
+    turn.mkdir()
+    (turn / "public_result.json").write_text(json.dumps({"task": "answer", "answer": "Earlier answer.",
+        "sources": [{"paper_id": "A", "cited": True}, {"paper_id": "B", "cited": second_cited}]}))
+    web.append_turn_summary(app.session_dir, "Earlier question", "Earlier question", "answer", {}, turn)
+    monkeypatch.setattr(app, "discuss", lambda session, question, settings, pid, *args, **kw: {"paper_id": pid})
+    result = app.run_turn("rklr mir bie dem paper genauer bitte was das mit dem Vergleich auf sich hat", {})
+    if second_cited:
+        assert "Which title" in result["answer"]
+    else:
+        assert result["paper_id"] == "A"
+
+
 def test_cited_doi_cannot_identify_an_unrelated_upload(tmp_path, monkeypatch):
     monkeypatch.setattr(inbox, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(inbox, "fetch_crossref", lambda *a, **kw: {
@@ -212,7 +234,8 @@ def test_browser_drop_upload_read_reload_and_detach(tmp_path, monkeypatch, brows
     monkeypatch.setattr(web.ask_corpus, "run_question", corpus_reply)
     monkeypatch.setattr(web.ask_corpus, "effective_model_context", lambda *a, **kw: 8192)
     monkeypatch.setattr(web.ask_corpus, "generate_answer_with_backend", lambda *a, **kw:
-                        SimpleNamespace(llm_result=SimpleNamespace(answer="A paired subset.", error=None)))
+                        SimpleNamespace(llm_result=SimpleNamespace(answer="**Result:** *paired* subset.\n\n"
+                            "* Literal: `*paired*`\n* [Paper](https://doi.org/10.1234/example)", error=None)))
     mgr = web.LibrarySyncManager(tmp_path / "bib/inbox", auto_worker=False, read_cache_refresh=lambda: None,
                                  refresh_callback=lambda: None)
     handler = web.build_handler(app, library_manager=mgr)
@@ -266,6 +289,21 @@ def test_browser_drop_upload_read_reload_and_detach(tmp_path, monkeypatch, brows
             pw.expect(design.locator("summary")).to_be_visible()
             design.locator("summary").click()
             pw.expect(design.locator("blockquote").first).to_contain_text("12 matched pairs")
+            response = page.locator("#chat .paper-discussion").last
+            pw.expect(response.locator("em")).to_have_text("paired")
+            pw.expect(response.locator("strong")).to_have_text("Result:")
+            pw.expect(response.locator("li code")).to_have_text("*paired*")
+            pw.expect(response.locator("li a")).to_have_attribute("href", "https://doi.org/10.1234/example")
+            page.reload()
+            pw.expect(page.locator("#chat .paper-discussion").last.locator("em")).to_have_text("paired")
+            assert page.evaluate("""() => {
+              const box = document.createElement('div');
+              renderMarkdown(box, '**Report:** *var2csa* ([[cite:E001]]) and `[[cite:E001]]`.', {
+                sources: [{evidence_ids: ['E001'], citation_short: 'Example et al.', url: 'https://doi.org/10.1234/test'}]
+              });
+              return [box.querySelector('em').textContent, box.querySelector('a.inline-citation').textContent,
+                      box.querySelector('code').textContent, box.querySelectorAll('a').length];
+            }""") == ["var2csa", "Example et al.", "[[cite:E001]]", 1]
             page.locator("#message").fill("Welche anderen Studien zeigen das auch?")
             page.locator("#send").click()
             pw.expect(page.locator("#chat")).to_contain_text("Searched across the library.", timeout=15000)

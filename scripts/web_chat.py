@@ -314,14 +314,21 @@ class WebChatApp:
                     if (not paper_id and saved_turns and refers_to_paper(clean_message)
                         and not re.search(r"10\.\d{4,9}/|\bet al\b|\b(?:19|20)\d\d\b", clean_message, re.I)):
                         last = saved_turns[-1]
+                        single_report = re.search(
+                            r"\b(?:this|that|the|dem|der|das|die|dies\w*)\s+(?:paper|article|study|studie|artikel)\b",
+                            clean_message, re.I)
                         if last["task"] == "paper_discussion":
                             paper_id = last.get("paper_id")
-                        elif last["task"] in {"paper_summary", "sources", "library_status"}:
+                        elif last["task"] in {"paper_summary", "sources", "library_status"} or (last["task"] == "answer" and single_report):
                             sources = saved_turn_result(last, target_session).get("sources", [])
+                            if last["task"] == "answer":
+                                sources = [row for row in sources if row.get("cited") is True]
                             ids = {row["paper_id"] for row in sources if row.get("paper_id")}
                             if len(ids) == 1:
                                 paper_id = next((row["paper_id"] for row in catalogue
                                                  if row["paper_id"] in ids and row.get("searchable")), None)
+                            elif last["task"] == "answer" and len(ids) > 1:
+                                matches = [row for row in catalogue if row["paper_id"] in ids]
             if paper_id:
                 result = self.discuss(target_session, clean_message, settings, paper_id,
                                       saved_turns, progress_callback, started_at, clarified=clarified)
@@ -6689,6 +6696,9 @@ INDEX_HTML = r"""<!doctype html>
     .markdown li {
       margin: 5px 0;
     }
+    .markdown pre, .markdown table { max-width: 100%; overflow-x: auto; }
+    .markdown table { display: block; border-collapse: collapse; }
+    .markdown th, .markdown td { padding: .3em .6em; border: 1px solid var(--line); }
     .meta {
       display: flex;
       flex-wrap: wrap;
@@ -7509,6 +7519,7 @@ INDEX_HTML = r"""<!doctype html>
       <button id="studyAuditClose" class="dialog-close" type="button" aria-label="Close study overlap details" title="Close study overlap details">×</button>
     </div>
   </div>
+  <script src="/assets/vendor/markdown-it/markdown-it.min.js"></script>
   <script>
     const browserFetch = window.fetch.bind(window);
     let localImportToken = "";
@@ -7901,69 +7912,48 @@ INDEX_HTML = r"""<!doctype html>
       for (const source of (result || {}).sources || []) {
         for (const evidenceId of source.evidence_ids || []) citationSources.set(evidenceId, source);
       }
-      let list = null;
-      let listType = null;
-      let paragraph = [];
-      function closeList() {
-        if (list) {
-          container.appendChild(list);
-          list = null;
-          listType = null;
-        }
+      if (!window.markdownit) {
+        appendCitationAwareText(container, text, citationSources);
+        return;
       }
-      function closeParagraph() {
-        if (!paragraph.length) return;
-        const p = document.createElement("p");
-        appendCitationAwareText(p, paragraph.join(" ").replace(/\*\*/g, ""), citationSources);
-        container.appendChild(p);
-        paragraph = [];
-      }
-      for (const raw of lines) {
-        const line = raw.trimEnd();
-        if (!line.trim()) {
-          closeParagraph();
-          closeList();
-          continue;
-        }
-        if (line.startsWith("## ")) {
-          closeParagraph();
-          closeList();
-          const h = document.createElement("h2");
-          h.textContent = line.replace(/^##\s+/, "");
-          container.appendChild(h);
-        } else if (line.startsWith("### ")) {
-          closeParagraph();
-          closeList();
-          const h = document.createElement("h3");
-          h.textContent = line.replace(/^###\s+/, "");
-          container.appendChild(h);
-        } else if (line.startsWith("- ")) {
-          closeParagraph();
-          if (!list || listType !== "ul") {
-            closeList();
-            list = document.createElement("ul");
-            listType = "ul";
+      const parser = renderMarkdown.parser ||= window.markdownit({html: false, linkify: false});
+      const nodes = [container];
+      function draw(tokens) {
+        for (const token of tokens) {
+          const parent = nodes[nodes.length - 1];
+          if (token.type === "inline") { draw(token.children || []); continue; }
+          if (token.nesting < 0) { nodes.pop(); continue; }
+          if (token.hidden) {
+            if (token.nesting > 0) nodes.push(parent);
+            continue;
           }
-          const li = document.createElement("li");
-          appendCitationAwareText(li, line.replace(/^-\s+/, "").replace(/\*\*/g, ""), citationSources);
-          list.appendChild(li);
-        } else if (/^\d+\.\s+/.test(line)) {
-          closeParagraph();
-          if (!list || listType !== "ol") {
-            closeList();
-            list = document.createElement("ol");
-            listType = "ol";
+          if (token.type === "text") {
+            if (parent.closest("a")) parent.append(token.content);
+            else appendCitationAwareText(parent, token.content, citationSources);
+          } else if (token.type === "code_inline" || token.type === "code_block" || token.type === "fence") {
+            const code = document.createElement("code");
+            code.textContent = token.content;
+            if (token.type === "code_inline") parent.append(code);
+            else { const pre = document.createElement("pre"); pre.append(code); parent.append(pre); }
+          } else if (token.type === "softbreak") parent.append("\n");
+          else if (token.type === "hardbreak" || token.type === "hr") parent.append(document.createElement(token.tag));
+          else if (token.type === "image") parent.append(token.content); // No network requests from an answer.
+          else if (token.nesting > 0) {
+            const tags = ["p", "em", "strong", "s", "h1", "h2", "h3", "h4", "h5", "h6",
+                          "ul", "ol", "li", "blockquote", "table", "thead", "tbody", "tr", "th", "td"];
+            const href = token.type === "link_open" && token.attrGet("href");
+            const link = href && /^https?:\/\//i.test(href);
+            const el = document.createElement(link ? "a" : tags.includes(token.tag) ? token.tag : "span");
+            if (link) {
+              el.href = href; el.target = "_blank"; el.rel = "noopener noreferrer";
+              if (token.attrGet("title")) el.title = token.attrGet("title");
+            }
+            if (token.tag === "ol" && token.attrGet("start")) el.start = Number(token.attrGet("start"));
+            parent.append(el); nodes.push(el);
           }
-          const li = document.createElement("li");
-          appendCitationAwareText(li, line.replace(/^\d+\.\s+/, "").replace(/\*\*/g, ""), citationSources);
-          list.appendChild(li);
-        } else {
-          closeList();
-          paragraph.push(line.trim());
         }
       }
-      closeParagraph();
-      closeList();
+      draw(parser.parse(String(text || ""), {}));
     }
 
     function appendCitationAwareText(container, text, citationSources) {
