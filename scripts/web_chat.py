@@ -595,7 +595,10 @@ class WebChatApp:
                 model = (runtime or {}).get("model") or settings.answer_model
                 window = ask_corpus.effective_model_context(settings, model=model)
                 reserve = min(ask_corpus.answer_num_predict(None), max(192, window // 4))
-                prompt, shortened = discussion_prompt(prompt_question, paper["title"], chunks, history[::-1], window, reserve)
+                from originrag.paper_discussion import extracted_pages
+                extracted = (REPO_ROOT / settings.chunks_dir).parent / "extracted_text" / f"{paper_id}.json"
+                prompt, shortened = discussion_prompt(prompt_question, paper["title"], chunks, history[::-1], window, reserve,
+                                                      pages=extracted_pages(extracted, paper_id, window))
                 compacted = compacted or shortened
                 if progress:
                     progress("Discussing your paper")
@@ -7000,6 +7003,9 @@ INDEX_HTML = r"""<!doctype html>
     #send {
       grid-column: 3;
       grid-row: 1;
+      place-self: end;
+      width: 44px;
+      height: 44px;
       border-radius: 999px;
       min-height: 44px;
       background: var(--text);

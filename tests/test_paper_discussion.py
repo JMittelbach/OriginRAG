@@ -9,7 +9,7 @@ import fitz
 import pytest
 
 from originrag.analysis.context_budget import estimate_prompt_tokens
-from originrag.paper_discussion import bibliography, discussion_prompt, reference_request
+from originrag.paper_discussion import bibliography, discussion_prompt, extracted_pages, reference_request
 from originrag.paper_discussion import mentioned_papers, refers_to_paper, wants_corpus
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -73,6 +73,41 @@ def test_reference_scope_and_unreadable_list(tmp_path):
     assert reference_request("Show all the references.")
     assert not reference_request("What did their survey measure?")
     assert "couldn't reliably" in bibliography(tmp_path / "missing", "ONE")
+
+
+def test_journal_and_identifier_are_joint_clues_not_a_topic_search():
+    a = dict(title="A comparison of X9B responses", journal="Nature Communications")
+    b = dict(title="X9B and its seasonal variability", journal="Ecology")
+    c = dict(title="Different X9B outcomes", journal="Nature Communications")
+    question = "Kennst du das neue x9b Nature Comm Paper? Wie waren die Kohorten?"
+    assert mentioned_papers(question, [a, b]) == [a]
+    assert mentioned_papers(question, [a, b, c]) == [a, c]
+    a.update(year="2024")
+    c.update(year="2018")
+    assert mentioned_papers(question, [a, b, c]) == [a]
+    c.update(year="2024")
+    assert mentioned_papers(question, [a, b, c]) == [a, c]
+    assert not mentioned_papers("Find X9B across studies", [a, b])
+    assert refers_to_paper("Und die Kohortenstruktur?")
+
+
+def test_whole_extraction_or_budgeted_chunks_never_a_different_paper(tmp_path):
+    path = tmp_path / "p.json"
+    path.write_text(json.dumps(dict(paper_id="p", pages=[dict(page=1, text="First page."),
+                                                        dict(page=2, text="Final page.")])))
+    assert not extracted_pages(path, "other", 4096)
+    chunks = [dict(text="Indexed fallback.")]
+    pages = extracted_pages(path, "p", 4096)
+    prompt, _ = discussion_prompt("Who?", "Study", chunks, [], 4096, 400, pages=pages)
+    assert "First page." in prompt and "Final page." in prompt and "Indexed fallback." not in prompt
+    assert "requested_detail" not in prompt
+    question = "Was war das Ergebnis? Erklär die Kohrotne."
+    prompt, _ = discussion_prompt(question, "Study", chunks, [], 4096, 400, pages=pages)
+    payload = json.loads(prompt.split("\n", 1)[1])
+    assert payload["question"] == question and "case and control counts" in payload["requested_detail"]
+    pages[0]["text"] *= 4000
+    prompt, _ = discussion_prompt("Who?", "Study", chunks, [], 2048, 400, pages=pages)
+    assert "Indexed fallback." in prompt and estimate_prompt_tokens(prompt) + 528 <= 2048
 
 
 def test_natural_paper_references_resolve_only_unambiguous_identities():

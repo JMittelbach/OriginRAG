@@ -139,6 +139,18 @@ def test_dictation_records_retries_and_inserts_without_sending(dictation_page, t
     assert len(attempts) == 2
 
 
+def test_send_button_stays_fixed_as_draft_grows(dictation_page):
+    page = dictation_page
+    page.locator("#guideSkip").click()
+    field, button = page.locator("#message"), page.locator("#send")
+    field.fill("Short draft")
+    before, initial = button.bounding_box(), field.bounding_box()
+    field.fill("\n".join(["Another line"] * 10))
+    assert field.bounding_box()["height"] > initial["height"]
+    assert button.bounding_box()["height"] == before["height"]
+    assert button.bounding_box()["width"] == before["width"]
+
+
 def test_microphone_denied_keeps_keyboard_available(dictation_page):
     from playwright.sync_api import expect
     page = dictation_page

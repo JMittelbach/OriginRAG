@@ -95,8 +95,9 @@ They become searchable when the update finishes; uncertain imports are flagged
 for review. Catalogue-only entries are not full-text papers.
 
 To talk about one paper, just mention its title or DOI, or drag its PDF into
-the chat. Ask follow-ups in the same chat, then ask about other studies
-whenever you like.
+the chat. When the extracted text fits, the model reads the paper page by
+page in one request; longer papers use selected passages. Ask follow-ups in
+the same chat, or ask about other studies to search the library again.
 
 Ask a question in chat and open the cited passages. You can ask what a single
 paper did without needing a second study to corroborate its methods. For example,
