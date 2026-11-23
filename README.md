@@ -98,6 +98,8 @@ To talk about one paper, just mention its title or DOI, or drag its PDF into
 the chat. When the extracted text fits, the model reads the paper page by
 page in one request; longer papers use selected passages. Ask follow-ups in
 the same chat, or ask about other studies to search the library again.
+For questions about cohorts or control groups, expand **Study design in the
+original paper** when available to check the numbers against the PDF text.
 
 Ask a question in chat and open the cited passages. You can ask what a single
 paper did without needing a second study to corroborate its methods. For example,

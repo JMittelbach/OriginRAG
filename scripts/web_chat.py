@@ -550,6 +550,7 @@ class WebChatApp:
         from originrag.summaries.reading_card import load_paper
 
         paper, chunks = load_paper(paper_id, REPO_ROOT / settings.papers, REPO_ROOT / settings.chunks_dir)
+        source_notes = []
         if paper["paper_id"] != paper_id:
             raise ValueError("Choose a paper from the library first.")
         compacted = False
@@ -595,16 +596,17 @@ class WebChatApp:
                 model = (runtime or {}).get("model") or settings.answer_model
                 window = ask_corpus.effective_model_context(settings, model=model)
                 reserve = min(ask_corpus.answer_num_predict(None), max(192, window // 4))
-                from originrag.paper_discussion import extracted_pages
+                from originrag.paper_discussion import align_quoted_pages, extracted_pages
                 extracted = (REPO_ROOT / settings.chunks_dir).parent / "extracted_text" / f"{paper_id}.json"
+                pages = extracted_pages(extracted, paper_id, window)
                 prompt, shortened = discussion_prompt(prompt_question, paper["title"], chunks, history[::-1], window, reserve,
-                                                      pages=extracted_pages(extracted, paper_id, window))
+                                                      pages=pages, source_notes=source_notes)
                 compacted = compacted or shortened
                 if progress:
                     progress("Discussing your paper")
                 reply = ask_corpus.generate_answer_with_backend(prompt, backend=settings.backend, model=model,
                     num_ctx=window, num_predict=reserve, timeout=180).llm_result
-                answer = (reply.answer or "").strip()
+                answer = align_quoted_pages((reply.answer or "").strip(), pages)
                 if not answer:
                     if re.search(r"context (?:length|window|limit)|prompt (?:is )?too long", str(reply.error or ""), re.I):
                         raise ValueError("The model's context is full. Start a new chat and reattach the paper, or shorten this question.")
@@ -619,6 +621,8 @@ class WebChatApp:
                       sources=[{"paper_id": paper_id, "title": paper["title"]}], history_compacted=compacted,
                       output_dir=relative_path(turn_dir), answer_path=relative_path(path),
                       elapsed_seconds=round(time.monotonic() - started, 3))
+        if source_notes:
+            result["design_passages"] = source_notes
         write_json(turn_dir / "public_result.json", result)
         ensure_session_title(session, paper["title"])
         append_turn_summary(session, question, question, "paper_discussion", result, turn_dir)
@@ -8042,6 +8046,19 @@ INDEX_HTML = r"""<!doctype html>
         link.textContent = "Open paper ↗";
         box.append(link);
         if (data.history_compacted) box.append(" · Earlier conversation condensed");
+        if (data.design_passages?.length) {
+          const details = document.createElement("details");
+          details.className = "sources-box";
+          const summary = document.createElement("summary");
+          summary.textContent = "Study design in the original paper";
+          details.appendChild(summary);
+          for (const passage of data.design_passages) {
+            const quote = document.createElement("blockquote");
+            quote.textContent = "PDF p. " + passage.page + " · " + passage.text;
+            details.appendChild(quote);
+          }
+          box.appendChild(details);
+        }
         return box;
       }
       if (data.task === "paper_summaries") {

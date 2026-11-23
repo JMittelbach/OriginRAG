@@ -4,12 +4,13 @@ import sqlite3
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import fitz
 import pytest
 
 from originrag.analysis.context_budget import estimate_prompt_tokens
-from originrag.paper_discussion import bibliography, discussion_prompt, extracted_pages, reference_request
+from originrag.paper_discussion import align_quoted_pages, bibliography, discussion_prompt, extracted_pages, reference_request
 from originrag.paper_discussion import mentioned_papers, refers_to_paper, wants_corpus
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -23,7 +24,7 @@ def article(title="Measuring variation across repeated observations"):
     doc.new_page().insert_textbox(fitz.Rect(32, 32, 540, 780),
         title + "\nA. Example\nAbstract\nIntroduction\n" +
         "Repeated observations can characterize measurement variability. " * 11 +
-        "\nMethods\nWe compared duplicate readings.\nResults\nThe estimates agreed.")
+        "\nMethods\nWe enrolled 39 participants and compared 12 matched pairs.\nResults\nThe estimates agreed.")
     doc.new_page().insert_text((50, 100), "References\n1. Avery. Precision. 2007.\n2. Banks. Sampling. 2011.")
     raw = doc.tobytes()
     doc.close()
@@ -123,6 +124,43 @@ def test_natural_paper_references_resolve_only_unambiguous_identities():
     assert wants_corpus("Welche anderen Studien zeigen das auch?")
 
 
+@pytest.mark.parametrize("question", [
+    "Und die 12 Paare – sind die zusätzlich? Zeig mir die Stelle.",
+    "How were the groups recruited?",
+    "Where exactly does it say that?",
+    "Wie waren die Kohorten aufgebaut?",
+])
+def test_natural_design_followups_keep_focus(question):
+    assert refers_to_paper(question) and not wants_corpus(question)
+    assert wants_corpus("Can you find other papers with those 12 pairs?")
+    assert not refers_to_paper("Explain the 12 principles of design.")
+
+
+def test_design_source_notes_are_from_supplied_pages_only():
+    primary = "We performed unmatched comparisons of 39 patients and 65 controls and paired comparisons of 12 pairs."
+    pages = [{"page": 4, "text": primary}, {"page": 7, "text": primary}]
+    notes = []
+    prompt, _ = discussion_prompt("Which control groups?", "Example", [], [], 4096, 450,
+                                  pages=pages, source_notes=notes)
+    payload = json.loads(prompt.split("\n", 1)[1])
+    assert notes == payload["study_design_passages"] == [{"page": 4, "text": primary}]
+    assert estimate_prompt_tokens(prompt) <= 4096 - 450 - 128
+    notes.clear()
+    prompt, _ = discussion_prompt("How was rainfall measured?", "Example", [], [], 4096, 450,
+                                  pages=pages, source_notes=notes)
+    assert not notes and "study_design_passages" not in prompt
+
+
+def test_only_unique_verbatim_quote_can_correct_an_adjacent_page():
+    sentence = "We compared twelve pairs selected from the full sample."
+    pages = [{"page": 2, "text": sentence.replace("selected from", "selected\nfrom")}]
+    answer = 'Explanation [Seite 6]. "' + sentence.replace("twelve", "**twelve**") + '" [Seite 4].'
+    assert align_quoted_pages(answer, pages) == answer.replace("Seite 4", "Seite 2")
+    assert align_quoted_pages(answer, pages + [{"page": 5, "text": sentence}]) == answer
+    paraphrase = answer.replace("full sample", "enrolled sample")
+    assert align_quoted_pages(paraphrase, pages) == paraphrase
+
+
 def test_clarifying_a_title_keeps_the_original_question(tmp_path):
     papers = tmp_path / "papers.tsv"
     papers.write_text("paper_id\ttitle\tauthor\tyear\nA\tA first survey\tKlein\t2017\nB\tA second survey\tKlein\t2017\n")
@@ -172,6 +210,9 @@ def test_browser_drop_upload_read_reload_and_detach(tmp_path, monkeypatch, brows
         path.write_text("Searched across the library.")
         return {"answer_path": path, "pack": {"chunks": []}, "answer_qc": {"passed": True}}
     monkeypatch.setattr(web.ask_corpus, "run_question", corpus_reply)
+    monkeypatch.setattr(web.ask_corpus, "effective_model_context", lambda *a, **kw: 8192)
+    monkeypatch.setattr(web.ask_corpus, "generate_answer_with_backend", lambda *a, **kw:
+                        SimpleNamespace(llm_result=SimpleNamespace(answer="A paired subset.", error=None)))
     mgr = web.LibrarySyncManager(tmp_path / "bib/inbox", auto_worker=False, read_cache_refresh=lambda: None,
                                  refresh_callback=lambda: None)
     handler = web.build_handler(app, library_manager=mgr)
@@ -219,6 +260,12 @@ def test_browser_drop_upload_read_reload_and_detach(tmp_path, monkeypatch, brows
             page.locator("#message").fill("Zeig mir nochmal alle Quellen daraus.")
             page.locator("#send").click()
             pw.expect(page.locator("#chat .paper-discussion")).to_have_count(2)
+            page.locator("#message").fill("Und die 12 Paare – waren die zusätzlich?")
+            page.locator("#send").click()
+            design = page.locator("#chat details").filter(has_text="Study design in the original paper")
+            pw.expect(design.locator("summary")).to_be_visible()
+            design.locator("summary").click()
+            pw.expect(design.locator("blockquote").first).to_contain_text("12 matched pairs")
             page.locator("#message").fill("Welche anderen Studien zeigen das auch?")
             page.locator("#send").click()
             pw.expect(page.locator("#chat")).to_contain_text("Searched across the library.", timeout=15000)
