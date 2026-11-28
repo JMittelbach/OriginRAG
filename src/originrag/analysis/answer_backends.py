@@ -42,6 +42,7 @@ def generate_answer_with_backend(
     base_url: str | None = None,
     evidence_is_sufficient: bool = True,
     force_answer: bool = False,
+    response_format: str | dict | None = None,
 ) -> AnswerBackendResult:
     requested = (backend or "none").strip().lower()
     if requested not in SUPPORTED_ANSWER_BACKENDS:
@@ -102,6 +103,7 @@ def generate_answer_with_backend(
 
         num_ctx=answer_num_ctx(num_ctx),
         assistant_prefix=required_answer_prefix(prompt, resolved_model),
+        **({"format": response_format} if response_format is not None else {}),
     )
     return AnswerBackendResult(
         llm_result=LLMResult(

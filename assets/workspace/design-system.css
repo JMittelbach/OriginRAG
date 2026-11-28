@@ -196,6 +196,30 @@ body > .app .bubble {
   border-radius: var(--ui-radius-lg);
   box-shadow: none;
 }
+body > .app .assistant.working .bubble {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 10px 0;
+  gap: 18px;
+  max-width: 100%;
+}
+body > .app .assistant.working .role,
+body > .app .assistant.working .working-dot {
+  display: none;
+}
+body > .app .assistant.working .working-stage {
+  min-width: 0;
+  width: min(480px, 65vw);
+  font-size: 14px;
+  gap: 7px;
+}
+body > .app .assistant.working .job-stop {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-size: 13px;
+}
 body > .app .user .bubble {
   border-color: var(--line);
   line-height: 1.65;

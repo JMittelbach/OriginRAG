@@ -38,6 +38,90 @@ and personal settings. Skip it at any time or reopen it with **? → Quick tour*
 Completion is remembered for this account in this browser. Clearing browser
 storage shows the tour again.
 
+## Talking about a paper
+
+Write naturally, in English or German; no special command format is needed.
+Common command typos, swapped letters and missing spaces are tolerated, including
+combinations such as “coudlyou … secnodpapre”. For
+research questions, the local model corrects spelling before preparing search terms,
+with checks on identifiers, numbers and exclusions. Ambiguous names still need clarification.
+Your original message stays in the chat.
+
+You can also ask **“Search the web for new papers about …”** (or **“Suche neue
+Paper zu …”**) directly in the chat. Web results are labelled **Web search ·
+Crossref + Europe PMC**, separate from your library. Each result has a publication link,
+author, journal, year, an expandable abstract when supplied, and **Add to library**.
+Only the search terms and filters go to these services, not your files or conversation.
+Ordinary searches still use your library. If you explicitly mention both places,
+the chat asks which you mean.
+
+Spoken requests such as “Could you find two papers online, preferably in Nature?”
+work too. The local model prepares the topic and filters and checks candidate
+titles and abstracts, providing an exact metadata passage for each selected hit.
+The code checks those passages; this is not a full-text evidence assessment.
+Publication details come from the literature services,
+not the model. Follow-ups retain the topic, count, dates and journal preference.
+Journal names are checked against Crossref's directory. “Preferably in Nature”
+allows other journals with an explicit note; “only Nature” is a strict filter.
+Alternative topics are searched separately. Ask “include other journals” to broaden a filter.
+
+Searches show up to 20 results at a time. “Five more” continues the same web search;
+“in my library instead” switches back. “Recent” favours newer work without
+excluding older useful papers. Add “since 2025” for a strict starting year.
+These are discovery results, not a guarantee of relevance or completeness.
+Chat checks a bounded batch of returned titles and abstracts against the topic
+and may show fewer results than requested. Provider or model-check failures are
+shown explicitly; unverified candidates are labelled as such. Missing metadata
+can hide useful papers; no matches does not establish that no such work exists.
+Adding a paper looks for a verified open-access PDF and indexes it in the background.
+It is only marked **In library** after a successful import, or when its full text is
+already available. If no accessible PDF can be verified, the failure stays visible
+and you can retry. Looking at an abstract does not download a paper or read its full text.
+
+Ask for a paper by title, DOI, or topic and journal. A clear single-paper lookup
+returns the citation directly, without a model call. If several titles fit, choose
+one from the short list. Minor title-word typos can be matched against the catalogue,
+with the matched spelling shown. Gene identifier digits are not corrected.
+“Can we discuss the second paper?” refers to the displayed list, including web results.
+If that paper has not been imported, the chat distinguishes its abstract from a full-text reading.
+It can summarize and discuss the available abstract without importing the PDF.
+The selected paper stays selected across follow-ups and reopening the chat.
+“I meant the first paper, not the second” changes that selection; “two more” continues
+the original search. Missing methods or sample sizes are not filled in from other papers.
+You can then ask follow-up questions naturally. After a
+library search, “Back to the original paper” returns to the first paper discussed
+in this chat. “Back to the previous paper” returns to the previous distinct paper.
+Short follow-ups can refer to earlier points in the same discussion; “Thanks”
+doesn't start a search or clear the selected paper.
+Replies default to English; ask explicitly for another language when needed.
+“Summarize the second paper briefly” uses the displayed list, including after
+reopening the chat. “Only the newest paper from that list” narrows that list;
+if the recorded publication years are tied or missing, the chat asks which title.
+
+“Show the source for that statement” asks for support within the selected paper;
+“Show all references” requests its bibliography. For questions about measurements
+or conclusions, the reader highlights relevant original passages about inference
+and limitations for the model. This helps retain the authors' qualifications but
+does not replace checking the paper.
+Page citations such as `[PDF p. 8]` open that page in the reader in a new tab,
+leaving the conversation open. A page link is navigation, not a claim-validation badge.
+For a request for one exact quotation, the model selects a passage and the app
+copies its source text and page. It cannot replace the quote with invented wording.
+You should still check whether the chosen passage supports the claim.
+
+If the search planner changes a number, identifier or negation, ordinary research
+chat discards that rewrite and searches with your original wording. An unclear
+topic still needs clarification; a rejected rewrite is not evidence of an empty library.
+
+The reader uses the full extracted article when it fits, otherwise selected
+passages. If a saved extraction is missing, it can read the registered PDF directly
+within size limits. Long conversations use selected excerpts of earlier messages alongside
+recent turns; a small notice tells you when this happens. The full saved chat is
+not overwritten. Older model replies are conversation context, not scientific
+evidence. Memory stays within the current chat and paper, and does not train the
+model or build a shared knowledge base. If a question alone leaves too little room
+for source text, the chat asks you to shorten it or start a new chat.
+
 ## Reading and marking papers
 
 **Mark as read** in the PDF reader adds the paper to **Bookshelf → Finished**,

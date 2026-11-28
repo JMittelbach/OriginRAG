@@ -5,6 +5,7 @@ import csv
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import secrets
@@ -213,6 +214,9 @@ class WebChatSettings:
     trace_token_budget: int | None = None
 
 
+TOPIC_DISCOVERY = TopicDiscovery()
+
+
 class WebChatApp:
     def __init__(
         self, settings: WebChatSettings, out_dir: str = "outputs/web_chat_sessions"
@@ -283,36 +287,94 @@ class WebChatApp:
 
         with cancellable_lock(session_lock):
             settings = merge_settings(self.settings, settings_update)
-            saved_turns = read_session_turns(target_session)
-            from originrag.paper_discussion import mentioned_papers, refers_to_paper, wants_corpus
+            saved_turns = [turn for turn in read_session_turns(target_session) if turn.get("task") != "conversation"]
+            if settings.task == "auto":
+                external = self.discover_in_chat(target_session, clean_message, settings,
+                                                saved_turns, progress_callback, started_at)
+                if external is not None:
+                    return external
+            from originrag.paper_discussion import mentioned_papers, refers_to_paper, unresolved_report_reference, wants_corpus
+            from originrag.retrieval.paper_lookup import citation_candidates, citation_lookup, excludes_venue
             from originrag.retrieval.quick_list import more_list_request, named_catalogue_request, paper_list_request
+            from originrag.analysis.conversation_memory import follows_paper_topic, history_turns, returning_paper_id
+            from originrag.analysis.chat_commands import acknowledgement, discussion_number, list_recency, starts_new_topic
 
             attachment = settings_update.get("_discussion_id")
+            courtesy = acknowledgement(clean_message) if settings.task == "auto" else None
             matches = []
             paper_id = None
             clarified = None
+            lookup = citation_lookup(clean_message) if settings.task == "auto" else None
+            recency = list_recency(clean_message) if settings.task == "auto" else None
+            question_number = discussion_number(clean_message) if settings.task == "auto" else None
+            summary_selection = reading_selection(clean_message) if settings.task == "auto" else None
+            reading_choices = None
+            list_lookup = False
+            selection_missing = False
             broad = wants_corpus(clean_message) or paper_list_request(clean_message) or more_list_request(clean_message)
             named = named_catalogue_request(clean_message)
-            if settings.task == "auto" and not broad and not presence_language(clean_message) and not (named and named[2]):
+            if settings.task == "auto" and not courtesy and (lookup or not broad) and not presence_language(clean_message) and not (named and named[2]):
                 papers = REPO_ROOT / settings.papers
                 catalogue = library_catalog(str(papers.with_name("paper_registry.tsv")), str(papers),
                                             chunks_dir=str(REPO_ROOT / settings.chunks_dir), for_chat=True)
-                matches = mentioned_papers(clean_message, catalogue)
+                matches = (citation_candidates(lookup, (p for p in catalogue if not settings.category or
+                                                        p.get("category") == settings.category)) if lookup
+                           else mentioned_papers(clean_message, catalogue))
+                if summary_selection and not attachment and not matches and saved_turns:
+                    prior = saved_turn_result(saved_turns[-1], target_session)
+                    if not summary_selection.correction or prior.get("reading_choices"):
+                        choices = prior.get("reading_choices") or prior.get("sources") or []
+                        if 1 <= summary_selection.number <= len(choices):
+                            selected_id = choices[summary_selection.number - 1].get("paper_id")
+                            matches = [row for row in catalogue if row["paper_id"] == selected_id]
+                            reading_choices = choices
+                            if summary_selection.correction:
+                                clarified = "Summarize the selected paper."
+                if (recency or question_number) and not attachment and not matches:
+                    from originrag.retrieval.quick_list import publication_year
+                    prior_list = saved_turn_result(saved_turns[-1], target_session) if saved_turns else {}
+                    choices = prior_list.get("reading_choices") or prior_list.get("sources") or []
+                    by_id = {row["paper_id"]: row for row in catalogue}
+                    choices = [by_id.get(row.get("paper_id"), row) for row in choices]
+                    if recency:
+                        list_lookup = True
+                        years = [publication_year(row) for row in choices]
+                        if years and all(years):
+                            year = (min if recency == "oldest" else max)(years)
+                            choices = [row for row in choices if publication_year(row) == year]
+                        matches = choices
+                    elif 1 <= question_number <= len(choices):
+                        matches = [choices[question_number - 1]]
+                        reading_choices = choices
+                    selection_missing = not matches
                 if saved_turns and saved_turns[-1].get("task") == "library_status" and not attachment:
                     last_result = saved_turn_result(saved_turns[-1], target_session)
-                    if last_result.get("pending_paper_question"):
+                    if not lookup and last_result.get("pending_paper_question"):
                         choices = last_result.get("sources") or []
                         ordinal = reading_selection("Summarize " + clean_message) or reading_selection("Fass " + clean_message + " zusammen")
                         if not matches and ordinal and 1 <= ordinal.number <= len(choices):
                             matches = [choices[ordinal.number - 1]]
                         if len(matches) == 1 and any(row["paper_id"] == matches[0]["paper_id"] for row in choices):
                             clarified = last_result["pending_paper_question"]
-                if len(matches) == 1 and matches[0].get("searchable"):
+                            lookup = citation_lookup(clarified)
+                            list_lookup = bool(list_recency(clarified))
+                if not lookup and not list_lookup and len(matches) == 1 and matches[0].get("searchable"):
                     paper_id = matches[0]["paper_id"]
-                elif not matches:
+                elif (not lookup and not list_lookup and not selection_missing and not matches
+                      and not excludes_venue(clean_message) and not starts_new_topic(clean_message)):
                     paper_id = attachment
-                    if (not paper_id and saved_turns and refers_to_paper(clean_message)
-                        and not re.search(r"10\.\d{4,9}/|\bet al\b|\b(?:19|20)\d\d\b", clean_message, re.I)):
+                    if not paper_id:
+                        recent = returning_paper_id(clean_message, saved_turns)
+                        paper_id = next((p["paper_id"] for p in catalogue
+                                         if p["paper_id"] == recent and p.get("searchable")), None)
+                    last = saved_turns[-1] if saved_turns else {}
+                    continuation = refers_to_paper(clean_message)
+                    if not continuation and last.get("task") == "paper_discussion":
+                        recent_context, _ = history_turns(saved_turns, last.get("paper_id"), clean_message, limit=4)
+                        continuation = any(follows_paper_topic(clean_message, turn.get("user", ""),
+                                           saved_turn_result(turn, target_session).get("answer", ""))
+                                           for turn in reversed(recent_context))
+                    if not paper_id and saved_turns and continuation and not unresolved_report_reference(clean_message):
                         last = saved_turns[-1]
                         single_report = re.search(
                             r"\b(?:this|that|the|dem|der|das|die|dies\w*)\s+(?:paper|article|study|studie|artikel)\b",
@@ -327,17 +389,21 @@ class WebChatApp:
                             if len(ids) == 1:
                                 paper_id = next((row["paper_id"] for row in catalogue
                                                  if row["paper_id"] in ids and row.get("searchable")), None)
-                            elif last["task"] == "answer" and len(ids) > 1:
-                                matches = [row for row in catalogue if row["paper_id"] in ids]
+                            elif len(ids) > 1:
+                                by_id = {row["paper_id"]: row for row in catalogue}
+                                matches = [by_id[row["paper_id"]] for row in sources if row.get("paper_id") in by_id]
             if paper_id:
+                if not reading_choices and saved_turns and saved_turns[-1].get("paper_id") == paper_id:
+                    reading_choices = saved_turn_result(saved_turns[-1], target_session).get("reading_choices")
+                discussion_options = {"reading_choices": reading_choices} if reading_choices else {}
                 result = self.discuss(target_session, clean_message, settings, paper_id,
-                                      saved_turns, progress_callback, started_at, clarified=clarified)
+                                      saved_turns, progress_callback, started_at, clarified=clarified, **discussion_options)
                 self.finish_attachment(target_session, settings_update)
                 return result
             previous_turns = [
-                turn_context_from_saved_turn(turn)
+                turn_context_from_saved_turn(turn, target_session)
                 for turn in saved_turns[-2:]
-                if turn.get("user")
+                if turn.get("user") and turn.get("task") != "web_discovery"
             ]
             retrieval_question = build_chat_retrieval_question(
                 clean_message,
@@ -378,11 +444,9 @@ class WebChatApp:
                         return len(terms.intersection(re.findall(r"\w{4,}", turn["user"].casefold())))
                     recalled = max(earlier, key=relevance)
                     anchors = [earlier[0]] + ([recalled] if recalled is not earlier[0] and relevance(recalled) else [])
-                    turn_args.conversation_context[:0] = answer_context([turn_context_from_saved_turn(t) for t in anchors])
-            ensure_session_title(
-                target_session,
-                infer_session_title(clean_message, resolved_task),
-            )
+                    turn_args.conversation_context[:0] = answer_context([turn_context_from_saved_turn(t, target_session) for t in anchors])
+            if not courtesy:
+                ensure_session_title(target_session, infer_session_title(clean_message, resolved_task))
             language = presence_language(clean_message)
             named = named_catalogue_request(clean_message) if settings.task == "auto" else None
             listing = paper_list_request(clean_message) if resolved_task == "sources" else None
@@ -392,11 +456,28 @@ class WebChatApp:
                 r"(?:(?:can|could|would) you )?(?:please )?summari[sz]e (?:my|this|the|that|the first|the second) (?:paper|article)"
                 r"|(?:bitte )?fass(?:e)? (?:mir )?(?:bitte )?(?:mein|dieses|das|das erste|das zweite) paper zusammen",
                 command, re.I)
-            direct = None
-            if len(matches) > 1:
+            direct = {"resolved_task": "conversation", "answer": courtesy} if courtesy else None
+            if selection_missing:
+                direct = {"resolved_task": "library_status", "answer":
+                          "Which paper do you mean? Choose a paper from the last list, or give me its title or DOI."}
+            elif len(matches) > 1:
                 options = matches[:8]
-                direct = {"resolved_task": "library_status", "sources": options, "pending_paper_question": clean_message, "answer":
-                          "Which title do you mean?\n\n" + "\n".join("- " + p["title"] for p in options)}
+                direct = {"resolved_task": "library_status", "sources": options, "pending_paper_question": clarified or clean_message, "answer":
+                          "Which title do you mean?\n\n" + "\n".join(f"{i}. {p['title']}" for i, p in enumerate(options, 1))}
+            elif lookup or list_lookup:
+                if matches:
+                    paper = matches[0]
+                    title = paper["title"]
+                    if paper.get("doi_url"):
+                        title = f"[{title}]({paper['doi_url']})"
+                    detail = " · ".join(str(paper[k]) for k in ("author", "journal", "year") if paper.get(k))
+                    answer = title + (f"\n\n{detail}" if detail else "")
+                    if paper.get('lookup_corrections'):
+                        answer += '\n\nCatalogue match: ' + ', '.join(
+                            f'“{typed}” → “{actual}”' for typed, actual in paper['lookup_corrections']) + '.'
+                else:
+                    answer = "No title in the local catalogue matched both the topic and journal. Do you have an author, title, or DOI?"
+                direct = {"resolved_task": "library_status", "sources": matches, "answer": answer}
             elif len(matches) == 1 and not matches[0].get("searchable"):
                 direct = {"resolved_task": "library_status", "sources": matches, "answer":
                           f"I found “{matches[0]['title']}”, but its full text isn't indexed. Attach the PDF and we can read it together."}
@@ -406,7 +487,7 @@ class WebChatApp:
                 # A paper is the topic, not a previous page of search results.
                 more = None
             elif more:
-                listing, seen_ids = resume_quick_list(more, saved_turns, settings)
+                listing, seen_ids = resume_quick_list(more, saved_turns, settings, target_session)
                 if listing is None and command not in {"more", "mehr"}:
                     direct = {"resolved_task": "library_status", "answer": {
                         "en": "Which topic should I find more papers on?",
@@ -420,7 +501,7 @@ class WebChatApp:
                 command, re.I)
             go_ahead = command.replace(", ", " ") in {"do that", "go ahead", "yes do that", "mach das", "ja mach das", "vas-y", "hazlo"}
             affirmative = go_ahead or command in {"yes", "yep", "ja", "oui", "sí"}
-            prior = saved_turn_result(saved_turns[-1]) if saved_turns and (relative or group or selection or affirmative) else {}
+            prior = saved_turn_result(saved_turns[-1], target_session) if saved_turns and (relative or group or selection or affirmative) else {}
             # A correction refers to the displayed list, not the one-item summary of it.
             last_list = prior.get("reading_choices") or prior.get("sources") or []
             pending = prior.get("confirm_reading") if affirmative else None
@@ -462,7 +543,7 @@ class WebChatApp:
                     direct = named_catalogue_answer(named, catalogue, settings.category)
                 elif listing:
                     direct = quick_paper_list(listing, catalogue, settings, seen_ids=seen_ids)
-                    direct["list_page"] = {"topic": listing.topic, "limit": listing.limit,
+                    direct["list_page"] = {"topic": direct.get("resolved_topic", listing.topic), "limit": listing.limit,
                                            "newest": listing.newest, "since": listing.since,
                                            "scope": list_scope(settings), "first": not more}
                 else:
@@ -538,10 +619,272 @@ class WebChatApp:
             with self.lock:
                 if self.session_dir.resolve() == target_session.resolve():
                     latest = read_session_turns(target_session)[-1]
-                    self.previous_turns = previous_turns[-1:] + [turn_context_from_saved_turn(latest)]
+                    self.previous_turns = previous_turns[-1:] + [turn_context_from_saved_turn(latest, target_session)]
                     self.turn_index = turn_index + 1
-            self.finish_attachment(target_session, settings_update)
+            if not courtesy:
+                self.finish_attachment(target_session, settings_update)
             return public_result
+
+    def discovery_completion(self, settings, prompt, schema, *, num_predict=700, num_ctx=8192):
+        from originrag.model_runtime import manager_for
+        with manager_for(REPO_ROOT).session() as runtime:
+            model = (runtime or {}).get("model") or settings.answer_model
+            reply = ask_corpus.generate_answer_with_backend(prompt, backend=settings.backend, model=model,
+                response_format=schema, num_ctx=num_ctx, num_predict=num_predict, timeout=45).llm_result
+        checkpoint()
+        if reply.error or not reply.answer:
+            raise ValueError("The local model could not prepare the search.")
+        return reply.answer
+
+    def discover_in_chat(self, session, message, settings, turns, progress, started):
+        from originrag.discovery.chat_search import (web_search_request, search_plan_prompt,
+            resolved_search_plan, resolve_journal, SEARCH_SCHEMA)
+        from originrag.analysis.chat_commands import acknowledgement, discussion_number
+        from originrag.discovery.reading import discussion_items, library_continuation
+
+        prior = saved_turn_result(turns[-1], session) if turns else {}
+        if acknowledgement(message):
+            return None
+        items = prior.get("external_papers") or []
+        selection = reading_selection(message)
+        number = selection.number if selection else discussion_number(message)
+        chosen = []
+        request = web_search_request(message, prior)
+        if prior.get('web_search') and library_continuation(message):
+            request = None
+        elif prior.get('web_search'):
+            if number:
+                if not 1 <= number <= len(items):
+                    return self.save_discovery_turn(session, message, {**prior,
+                        "answer": f"The web list has {len(items)} papers. Which title or listed number do you mean?",
+                        "show_external_cards": False}, started)
+                chosen = [items[number - 1]]
+            elif not request or (request.needs_planning and not request.pending_message) or prior.get('discussion_failed'):
+                chosen = discussion_items(message, prior)
+            if chosen:
+                request = None
+        if request and request.needs_planning:
+            if progress:
+                progress("Preparing your web search")
+            response = ""
+            if len(message) <= 6000:
+                plan_prompt = search_plan_prompt(message, prior.get("web_search"), papers=items,
+                                                selected=prior.get('selected_external_dois', []))
+                for attempt in range(2):
+                    try:
+                        response = self.discovery_completion(settings, plan_prompt, SEARCH_SCHEMA)
+                    except (ValueError, OSError):
+                        break
+                    prepared = resolved_search_plan(request, message, response)
+                    if not prepared.planning_error:
+                        break
+                    plan_prompt += '\nReturn a complete usable JSON search plan. Search the clear topic even if one dictated word is uncertain.'
+            checkpoint()
+            request = resolved_search_plan(request, message, response)
+            if request.intent == "paper_discussion":
+                active = set(prior.get('selected_external_dois') or [])
+                chosen = [p for p in items if p.get('doi') in active]
+                if not chosen and len(items) == 1:
+                    chosen = items
+                if not chosen and items:
+                    return self.save_discovery_turn(session, message, {**prior,
+                        "answer": "Which of the listed papers do you mean? Give its title or number.",
+                        "show_external_cards": False}, started)
+            if request.intent in {"other", "paper_discussion"}:
+                request = None
+            elif request.intent == "local_search":
+                prior = {**prior, "web_search": request.public()}
+                message = "in my library instead"
+                request = None
+        if request is None and not chosen:
+            pending = prior.get("web_search") or {}
+            if pending.get("query") and (library_continuation(message) or re.fullmatch(
+                r"(?:now |instead |jetzt |lieber )?(?:in |im |in der )?(?:my |the |meine |der )?(?:library|corpus|bibliothek|korpus)(?: instead| please| bitte)?[.!?]*", message, re.I
+            )):
+                from originrag.retrieval.quick_list import PaperList
+                papers = REPO_ROOT / settings.papers
+                catalogue = library_catalog(str(papers.with_name("paper_registry.tsv")), str(papers),
+                                            chunks_dir=str(REPO_ROOT / settings.chunks_dir), for_chat=True)
+                result = quick_paper_list(PaperList(pending["query"], pending.get("limit", 8), "en"), catalogue, settings)
+                result["task"] = "sources"
+                return self.save_discovery_turn(session, message, result, started)
+            return None
+        papers = REPO_ROOT / settings.papers
+        catalogue = library_catalog(str(papers.with_name("paper_registry.tsv")), str(papers),
+                                    chunks_dir=str(REPO_ROOT / settings.chunks_dir), for_chat=True)
+        known = {normalize_doi(str(p.get("doi") or "")): p for p in catalogue if p.get("doi")}
+        if chosen:
+            prior = {**prior, 'selected_external_dois': [p['doi'] for p in chosen]}
+            from originrag.analysis.chat_commands import without_conversational_decline
+            correction = bool(number and re.match(r'(?:actually[, ]+)?i (?:only )?meant\b',
+                controls(without_conversational_decline(message)))) or bool(selection and selection.correction)
+            clarified = turns[-1].get('user') if correction and turns else None
+            local = known.get(normalize_doi(chosen[0]["doi"])) if len(chosen) == 1 else None
+            from originrag.discovery.reading import metadata_request
+            if local and local.get("searchable") and not metadata_request(clarified or message):
+                return self.discuss(session, message, settings, local["paper_id"], turns, progress, started,
+                                    web_context=prior, clarified=clarified)
+            return self.discuss_external(session, message, settings, chosen, prior, turns, progress, started,
+                                         clarified=clarified)
+        result = {"task": "web_discovery", "web_search": request.public(), "external_papers": [], "show_external_cards": True}
+        if request.prompt:
+            result["answer"] = request.prompt
+            if request.planning_error:
+                result["web_search_failed"] = True
+        else:
+            if progress:
+                progress("Searching the web for papers")
+            try:
+                owner = str(self.out_dir.resolve())
+                issns = ()
+                journal_lookup_unavailable = False
+                if request.journal:
+                    try:
+                        journals = TOPIC_DISCOVERY.journals(owner, request.journal)
+                    except DiscoveryUnavailable:
+                        if request.journal_mode == 'only':
+                            raise
+                        journals = {'items': []}
+                        journal_lookup_unavailable = True
+                    journal = resolve_journal(request.journal, journals["items"])
+                    if not journal and request.journal_mode == "only":
+                        result["answer"] = f'I could not identify one exact journal named “{request.journal}”. Please give its full name, or ask to search all journals.'
+                        result["web_search"]["journal_pending"] = True
+                        result["web_search_failed"] = True
+                        return self.save_discovery_turn(session, message, result, started)
+                    issns = journal["issns"] if journal else ()
+                remaining = prior.get("remaining_web_papers", []) if request.offset else []
+                if remaining:
+                    found = {"items": remaining, "sources": prior.get("web_sources", []),
+                             "next_offset": (prior.get("web_search") or {}).get("next_offset", request.offset),
+                             "queries": list(request.queries) or [request.query]}
+                else:
+                    found = TOPIC_DISCOVERY.research(owner, request, issns=issns)
+                    from originrag.discovery.chat_engine import previous_matches, shortlist
+                    retained = previous_matches(prior, request)
+                    if retained:
+                        merged = {p['doi']: p for p in retained + found['items']}
+                        found['items'] = shortlist(list(merged.values()), request.queries or (request.query,), request)
+                        found['sources'] = sorted(set(found.get('sources', [])) | set(prior.get('web_sources', [])))
+                        result['retained_web_results'] = len(retained)
+                    if found["items"]:
+                        from originrag.discovery.chat_engine import rank_prompt, ranked_items, order_matches, RANK_SCHEMA
+                        if progress:
+                            progress("Checking which papers match your request")
+                        try:
+                            ranking = self.discovery_completion(settings, rank_prompt(request, found["items"]),
+                                RANK_SCHEMA, num_predict=1600, num_ctx=16384)
+                            matches = ranked_items(ranking, found["items"])
+                            if not prior.get('relevance_unchecked'):
+                                matched = {p['doi'] for p in matches}
+                                matches.extend(p for p in retained if p.get('relevance_passage') and p['doi'] not in matched)
+                            found["items"] = order_matches(matches, request)
+                        except (ValueError, OSError):
+                            result["relevance_unchecked"] = True
+                checkpoint()
+                result["web_search"]["next_offset"] = found.get("next_offset", request.offset + request.limit)
+                result["web_sources"] = found.get("sources", [])
+                result["search_queries"] = found.get("queries", [])
+                result["search_checks"] = found.get("checks", [])
+                seen = set()
+                if request.offset:
+                    for turn in reversed(turns):
+                        previous = saved_turn_result(turn, session)
+                        page = previous.get("web_search") or {}
+                        if page.get("query") != request.query:
+                            break
+                        seen.update(p["doi"] for p in previous.get("external_papers", []))
+                available = [item for item in found["items"] if item["doi"] not in seen]
+                result["remaining_web_papers"] = available[request.limit:]
+                for item in available[:request.limit]:
+                    if item["doi"] in seen:
+                        continue
+                    local = known.get(normalize_doi(item["doi"])) or {}
+                    result["external_papers"].append({**item, "in_library": bool(local),
+                        "paper_id": local.get("paper_id", ""),
+                        "fulltext_ready": bool(local.get("searchable") and local.get("local_pdf"))})
+                count = len(result["external_papers"])
+                period = f" · since {request.since}" if request.since else ""
+                journal_label = f" · {request.journal} only" if request.journal and request.journal_mode == "only" else ""
+                source_label = " + ".join(result["web_sources"]) or "literature services"
+                result["answer"] = (f"Web search · {source_label}{period}{journal_label}\n{count} {'paper' if count == 1 else 'papers'} for “{request.query}”."
+                                    if count else f"I did not find a close match in this web search{journal_label} for “{request.query}”. This does not establish that no such papers exist.")
+                if request.journal_preference and any(p.get('journal', '').casefold() != request.journal.casefold() for p in result["external_papers"]):
+                    result["answer"] += f" Other journals are included because {request.journal} was a preference."
+                if result.get("relevance_unchecked"):
+                    result["answer"] += " These are search candidates; the model relevance check was unavailable."
+                if found.get("unavailable"):
+                    result["answer"] += " Some search providers were temporarily unavailable."
+                if journal_lookup_unavailable:
+                    result["answer"] += " The journal directory was unavailable; the topic search still ran."
+                if request.limit == 20:
+                    result["answer"] += " Showing up to 20 at a time; ask for more to continue."
+            except (DiscoveryBusy, DiscoveryUnavailable) as exc:
+                result["answer"] = str(exc) + " Your library has not been searched or changed. Ask me to retry the web search."
+                result["web_search_failed"] = True
+        return self.save_discovery_turn(session, message, result, started)
+
+    def discuss_external(self, session, message, settings, items, prior, turns, progress, started, *, clarified=None):
+        from originrag.discovery.reading import CONTEXT_KEYS, linked_titles, metadata_request, reading_prompt
+        selected = {p['doi'] for p in items}
+        result = {key: prior[key] for key in CONTEXT_KEYS if key in prior}
+        result.update(task='web_discovery', show_external_cards=False, sources=[],
+                      selected_external_dois=sorted(selected), source_scope='abstract')
+        question = f'{clarified}\nThe reader corrected the selection: {message}' if clarified else message
+        if metadata_request(question):
+            result['source_scope'] = 'metadata'
+            answer = linked_titles(items) + '\n\n' + '\n'.join(f"DOI: {p['doi']}" for p in items)
+        elif not any(p.get('abstract') for p in items):
+            answer = linked_titles(items) + '\n\nNo abstract or full text is available here. Open the publication or add its PDF to discuss the findings.'
+        else:
+            history = []
+            for turn in turns[-32:]:
+                previous = saved_turn_result(turn, session)
+                if set(previous.get('selected_external_dois') or []) == selected:
+                    history.append((turn.get('user', ''), previous.get('answer', '')))
+            with manager_for(REPO_ROOT).session() as runtime:
+                model = (runtime or {}).get('model') or settings.answer_model
+                window = min(16384, ask_corpus.effective_model_context(settings, model=model))
+                reserve = min(1200, max(192, window // 4))
+                from originrag.analysis.source_quotation import quotation_candidates, quotation_schema, wants_quotation
+                quotes = (quotation_candidates([{'page': 1, 'text': items[0].get('abstract', '')}], question, history)
+                          if len(items) == 1 and wants_quotation(question) else None)
+                prompt, compacted = reading_prompt(question, items, history, window, reserve, quotes=quotes)
+                format_options = ({'response_format': quotation_schema(quotes)}
+                                  if quotes is not None and (runtime or {}).get('provider') != 'colibri' else {})
+                if progress:
+                    progress('Reading the selected abstract' if len(items) == 1 else 'Comparing the selected abstracts')
+                reply = ask_corpus.generate_answer_with_backend(prompt, backend=settings.backend, model=model,
+                    num_ctx=window, num_predict=reserve, timeout=90, **format_options).llm_result
+            checkpoint()
+            if reply.error or not (reply.answer or '').strip():
+                answer = 'I could not finish that answer. Your selected paper is kept; please retry.'
+                result['discussion_failed'] = True
+            else:
+                answer = reply.answer.strip()
+                if quotes is not None:
+                    from originrag.discovery.reading import abstract_quotation
+                    answer = abstract_quotation(answer, quotes)
+            result['history_compacted'] = compacted
+            scope = 'abstract' if len(items) == 1 else 'abstracts'
+            answer += '\n\n' + linked_titles(items) + f'\n\n*Based on the available {scope}, not the full text.*'
+        result['answer'] = answer
+        return self.save_discovery_turn(session, message, result, started)
+
+    def save_discovery_turn(self, session, message, result, started):
+        commit_answer()
+        turn_dir = session / f"turn_{next_session_turn_index(session):03d}_{ask_corpus.slugify(message)}"
+        turn_dir.mkdir(parents=True, exist_ok=True)
+        answer_path = turn_dir / "answer.md"
+        answer_path.write_text(result["answer"], encoding="utf-8")
+        result.update({"answer_state": "answered", "sources": result.get("sources", []),
+                       "evidence_grade": "not_applicable", "output_dir": relative_path(turn_dir),
+                       "answer_path": relative_path(answer_path), "retrieval_question": message,
+                       "elapsed_seconds": round(time.monotonic() - started, 3)})
+        write_json(turn_dir / "public_result.json", result)
+        append_turn_summary(session, message, message, result["task"], result, turn_dir)
+        ensure_session_title(session, infer_session_title(message, result["task"]))
+        return result
 
     def finish_attachment(self, session, settings):
         snapshot = settings.get("_attachment_snapshot")
@@ -552,8 +895,9 @@ class WebChatApp:
             if path.exists() and json.loads(path.read_text()) == snapshot:
                 write_json_atomically(path, {}, mode=0o600)
 
-    def discuss(self, session, question, settings, paper_id, turns, progress, started, *, clarified=None):
+    def discuss(self, session, question, settings, paper_id, turns, progress, started, *, clarified=None, reading_choices=None, web_context=None):
         from originrag.paper_discussion import bibliography, discussion_prompt, reference_request
+        from originrag.analysis.conversation_memory import history_turns
         from originrag.summaries.reading_card import load_paper
 
         paper, chunks = load_paper(paper_id, REPO_ROOT / settings.papers, REPO_ROOT / settings.chunks_dir)
@@ -561,6 +905,8 @@ class WebChatApp:
         if paper["paper_id"] != paper_id:
             raise ValueError("Choose a paper from the library first.")
         compacted = False
+        context_info = {}
+        pages = []
         if progress:
             progress("Reading the selected paper")
         prompt_question = f"{clarified}\nThe reader clarified: {question}" if clarified else question
@@ -584,40 +930,55 @@ class WebChatApp:
             answer = bibliography(extracted, paper_id, pdf_pages)
         else:
             history = []
-            words = set(re.findall(r"\w{4,}", question.casefold()))
-            for turn in reversed(turns):
-                if turn.get("task") != "paper_discussion":
-                    break
-                if turn.get("paper_id"):
-                    if turn["paper_id"] != paper_id:
-                        break
-                    if len(history) >= 64 and not words.intersection(re.findall(r"\w{4,}", turn["user"].casefold())):
-                        history.append((turn["user"], ""))
-                        compacted = True
-                        continue
+            selected_turns, history_total = history_turns(turns, paper_id, question)
+            compacted = history_total > len(selected_turns)
+            for turn in selected_turns:
                 previous = saved_turn_result(turn, session)
                 if previous.get("paper_id") != paper_id:
-                    break
+                    compacted = True
+                    continue
                 history.append((turn["user"], previous.get("answer", "")))
             with manager_for(REPO_ROOT).session() as runtime:
                 model = (runtime or {}).get("model") or settings.answer_model
                 window = ask_corpus.effective_model_context(settings, model=model)
                 reserve = min(ask_corpus.answer_num_predict(None), max(192, window // 4))
-                from originrag.paper_discussion import align_quoted_pages, extracted_pages
+                from originrag.paper_discussion import align_printed_page_citations, align_quoted_pages, extracted_pages, pdf_text_pages
+                from originrag.analysis.source_quotation import quotation_schema, render_selected_quotation, wants_quotation
                 extracted = (REPO_ROOT / settings.chunks_dir).parent / "extracted_text" / f"{paper_id}.json"
                 pages = extracted_pages(extracted, paper_id, window)
-                prompt, shortened = discussion_prompt(prompt_question, paper["title"], chunks, history[::-1], window, reserve,
-                                                      pages=pages, source_notes=source_notes)
+                if not pages and paper.get("local_pdf_relpath"):
+                    try:
+                        try:
+                            bib = get_bib_dir()
+                        except OriginRAGConfigError:
+                            bib = REPO_ROOT / "bib"
+                        with open_registered_pdf(paper_id, metadata_files=[REPO_ROOT / settings.papers],
+                                                 bib_roots=[bib, REPO_ROOT / "bib"]) as handle:
+                            pages = pdf_text_pages(handle, min(2_000_000, 12 * window))
+                    except (OSError, ValueError):
+                        pass
+                quotation_choices = []
+                prompt, shortened = discussion_prompt(prompt_question, paper["title"], chunks, history, window, reserve,
+                                                      pages=pages, source_notes=source_notes, context_info=context_info,
+                                                      quotation_choices=quotation_choices)
                 compacted = compacted or shortened
+                context_info.update(history_turns_available=history_total, history_compacted=compacted)
                 if progress:
                     progress("Discussing your paper")
+                quote_request = wants_quotation(prompt_question)
+                format_options = ({"response_format": quotation_schema(quotation_choices)}
+                                  if quote_request and (runtime or {}).get("provider") != "colibri" else {})
                 reply = ask_corpus.generate_answer_with_backend(prompt, backend=settings.backend, model=model,
-                    num_ctx=window, num_predict=reserve, timeout=180).llm_result
-                answer = align_quoted_pages((reply.answer or "").strip(), pages)
+                    num_ctx=window, num_predict=reserve, timeout=180, **format_options).llm_result
+                answer = (reply.answer or "").strip()
                 if not answer:
                     if re.search(r"context (?:length|window|limit)|prompt (?:is )?too long", str(reply.error or ""), re.I):
                         raise ValueError("The model's context is full. Start a new chat and reattach the paper, or shorten this question.")
                     raise ValueError("The model did not return an answer. Check Models and retry; your paper is still attached.")
+                if quote_request:
+                    answer = render_selected_quotation(answer, quotation_choices)
+                else:
+                    answer = align_printed_page_citations(align_quoted_pages(answer, pages), pages)
         index = next_session_turn_index(session)
         turn_dir = session / f"turn_{index:03d}_{ask_corpus.slugify(question)}"
         commit_answer()
@@ -628,8 +989,22 @@ class WebChatApp:
                       sources=[{"paper_id": paper_id, "title": paper["title"]}], history_compacted=compacted,
                       output_dir=relative_path(turn_dir), answer_path=relative_path(path),
                       elapsed_seconds=round(time.monotonic() - started, 3))
+        result["source_pages"] = context_info.pop("source_pages", [])
+        previous = saved_turn_result(turns[-1], session) if turns else {}
+        web_context = web_context or (previous if previous.get('paper_id') == paper_id else {})
+        if web_context.get('web_search'):
+            from originrag.discovery.reading import CONTEXT_KEYS
+            for key in CONTEXT_KEYS:
+                if key in web_context:
+                    result[key] = web_context[key]
+            result['show_external_cards'] = False
         if source_notes:
             result["design_passages"] = source_notes
+        if context_info:
+            result["context_info"] = context_info
+        if reading_choices:
+            result["reading_choices"] = [{"paper_id": p["paper_id"], "title": p.get("title", "")}
+                                         for p in reading_choices[:100] if p.get("paper_id")]
         write_json(turn_dir / "public_result.json", result)
         ensure_session_title(session, paper["title"])
         append_turn_summary(session, question, question, "paper_discussion", result, turn_dir)
@@ -641,7 +1016,7 @@ class WebChatApp:
             turns = read_session_turns(session_dir)
             self.session_dir = session_dir
             self.previous_turns = [
-                turn_context_from_saved_turn(turn) for turn in turns[-2:] if turn.get("user")
+                turn_context_from_saved_turn(turn, session_dir) for turn in turns[-2:] if turn.get("user")
             ]
             self.turn_index = len(turns) + 1
             return {
@@ -1080,6 +1455,9 @@ class TurnJobManager:
                     continue
                 session_dir = path.parents[1]
                 safe_session_dir(app.out_dir, str(session_dir))
+                if any(not math.isfinite(float(payload.get(key) or 0)) for key in
+                       ("created_at", "started_at", "completed_at")):
+                    continue
                 completed_at = float(payload.get("completed_at") or 0)
                 if state in {"failed", "interrupted", "cancelled"} and completed_at < time.time() - 86400:
                     continue
@@ -1363,6 +1741,8 @@ class TurnJobManager:
             "created_at": job.created_at,
             "started_at": job.started_at,
             "completed_at": job.completed_at,
+            "elapsed_seconds": max(0, int((job.completed_at or time.time()) -
+                                           (job.started_at or job.created_at))),
             "error": job.error,
             "can_cancel": job.state in {"queued", "running"} and not job.cancellation.committed,
         }
@@ -1873,7 +2253,7 @@ def named_catalogue_answer(named, catalogue, category):
         {k: p.get(k) for k in ("paper_id", "title", "year", "doi", "local_pdf")} for p in matches]}
 
 
-def resume_quick_list(more, saved_turns, settings):
+def resume_quick_list(more, saved_turns, settings, session_dir=None):
     from originrag.retrieval.quick_list import PaperList
 
     lang, count = more
@@ -1883,7 +2263,7 @@ def resume_quick_list(more, saved_turns, settings):
     for turn in reversed(saved_turns):
         if turn.get("task") != "sources":
             break
-        result = saved_turn_result(turn)
+        result = saved_turn_result(turn, session_dir)
         page = result.get("list_page")
         if not result.get("quick_list") or not page or page.get("scope") != scope:
             break
@@ -1898,9 +2278,10 @@ def resume_quick_list(more, saved_turns, settings):
     return None, set()
 
 
-def quick_paper_list(request, catalogue, settings, *, seen_ids=frozenset()):
+def quick_paper_list(request, catalogue, settings, *, seen_ids=frozenset(), allow_typo_retry=True):
     from originrag.retrieval.quick_list import publication_year
 
+    all_catalogue = catalogue
     if settings.category:
         catalogue = tuple(p for p in catalogue if p.get("category") == settings.category)
     total_catalogue = len(catalogue)
@@ -1928,6 +2309,21 @@ def quick_paper_list(request, catalogue, settings, *, seen_ids=frozenset()):
             rows.extend(available[k] for k in ranked)
             if request.newest:
                 rows = sorted(rows, key=publication_year, reverse=True)[:request.limit]
+    if not rows and request.topic and not seen_ids and allow_typo_retry:
+        from dataclasses import replace
+        from originrag.retrieval.quick_list import topic_spelling_candidate
+
+        candidate = topic_spelling_candidate(request.topic, all_catalogue)
+        if candidate:
+            corrected, corrections = candidate
+            retried = quick_paper_list(replace(request, topic=corrected), catalogue, settings, allow_typo_retry=False)
+            if retried['sources']:
+                label = 'Katalogabgleich' if de else 'Catalogue match'
+                retried['search_note'] = label + ': ' + ', '.join(
+                    f'“{typed}” → “{actual}”' for typed, actual in corrections) + '.'
+                retried['answer'] += '\n\n' + retried['search_note']
+                retried['resolved_topic'] = corrected
+                return retried
     count = len(rows)
     answer = (f"{count} Treffer zu „{request.topic}“" if de else
               f"{count} {'match' if count == 1 else 'matches'} for “{request.topic}”")
@@ -1979,6 +2375,8 @@ def search_library_catalog(
     # Keep punctuation literal for identifiers even when words in a title use different dashes.
     clean_query = " ".join(t if "/" in t or "_" in t else _catalog_words(t) for t in clean_query.split())
     query_tokens = clean_query.split()
+    from originrag.retrieval.quick_list import query_word_forms
+    word_forms = query_word_forms(query)
     source = catalogue if catalogue is not None else library_catalog()
     clean_scope = _catalog_text(scope).casefold()
     if clean_scope in {"p_falciparum", "falciparum", "plasmodium_falciparum"}:
@@ -2000,7 +2398,9 @@ def search_library_catalog(
         other = " ".join(str(item.get(field) or "").casefold() for field in fields)
         coauthors = _catalog_words(str(item.get("full_authors") or item.get("authors") or ""))
         searchable_text = " ".join((title, author, coauthors, other))
-        if not all(token in searchable_text for token in query_tokens):
+        title_words = set(re.findall(r"\w+", title))
+        if not all(token in searchable_text or title_words.intersection(word_forms.get(token, ()))
+                   for token in query_tokens):
             return None
         rank = 0
         if clean_query == title or clean_query == author:
@@ -2014,6 +2414,8 @@ def search_library_catalog(
         if clean_query in author:
             rank += 230
         rank += 40 * sum(token in title for token in query_tokens)
+        rank += 20 * sum(token not in title and bool(title_words.intersection(word_forms.get(token, ())))
+                         for token in query_tokens)
         rank += 35 * sum(token in author for token in query_tokens)
         rank += 20 * sum(token in coauthors and token not in author for token in query_tokens)
         rank += 10 * sum(token in other for token in query_tokens)
@@ -2087,11 +2489,14 @@ def progress_percent(stage: str) -> int:
     phases = (
         ("waiting", 4),
         ("planning", 10),
+        ("understanding", 10),
         ("searching", 25),
+        ("reading", 35),
         ("selecting", 43),
         ("checking", 58),
         ("explaining", 68),
         ("writing", 72),
+        ("discussing", 72),
         ("validating", 92),
     )
     return next((percent for marker, percent in phases if marker in normalized), 6)
@@ -2134,7 +2539,7 @@ def build_handler(
     anonymous_review_lock = threading.Lock()
     writing_collaboration = WritingCollaboration(REPO_ROOT / app_registry.out_dir, auth_store) if auth_store and runtime_profile.write else None
     collaboration_routes = {'/api/writing/collaboration', '/api/writing/collaborators'}
-    topic_discovery = TopicDiscovery()
+    topic_discovery = TOPIC_DISCOVERY
     paper_imports = PaperImports(library_manager)
     local_import_token = secrets.token_urlsafe(32)
     corpus_lock = library_manager.corpus_lock if library_manager else threading.RLock()
@@ -3513,11 +3918,12 @@ def serialize_turn_result(
         return {"task": resolved_task, "answer": result["answer"], "answer_state": "answered",
                 "sources": [s for part in parts for s in part["sources"]], "parts": parts,
                 "output_dir": relative_path(turn_dir), "answer_path": relative_path(result["answer_path"])}
-    if resolved_task == "library_status" or result.get("quick_list"):
+    if resolved_task in {"library_status", "conversation"} or result.get("quick_list"):
         return {"task": resolved_task, "answer": result["answer"], "answer_state": "answered",
                 "answer_path": relative_path(result["answer_path"]), "output_dir": relative_path(turn_dir),
                 "retrieval_question": retrieval_question, "sources": result.get("sources", []),
-                "quick_list": bool(result.get("quick_list")), "evidence_grade": "not_applicable"}
+                "quick_list": bool(result.get("quick_list")), "search_note": result.get("search_note", ""),
+                "evidence_grade": "not_applicable"}
     if result.get("reading_card") is not None:
         card = result["reading_card"]
         sources = format_public_sources(result["pack"]["chunks"], source_role="summary_source")
@@ -3559,7 +3965,9 @@ def serialize_turn_result(
         ),
         source_role=("search_result" if resolved_task == "sources" else "answer_evidence"),
     )
-    if resolved_task == "sources":
+    compact_list = (resolved_task == "sources" and pack.get("corpus_inventory") is None
+                    and not paper_search.get("requested_detail_fields"))
+    if resolved_task == "sources" and not compact_list:
         sources = attach_automatic_paper_search_traces(sources)
     if resolved_task != "sources" and answer_path and Path(answer_path).exists():
         raw_answer = Path(answer_path).read_text(encoding="utf-8")
@@ -3631,6 +4039,11 @@ def serialize_turn_result(
                 language=reply_language(pack.get("question", retrieval_question)),
                 sources=sources,
             )
+        elif compact_list:
+            answer = (f"{len(sources)} {'paper' if len(sources) == 1 else 'papers'} from your library:" if sources else
+                      "No matching papers found in this search. Try another term, title, or DOI.")
+            answer += "".join(f"\n{i}. {p['title']}" + (f" ({p['year']})" if p.get("year") else "")
+                              for i, p in enumerate(sources, 1))
     else:
         answer_state = (
             "provisional"
@@ -3656,6 +4069,7 @@ def serialize_turn_result(
         "answer": answer,
         "answer_state": result.get("research_fallback") or answer_state,
         "research_mode": bool(pack.get("research_mode")),
+        "compact_list": compact_list,
         "cited_passages": [
             {k: chunk.get(k) for k in ("evidence_id", "paper_id", "title", "page_range", "section", "text")}
             for chunk in pack.get("chunks", [])
@@ -3920,10 +4334,10 @@ def build_public_paper_search_summary(
     count = len(sources)
     report_count = public_paper_search_report_count(sources)
     noun = "paper" if count == 1 else "papers"
-    count_text = f"{count} relevant {noun}"
+    count_text = f"{count} candidate {noun}"
     if report_count > count:
         count_text = (
-            f"{report_count} relevant reports, displayed as {count} "
+            f"{report_count} candidate reports, displayed as {count} "
             "publication-family representatives"
         )
     expansion = (
@@ -4387,26 +4801,19 @@ def unique_chunk_titles(chunks: list[dict], limit: int) -> list[str]:
     return titles
 
 
-def turn_context_from_saved_turn(turn: dict) -> ChatTurnContext:
+def turn_context_from_saved_turn(turn: dict, session_dir: Path | None = None) -> ChatTurnContext:
     output_text = str(turn.get("output") or "")
     answer_summary = ""
     titles: list[str] = []
     if output_text:
-        try:
-            output_dir = safe_repo_file(output_text)
-        except ValueError:
-            output_dir = None
+        output_dir = saved_turn_directory(turn, session_dir)
         if output_dir:
-            answer_path = output_dir / "answer.md"
-            if answer_path.exists() and answer_path.is_file():
-                answer_summary = summarize_answer_for_context(
-                    answer_path.read_text(encoding="utf-8", errors="replace")
-                )
+            answer_summary = summarize_answer_for_context(saved_turn_answer(turn, session_dir))
             evidence_table = output_dir / "evidence_table.tsv"
-            if evidence_table.exists() and evidence_table.is_file():
+            if evidence_table.is_file() and evidence_table.resolve().parent == output_dir.resolve():
                 titles = titles_from_evidence_table(evidence_table)
             elif turn.get("task") in {"sources", "paper_summaries", "paper_discussion"}:
-                titles = [str(p["title"]) for p in saved_turn_result(turn).get("sources", [])[:6] if p.get("title")]
+                titles = [str(p["title"]) for p in saved_turn_result(turn, session_dir).get("sources", [])[:6] if p.get("title")]
     return ChatTurnContext(
         user_question=str(turn.get("user") or ""),
         retrieval_question=str(turn.get("retrieval_question") or ""),
@@ -5058,7 +5465,7 @@ def safe_public_output_file(path_text: str, out_dir: Path) -> Path:
 
 
 def make_session_dir(base_dir: Path) -> Path:
-    base = base_dir if base_dir.is_absolute() else REPO_ROOT / base_dir
+    base = (base_dir if base_dir.is_absolute() else REPO_ROOT / base_dir).resolve()
     session_stem = datetime.now().strftime("%Y%m%d_%H%M%S")
     session_dir = base / session_stem
     counter = 2
@@ -5131,7 +5538,7 @@ def session_messages(session_dir: Path) -> list[dict]:
         if user_text:
             messages.append({"role": "user", "text": user_text})
         saved_result = saved_turn_result(turn, session_dir)
-        answer = str(saved_result.get("answer") or "") or saved_turn_answer(turn)
+        answer = str(saved_result.get("answer") or "") or saved_turn_answer(turn, session_dir)
         if answer:
             message = {"role": "assistant", "text": answer}
             if saved_result:
@@ -5140,47 +5547,53 @@ def session_messages(session_dir: Path) -> list[dict]:
     return messages
 
 
-def saved_turn_result(turn: dict, session_dir: Path | None = None) -> dict:
+def saved_turn_directory(turn: dict, session_dir: Path | None = None) -> Path | None:
     output_text = str(turn.get("output") or "")
     if not output_text:
-        return {}
+        return None
     try:
         if session_dir is None:
             output_dir = safe_repo_file(output_text)
         else:
             output_dir = (REPO_ROOT / output_text).resolve()
             if output_dir.parent != session_dir.resolve():
-                return {}
-    except ValueError:
+                return None
+    except (ValueError, OSError, RuntimeError):
+        return None
+    return output_dir
+
+
+def saved_turn_result(turn: dict, session_dir: Path | None = None) -> dict:
+    output_dir = saved_turn_directory(turn, session_dir)
+    if output_dir is None:
         return {}
     result_path = output_dir / "public_result.json"
-    if not result_path.exists() or not result_path.is_file():
-        return {}
     try:
+        if result_path.resolve().parent != output_dir.resolve() or not result_path.is_file():
+            return {}
         payload = json.loads(result_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):
         return {}
     return payload if isinstance(payload, dict) else {}
 
 
-def saved_turn_answer(turn: dict) -> str:
-    output_text = str(turn.get("output") or "")
-    if not output_text:
-        return ""
-    try:
-        output_dir = safe_repo_file(output_text)
-    except ValueError:
+def saved_turn_answer(turn: dict, session_dir: Path | None = None) -> str:
+    output_dir = saved_turn_directory(turn, session_dir)
+    if output_dir is None:
         return ""
     answer_path = output_dir / "answer.md"
-    if not answer_path.exists() or not answer_path.is_file():
+    try:
+        if answer_path.resolve().parent != output_dir.resolve() or not answer_path.is_file():
+            return ""
+        return public_answer_text(answer_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError, RuntimeError):
         return ""
-    return public_answer_text(answer_path.read_text(encoding="utf-8", errors="replace"))
 
 
 def list_saved_sessions(
     out_dir: Path, current_session_dir: Path, limit: int | None = None
 ) -> list[dict]:
-    base = out_dir if out_dir.is_absolute() else REPO_ROOT / out_dir
+    base = (out_dir if out_dir.is_absolute() else REPO_ROOT / out_dir).resolve()
     if not base.exists():
         return []
     session_dirs = sorted(
@@ -6665,6 +7078,7 @@ INDEX_HTML = r"""<!doctype html>
       border-radius: 999px;
       background: rgba(112, 151, 169, .18);
     }
+    .working-elapsed { font-size: 12px; font-variant-numeric: tabular-nums; }
     .working-progress-bar {
       width: 6%;
       height: 100%;
@@ -7749,6 +8163,8 @@ INDEX_HTML = r"""<!doctype html>
       stage.className = "working-stage";
       const label = document.createElement("span");
       label.className = "working-stage-label";
+      const elapsed = document.createElement('small');
+      elapsed.className = 'working-elapsed';
       const progress = document.createElement("div");
       progress.className = "working-progress";
       progress.setAttribute("role", "progressbar");
@@ -7759,6 +8175,7 @@ INDEX_HTML = r"""<!doctype html>
       progressBar.className = "working-progress-bar";
       progress.appendChild(progressBar);
       stage.appendChild(label);
+      stage.appendChild(elapsed);
       stage.appendChild(progress);
       bubble.appendChild(dot);
       bubble.appendChild(stage);
@@ -7767,6 +8184,22 @@ INDEX_HTML = r"""<!doctype html>
       stop.setAttribute('aria-label', 'Stop this request');
       stop.addEventListener('click', () => cancelTurnJob(jobId));
       bubble.appendChild(stop);
+      const edit = document.createElement('button');
+      edit.type = 'button'; edit.className = 'job-edit'; edit.textContent = 'Edit question';
+      edit.hidden = true;
+      edit.addEventListener('click', () => {
+        const failed = activeTurnJobs.get(jobId);
+        if (!failed || failed.session_dir !== currentSessionDir || sessionNavigationPending || libraryBusy || submittingTurn) return;
+        if (message.value.trim()) {
+          statusEl.textContent = 'Your draft is unchanged. Clear it first to restore this question.';
+        } else {
+          message.value = failed.message || '';
+          message.dispatchEvent(new Event('input', {bubbles: true}));
+          statusEl.textContent = '';
+        }
+        message.focus();
+      });
+      bubble.appendChild(edit);
       wrap.appendChild(roleEl);
       wrap.appendChild(bubble);
       chat.appendChild(wrap);
@@ -7801,12 +8234,20 @@ INDEX_HTML = r"""<!doctype html>
         stop.disabled = job.state === 'cancelling' || (job.state === 'submitting' && cancelSubmittedTurn) || job.can_cancel === false || cancelRequests.has(job.job_id);
         stop.textContent = job.state === 'cancelling' || (job.state === 'submitting' && cancelSubmittedTurn) ? 'Stopping…' : '■ Stop';
       }
+      const edit = wrap.querySelector('.job-edit');
+      if (edit) edit.hidden = !['failed', 'interrupted'].includes(job.state) || !job.message;
       wrap.classList.toggle("job-failed", ["failed", "interrupted"].includes(job.state));
       const label = wrap.querySelector(".working-stage-label");
       if (label) label.textContent = jobStageLabel(job);
+      const elapsed = wrap.querySelector('.working-elapsed');
+      const seconds = Number(job.elapsed_seconds);
+      if (elapsed) {
+        elapsed.hidden = !['queued', 'running', 'cancelling'].includes(job.state) || !Number.isFinite(seconds) || seconds < 5;
+        elapsed.textContent = seconds >= 60 ? `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s elapsed` : `${Math.floor(seconds)}s elapsed`;
+      }
       const progress = wrap.querySelector(".working-progress");
       const bar = wrap.querySelector(".working-progress-bar");
-      if (progress) progress.hidden = ['submitting', 'cancelled'].includes(job.state);
+      if (progress) progress.hidden = !['queued', 'running', 'cancelling'].includes(job.state);
       const bounded = Math.max(2, Math.min(100, Number(job.progress) || 2));
       if (progress) progress.setAttribute("aria-valuenow", String(bounded));
       if (bar) bar.style.width = `${bounded}%`;
@@ -7890,22 +8331,32 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderMarkdown(container, text, result = null) {
       const lines = String(text || "").split("\n");
-      if (result?.quick_list) {
+      if (result?.task === "web_discovery" && result.show_external_cards !== false) {
+        const heading = document.createElement('p'); heading.textContent = text; heading.style.whiteSpace = 'pre-line'; container.append(heading);
+        if (result.show_external_cards !== false && result.external_papers?.length) window.renderChatDiscovery?.(container, result.external_papers);
+        return;
+      }
+      if (result?.quick_list || result?.compact_list) {
         const heading = document.createElement("p");
         heading.textContent = lines[0];
         container.appendChild(heading);
         const list = document.createElement("ol");
         for (const paper of result.sources || []) {
           const item = document.createElement("li");
-          const href = paper.local_pdf ? "/reader?paper_id=" + encodeURIComponent(paper.paper_id)
+          const href = (paper.local_pdf || paper.library_status?.local_pdf) ? "/reader?paper_id=" + encodeURIComponent(paper.paper_id)
             : paper.doi ? "https://doi.org/" + paper.doi : "";
           const title = document.createElement(href ? "a" : "span");
-          if (href) title.href = href;
+          if (href) { title.href = href; title.target = '_blank'; title.rel = 'noopener noreferrer'; }
           title.textContent = paper.title;
           item.append(title, paper.year ? " (" + paper.year + ")" : "");
           list.appendChild(item);
         }
         if (list.children.length) container.appendChild(list);
+        if (result.search_note) {
+          const note = document.createElement('p');
+          note.className = 'muted'; note.textContent = result.search_note;
+          container.appendChild(note);
+        }
         return;
       }
       const citationSources = new Map();
@@ -7913,7 +8364,7 @@ INDEX_HTML = r"""<!doctype html>
         for (const evidenceId of source.evidence_ids || []) citationSources.set(evidenceId, source);
       }
       if (!window.markdownit) {
-        appendCitationAwareText(container, text, citationSources);
+        appendCitationAwareText(container, text, citationSources, result);
         return;
       }
       const parser = renderMarkdown.parser ||= window.markdownit({html: false, linkify: false});
@@ -7929,7 +8380,7 @@ INDEX_HTML = r"""<!doctype html>
           }
           if (token.type === "text") {
             if (parent.closest("a")) parent.append(token.content);
-            else appendCitationAwareText(parent, token.content, citationSources);
+            else appendCitationAwareText(parent, token.content, citationSources, result);
           } else if (token.type === "code_inline" || token.type === "code_block" || token.type === "fence") {
             const code = document.createElement("code");
             code.textContent = token.content;
@@ -7956,12 +8407,34 @@ INDEX_HTML = r"""<!doctype html>
       draw(parser.parse(String(text || ""), {}));
     }
 
-    function appendCitationAwareText(container, text, citationSources) {
+    function appendPaperPageText(container, text, result) {
+      if (result?.task !== 'paper_discussion' || !result.paper_id || !Array.isArray(result.source_pages)) {
+        container.append(document.createTextNode(text));
+        return;
+      }
+      text = String(text).replace(/\[((?:PDF\s+)?(?:p\.|page|Seite)\s+)\d{1,5}(?:\s*[,;]\s*(?:(?:PDF\s+)?(?:p\.|page|Seite)\s+)?\d{1,5})+\]/gi,
+        (citation, prefix) => [...citation.matchAll(/\d{1,5}/g)].map(match => '[' + prefix + match[0] + ']').join(' '));
+      const parts = String(text).split(/(\[(?:PDF\s+)?(?:p\.|page|Seite)\s+\d{1,5}\])/gi);
+      for (const part of parts) {
+        const match = part.match(/^\[(?:PDF\s+)?(?:p\.|page|Seite)\s+(\d{1,5})\]$/i);
+        const number = match ? Number(match[1]) : 0;
+        if (!result.source_pages.includes(number)) { container.append(document.createTextNode(part)); continue; }
+        const link = document.createElement('a');
+        link.className = 'inline-citation paper-page-citation';
+        link.textContent = part;
+        link.href = '/reader?' + new URLSearchParams({paper_id: result.paper_id, page: String(number)});
+        link.target = '_blank'; link.rel = 'noopener noreferrer';
+        link.title = 'Open PDF page ' + number;
+        container.append(link);
+      }
+    }
+
+    function appendCitationAwareText(container, text, citationSources, result = null) {
       const parts = String(text || "").split(/(\[\[cite:E\d{3}\]\])/g);
       for (const part of parts) {
         const tokenMatch = part.match(/^\[\[cite:(E\d{3})\]\]$/);
         if (!tokenMatch) {
-          container.appendChild(document.createTextNode(part));
+          appendPaperPageText(container, part, result);
           continue;
         }
         const source = citationSources.get(tokenMatch[1]);
@@ -8030,12 +8503,15 @@ INDEX_HTML = r"""<!doctype html>
 
     function resultMeta(data) {
       const box = document.createElement("div");
+      if (data.task === "web_discovery") return box;
       if (data.task === "paper_discussion") {
         const link = document.createElement("a");
         link.href = "/reader?paper_id=" + encodeURIComponent(data.paper_id);
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
         link.textContent = "Open paper ↗";
         box.append(link);
-        if (data.history_compacted) box.append(" · Earlier conversation condensed");
+        if (data.history_compacted) box.append(" · Earlier messages shortened for context; full chat saved");
         if (data.design_passages?.length) {
           const details = document.createElement("details");
           details.className = "sources-box";
@@ -8060,7 +8536,7 @@ INDEX_HTML = r"""<!doctype html>
         }
         return box;
       }
-      if (data.task === "library_status" || data.quick_list) return box;
+      if (data.task === "library_status" || data.task === "conversation" || data.quick_list || data.compact_list) return box;
       box.className = "result-meta";
       const summary = document.createElement("div");
       summary.className = "result-summary";

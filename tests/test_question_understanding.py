@@ -44,6 +44,65 @@ def test_question_preparation_preserves_original_and_generates_searches(monkeypa
     assert plan["subqueries"][0]["query"] == "highly variable gene families"
     assert len(calls) == 1
     assert calls[0][1]["num_ctx"] == 4096
+    assert calls[0][1]["format"]["properties"]["intent"]["enum"] == ["question", "corpus_inventory"]
+
+
+def test_spelling_and_translation_are_checked_without_another_call(monkeypatch):
+    question = "was macht PF3D7_0712100 und welche metodne haben die benutzt?"
+    corrected = "Was macht PF3D7_0712100 und welche Methoden haben die benutzt?"
+    payload = prepared(corrected_question=corrected,
+                       normalized_question="What does PF3D7_0712100 do and which methods did they use?",
+                       intent="question", search_queries=["PF3D7_0712100 methods function"])
+    calls = []
+    def call(*args, **kwargs):
+        calls.append(kwargs)
+        return model_reply(payload)
+    monkeypatch.setattr(understanding, "call_ollama_generate", call)
+    result = understanding.understand_question(question)
+    assert result["status"] == "ready"
+    assert result["original_question"] == question
+    assert result["corrected_question"] == corrected
+    assert len(calls) == 1
+    payload["corrected_question"] = corrected.replace("0712100", "0712200")
+    result = understanding.understand_question(question)
+    assert result["error"] == "correction_changed_identifiers_or_numbers"
+
+
+@pytest.mark.parametrize("corrected", [[], {}, False, "", "x" * 1801])
+def test_malformed_spelling_correction_is_rejected(monkeypatch, corrected):
+    monkeypatch.setattr(understanding, "call_ollama_generate", lambda *a, **k: model_reply(
+        prepared(corrected_question=corrected)))
+    assert understanding.understand_question("Which gene families occur here?")["error"] == "invalid_corrected_question"
+
+
+def test_unsafe_paraphrase_can_use_a_checked_spelling_only_fallback(monkeypatch):
+    question = "whcih recyling methdos work below 50 degrees, not above 50?"
+    corrected = "Which recycling methods work below 50 degrees, not above 50?"
+    payload = prepared(corrected_question=corrected, language="en", intent="question",
+                       normalized_question="Which recycling methods work above 50 degrees?",
+                       search_queries=["recycling above 50 degrees"])
+    monkeypatch.setattr(understanding, "call_ollama_generate", lambda *a, **k: model_reply(payload))
+    result = understanding.understand_question(question)
+    assert result["status"] == "ready"
+    assert result["normalized_question"] == corrected
+    assert result["search_queries"] == [corrected]
+    assert "unsafe_rewrite_replaced_with_spelling_only_question" in result["warnings"]
+    payload["corrected_question"] = "Which recycling methods work above 50 degrees, not below 50?"
+    assert understanding.understand_question(question)["status"] == "needs_clarification"
+
+
+def test_english_question_keeps_literal_scope_instead_of_inferred_alternative(monkeypatch):
+    question = "Plase compare BRCA1 and BRCA2, but not mouse studeis. What methdos did they use?"
+    corrected = "Please compare BRCA1 and BRCA2, but not mouse studies. What methods did they use?"
+    monkeypatch.setattr(understanding, "call_ollama_generate", lambda *a, **k: model_reply(prepared(
+        corrected_question=corrected, language="en", intent="question",
+        normalized_question="Compare methods in human studies of BRCA1 and BRCA2, excluding mouse studies.",
+        search_queries=["human BRCA1 BRCA2 methods", "BRCA1 methodology", "BRCA2 methodology", "BRCA1 BRCA2 trials"])))
+    result = understanding.understand_question(question)
+    assert result["status"] == "ready"
+    assert result["normalized_question"] == corrected
+    assert result["search_queries"][0] == corrected
+    assert len(result["search_queries"]) == 4
 
 
 @pytest.mark.parametrize("payload", [
@@ -83,6 +142,73 @@ def test_negation_must_be_preserved(monkeypatch):
     monkeypatch.setattr(understanding, "call_ollama_generate", lambda *a, **k: model_reply(prepared(
         normalized_question="Which methods occur in the corpus?")))
     assert understanding.understand_question("Welche Methoden verwenden keine Sequenzierung?")["error"] == "normalization_lost_negation"
+    assert understanding.understand_question("Welche Methoden verwenden nicth Sequenzierung?")["error"] == "normalization_lost_negation"
+
+
+@pytest.mark.parametrize('question,label', [
+    ('What controls abc expression?', 'abc'),
+    ('How does xyz expreession change?', 'xyz'),
+    ('What does the foo protein do?', 'foo'),
+])
+def test_short_lowercase_scientific_names_are_literal(question, label):
+    assert label in understanding.protected_terms(question)
+    assert understanding.literal_labels(question) == {label}
+
+
+@pytest.mark.parametrize('question', [
+    'What is gene expression?', 'What causes high expression?', 'How does this protein work?',
+    'Compare total protein expression.', 'How does human gene expression vary?',
+    'Show novel gene expression studies.', 'Compare new and old protein expression.',
+])
+def test_ordinary_modifiers_are_not_promoted_to_names(question):
+    assert not understanding.literal_labels(question)
+
+
+def test_model_cannot_silently_expand_a_lowercase_gene_label(monkeypatch):
+    prompts = []
+    def generate(prompt, **kwargs):
+        prompts.append(prompt)
+        return model_reply(prepared(corrected_question='What regulates arbitrary expression?',
+                                    normalized_question='What regulates arbitrary expression?'))
+    monkeypatch.setattr(understanding, 'call_ollama_generate', generate)
+    result = understanding.understand_question('what regulates arb expression?')
+    assert '"literal_labels": ["arb"]' in prompts[0]
+    assert result['error'] == 'correction_changed_identifiers_or_numbers'
+
+
+def test_polite_decline_is_not_a_search_exclusion():
+    understanding._validate_explicit_constraints(
+        "no thanks ubt i meant onyl the one new paper fpür X9B in nature comm",
+        "Show the latest X9B paper in Nature Communications.")
+    for original in ("No thanks, but I meant papers without calibration.",
+                     "No calibration was performed. What changed?",
+                     "No thanks to calibration, what improved?"):
+        with pytest.raises(ValueError, match="normalization_lost_negation"):
+            understanding._validate_explicit_constraints(original, "No thanks, show methods using calibration.")
+
+
+@pytest.mark.parametrize('original,normalized', [
+    ('Welche Methoden untersuchen nicht kodierende RNA?', 'Which methods study non-coding RNA?'),
+    ('Welche Methoden untersuchen nicht kodierende RNA?', 'Which methods study noncoding RNA?'),
+    ('Zeige nicht invasive Methoden.', 'Show non-invasive methods.'),
+    ('Zeige nicht lineare Modelle ohne Kalibrierung.', 'Show nonlinear models without calibration.'),
+    ('Vergleiche nicht parametrische Methoden, keine Reviews.', 'Compare non-parametric methods, excluding reviews.'),
+])
+def test_negative_scientific_compounds_survive_translation(original, normalized):
+    understanding._validate_explicit_constraints(original, normalized)
+
+
+@pytest.mark.parametrize('original,normalized', [
+    ('Zeige nicht kodierende RNA ohne Tierversuche.', 'Show non-coding RNA studies.'),
+    ('Show noncoding RNA studies without animals.', 'Show noncoding RNA studies.'),
+    ('Zeige nicht lineare Modelle.', 'Show linear models.'),
+    ('Show non-parametric methods.', 'Show parametric methods.'),
+    ('Show methods without calibration and without sensors.', 'Show methods without calibration using sensors.'),
+    ('Show methods without sensors.', 'Nonetheless, show methods using sensors.'),
+])
+def test_compound_negation_cannot_hide_a_dropped_exclusion(original, normalized):
+    with pytest.raises(ValueError, match='normalization_lost_negation'):
+        understanding._validate_explicit_constraints(original, normalized)
 
 
 @pytest.mark.parametrize("question,normalized,error", [
@@ -127,6 +253,9 @@ def test_explicit_semantic_changes_fail_question_preparation(monkeypatch, questi
 
 
 @pytest.mark.parametrize("question,normalized", [
+    ("Bitte keine Reviews über Sensoren.", "Show sensor studies excluding reviews."),
+    ("Compare BRCA1 and BRCA2, but not mouse studies.",
+     "Compare BRCA1 and BRCA2, excluding mouse studies."),
     ("Welche Methoden brauchen weder Simulationen noch Sensoren?",
      "Which methods use neither simulations nor sensors?"),
     ("Welche Verfahren benötigen keine Kalibrierung?",

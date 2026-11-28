@@ -1,7 +1,9 @@
 """Recognise simple bibliography requests. More specific questions keep the normal retriever."""
 
 from dataclasses import dataclass
+from collections import Counter
 import heapq
+import math
 import re
 import sqlite3
 import unicodedata
@@ -49,6 +51,18 @@ def publication_year(row):
     return int(year) if re.fullmatch(r"[12][0-9]{3}", year) else 0
 
 
+def requested_paper_count(question):
+    """An explicit list size, never a sample size or a year in a content question."""
+    pattern = (r"\b(?:show|give|find|list|suggest|recommend|name|nenn[e]?|zeig[e]?|gib|finde|liste|"
+               r"montre|donne|trouve|dame|muestra|busca)(?: (?:me|mir|moi))? "
+               + _COUNT + r"(?:papers?|articles?|studies|artikel|studien|artículos?|estudios?)\b")
+    matches = list(re.finditer(pattern, controls(question)))
+    if len(matches) != 1 or not matches[0]["count"]:
+        return None
+    count = matches[0]["count"]
+    return int(count) if count.isdecimal() else _COUNTS[count]
+
+
 _COUNTS = dict(zip("one two three four five six seven eight nine ten".split(), range(1, 11)))
 _COUNTS.update(zip("ein zwei drei vier fünf sechs sieben acht neun zehn".split(), range(1, 11)))
 for numbers in ("un deux trois quatre cinq six sept huit neuf dix", "un dos tres cuatro cinco seis siete ocho nueve diez"):
@@ -64,8 +78,9 @@ _MORE = {
 
 def more_list_request(message):
     """Only a standalone continuation, never 'tell me more about …'."""
-    text = message.casefold().strip(" \t\r\n.!?¿¡")
+    text = controls(message)
     text = re.sub(r"(?:,?\s+)(?:please|bitte|por favor|merci)$", "", text)
+    text = re.sub(r"\s+(?:from|in) (?:that|this|the) (?:same )?(?:web )?(?:search|list|results)$", "", text)
     for lang, pattern in _MORE.items():
         match = re.fullmatch(pattern, text)
         if match:
@@ -100,13 +115,27 @@ def paper_list_request(message):
     text = " ".join(message.strip(" \r\n\t.?!").split())
     # Correct the command prefix only. The topic is an untouched slice of the message.
     divider = re.search(r"\s(?:on|about|covering|zu[mr]?|über|ueber|sur|sobre)\s", text, re.I)
+    if not divider:
+        for candidate in re.finditer(r"(?<=\s)[^\W\d_]+(?=\s)", text[:160]):
+            link = controls(candidate[0])
+            head = controls(text[:candidate.start()])
+            if link in {"about", "covering", "über", "ueber", "sobre"} and re.search(
+                    r"\b(?:papers?|articles?|studies|artikel|studien|artículos?)$", head):
+                text = head + " " + link + text[candidate.end():]
+                break
     if divider and not any(pattern.fullmatch(text) for pattern in _REQUESTS.values()):
-        text = controls(text[:divider.start()]) + text[divider.start():]
+        prefix, tail = controls(text[:divider.start()]), text[divider.start():]
+        modal = re.fullmatch(r"(?:kannst|könntest|magst|würdest) du (?:mir )?(?:bitte )?(.+)", prefix)
+        ending = re.search(r"\s+(\S+)(?:\s+bitte)?$", tail)
+        if modal and ending and controls(ending[1]) in {'zeigen', 'finden', 'geben', 'schicken'}:
+            prefix, tail = "zeige mir " + modal[1], tail[:ending.start()]
+        text = prefix + tail
+    inventory = controls(text)
     if re.fullmatch(r"(?:which|what) (?:papers|articles) (?:can you see|do i have|are (?:there )?in (?:my|the) (?:library|corpus))"
-                    r"(?: in (?:my|the) (?:library|corpus))?|(?:please )?(?:show|list)(?: me)? my papers", text, re.I):
+                    r"(?: in (?:my|the) (?:library|corpus))?|(?:please )?(?:show|list)(?: me)? my papers", inventory, re.I):
         return PaperList("", 10, "en")
     if re.fullmatch(r"welche (?:papers?|artikel) (?:siehst du|habe ich|sind (?:im korpus|in der bibliothek))"
-                    r"(?: (?:im korpus|in meiner bibliothek))?|(?:zeige?|liste) (?:mir )?meine papers?", text, re.I):
+                    r"(?: (?:im korpus|in meiner bibliothek))?|(?:zeige?|liste) (?:mir )?meine papers?", inventory, re.I):
         return PaperList("", 10, "de")
     for language, pattern in _REQUESTS.items():
         match = pattern.fullmatch(text)
@@ -146,14 +175,81 @@ def _words(text):
     return re.findall(r"[^\W_]+", "".join(c for c in folded if not unicodedata.combining(c)))
 
 
-def _body_match(text, title, terms):
+def topic_terms(topic):
+    return list(dict.fromkeys(w for w in _words(topic) if w not in {
+        "the", "of", "and", "in", "for", "on", "der", "die", "das", "und", "von", "zur", "zum", "fur"}))
+
+
+def topic_spelling_candidate(topic, catalogue):
+    """Suggest at most two unambiguous title-word corrections after an empty search."""
+    from originrag.retrieval.paper_lookup import catalogue_words, near_title_word
+
+    if not topic or len(topic) > 300:
+        return None
+    vocabulary = set().union(*(set(catalogue_words(str(p.get('title') or '')).split()) for p in catalogue))
+    quoted = list(re.finditer(r'`[^`]*`|"[^"]*"|“[^”]*”|«[^»]*»', topic))
+    candidates, corrections = [], []
+    forms = query_word_forms(topic)
+    for token in re.finditer(r'\S+', topic):
+        word = token[0]
+        if (not word.isalpha() or word.isupper() or not 5 <= len(word) <= 32
+                or any(q.start() <= token.start() < q.end() for q in quoted)):
+            continue
+        typed = catalogue_words(word)
+        if forms.get(typed, {typed}).intersection(vocabulary):
+            continue
+        alternatives = {w for w in vocabulary if near_title_word(typed, w)}
+        if len(alternatives) != 1:
+            continue
+        replacement = alternatives.pop()
+        candidates.append((token.start(), token.end(), replacement))
+        corrections.append((word, replacement))
+    if not 1 <= len(candidates) <= 2:
+        return None
+    corrected = topic
+    for start, end, replacement in reversed(candidates):
+        corrected = corrected[:start] + replacement + corrected[end:]
+    return corrected, corrections
+
+
+def query_word_forms(query):
+    """Small English noun inflections, never fuzzy identifiers or acronym expansions."""
+    protected = {word.casefold() for word in re.findall(r"[A-Z][A-Z0-9_./-]{2,}", query)}
+    for token in query.split():
+        if re.search(r"\d|[/_]", token):
+            protected.update(_words(token))
+    result = {}
+    for term in _words(query):
+        forms = {term}
+        if (re.fullmatch(r"[a-z]{4,32}", term) and term not in protected
+                and term not in {"species", "series", "news"}):
+            if term.endswith("ies"):
+                forms.add(term[:-3] + "y")
+            elif term.endswith(("ches", "shes", "xes", "zes")):
+                forms.add(term[:-2])
+            elif term.endswith("s"):
+                if not term.endswith(("ss", "us", "is", "ous")):
+                    forms.add(term[:-1])
+            elif term.endswith("y") and term[-2] not in "aeiou":
+                forms.add(term[:-1] + "ies")
+            elif term.endswith(("ch", "sh", "x", "z")):
+                forms.add(term + "es")
+            else:
+                forms.add(term + "s")
+        result[term] = frozenset(forms)
+    return result
+
+
+def _body_match(text, title, terms, forms=None):
     from originrag.retrieval.chunk_quality import REFERENCE_HEADING, reference_like_passage
 
     heading = REFERENCE_HEADING.search(text)
     if heading:
         # The last paragraph and the start of the bibliography can share a PDF chunk.
         body = text[:heading.start()].strip()
-        return bool(body) and terms.issubset(_words(title + " " + body)) and not reference_like_passage(body)
+        words = set(_words(title + " " + body))
+        matched = all(words.intersection((forms or {}).get(term, {term})) for term in terms)
+        return bool(body) and matched and not reference_like_passage(body)
     return not reference_like_passage(text)
 
 
@@ -163,8 +259,8 @@ def indexed_list_ids(request, index, chunks, papers, *, eligible, limit):
     from originrag.retrieval.index_cache import RetrievalIndexCacheError, resolve_read_bundle
     if limit <= 0:
         return []
-    words = _words(request.topic)
-    terms = list(dict.fromkeys(w for w in words if w not in {"the", "of", "and", "in", "der", "die", "das", "und", "von"}))
+    terms = topic_terms(request.topic)
+    forms = query_word_forms(request.topic)
     if not terms or not index.is_file():
         return None
     try:
@@ -175,13 +271,18 @@ def indexed_list_ids(request, index, chunks, papers, *, eligible, limit):
         try:
             matches = db.execute(
                 "SELECT paper_id, rowid FROM chunk_fts WHERE chunk_fts MATCH ? ORDER BY rank",
-                (" AND ".join(f'"{w}"' for w in terms),),
+                (" AND ".join("(" + " OR ".join(f'"{v}"' for v in sorted(forms[w])) + ")" for w in terms),),
             )
             selected = []
             selected_ids = set()
             newest_hits = []
             required = frozenset(terms)
+            titles = list(eligible.values()) if hasattr(eligible, "values") else []
+            frequency = Counter(w for row in titles for w in set(_words(str(row.get("title") or ""))) if w in required)
+            weights = {w: math.log1p(len(titles) / (1 + frequency[w])) if titles else 1 for w in terms}
             for rank, (paper_id, rowid) in enumerate(matches):
+                if not request.newest and rank >= 1000:
+                    break
                 if paper_id not in eligible or paper_id in selected_ids:
                     continue
                 if request.newest:
@@ -189,17 +290,18 @@ def indexed_list_ids(request, index, chunks, papers, *, eligible, limit):
                     if year < max(1, request.since) or (len(newest_hits) == limit and year <= newest_hits[0][0]):
                         continue
                 title, text = db.execute("SELECT title, text FROM chunk_fts WHERE rowid=?", (rowid,)).fetchone()
-                if _body_match(text or "", title or "", required):
+                if _body_match(text or "", title or "", required, forms):
                     selected_ids.add(paper_id)
                     if request.newest:
                         heapq.heappush(newest_hits, (year, -rank, paper_id))
                         if len(newest_hits) > limit:
                             heapq.heappop(newest_hits)
                         continue
-                    selected.append(paper_id)
-                    if len(selected) == limit:
-                        break
-            return [pid for _, _, pid in sorted(newest_hits, reverse=True)] if request.newest else selected
+                    title_terms = set(_words(title or ""))
+                    specificity = sum(weights[w] for w in terms if title_terms.intersection(forms[w]))
+                    selected.append((-specificity, rank, paper_id))
+            return ([pid for _, _, pid in sorted(newest_hits, reverse=True)] if request.newest else
+                    [pid for _, _, pid in sorted(selected)[:limit]])
         finally:
             db.close()
     except (OSError, sqlite3.Error, RetrievalIndexError, RetrievalIndexCacheError):

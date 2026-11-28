@@ -98,6 +98,34 @@ def synthetic_library_resources(tmp_path: Path):
     return resolver, catalogue
 
 
+def test_linked_data_directory_keeps_new_chat_and_job_identity_consistent(tmp_path):
+    actual = tmp_path / "actual-data"
+    actual.mkdir()
+    linked = tmp_path / "linked-data"
+    try:
+        linked.symlink_to(actual, target_is_directory=True)
+    except OSError:
+        pytest.skip("Directory symlinks are not available on this platform")
+    app = WebChatApp(WebChatSettings(), str(linked))
+    assert app.session_dir.parent == actual.resolve()
+    manager = TurnJobManager(auto_worker=False)
+    try:
+        for _ in range(2):
+            reset = app.reset()
+            job = manager.enqueue(owner_key="local-test", app=app, session_dir=app.session_dir,
+                                  message="Which papers are in the library?", settings_update={})
+            assert reset["session_dir"] == job["session_dir"]
+            assert manager.owner_jobs("local-test")[-1]["session_dir"] == reset["session_dir"]
+            assert app.read_session(reset["session_dir"])["session_dir"] == reset["session_dir"]
+            listed = web_chat.list_saved_sessions(app.out_dir, app.session_dir)
+            current = next(row for row in listed if row["current"])
+            assert current["session_dir"] == reset["session_dir"]
+            enriched = web_chat.sessions_with_job_status([current], manager.owner_jobs("local-test"))
+            assert enriched[0]["job_state"] == "queued"
+    finally:
+        manager.shutdown()
+
+
 @pytest.fixture(autouse=True)
 def isolated_default_library_resolver(synthetic_library_resources, monkeypatch: pytest.MonkeyPatch):
     """Isolate source formatting and design lookup while allowing explicit resolvers."""
@@ -267,6 +295,14 @@ def test_quick_lists_and_reading_followup(tmp_path, monkeypatch):
     from types import SimpleNamespace
     monkeypatch.setattr(web_chat, "manager_for", lambda *a: SimpleNamespace(session=lambda: nullcontext(None)))
     calls = []
+    discuss = app.discuss
+    def natural_summary(session, q, settings, paper_id, *args, **kwargs):
+        calls.append((paper_id, web_chat.reading_selection(q).language))
+        return discuss(session, q, settings, paper_id, *args, **kwargs)
+    monkeypatch.setattr(app, "discuss", natural_summary)
+    monkeypatch.setattr(web_chat.ask_corpus, "effective_model_context", lambda *a, **k: 4096)
+    monkeypatch.setattr(web_chat.ask_corpus, "generate_answer_with_backend", lambda *a, **k:
+                        SimpleNamespace(llm_result=SimpleNamespace(answer="A brief sourced summary.", error=None)))
     def read_card(args, turn_dir, progress_callback=None):
         calls.append(args.reading_request)
         turn_dir.mkdir()
@@ -370,7 +406,8 @@ def test_library_catalog_matches_author_accents_and_title_dashes_but_keeps_ids_l
         assert [r["paper_id"] for r in search_library_catalog(query, catalogue=catalogue)["items"]] == ["P_01"]
 
 
-def test_quick_list_keeps_body_discussion_but_not_reference_only_hits(tmp_path):
+@pytest.mark.parametrize("topic", ["optical calibration", "optical calibrations"])
+def test_quick_list_keeps_body_discussion_but_not_reference_only_hits(tmp_path, topic):
     from originrag.retrieval.fts_index import build_fts_index
     from originrag.retrieval.quick_list import PaperList, indexed_list_ids
 
@@ -391,9 +428,51 @@ def test_quick_list_keeps_body_discussion_but_not_reference_only_hits(tmp_path):
             {"paper_id": pid, "chunk_id": f"{pid}_{i}", "text": s}) + "\n" for i,s in enumerate(texts)))
     index = tmp_path / "index.sqlite"
     build_fts_index(chunks, papers, index)
-    result = indexed_list_ids(PaperList("optical calibration", 10, "en"), index, chunks, papers,
+    result = indexed_list_ids(PaperList(topic, 10, "en"), index, chunks, papers,
                               eligible=set(rows), limit=10)
     assert sorted(result) == ["MIXED", "SECOND"]
+
+
+def test_quick_list_ranks_specific_titles_above_incidental_fulltext_matches(tmp_path):
+    from originrag.retrieval.fts_index import build_fts_index
+    from originrag.retrieval.quick_list import PaperList, indexed_list_ids
+    papers, chunks, index = tmp_path / "papers.tsv", tmp_path / "chunks", tmp_path / "index.sqlite"
+    chunks.mkdir()
+    titles = {"DIRECT": "Calibration drift in optical sensors", "OTHER": "Optical sensor classification"}
+    titles.update({f"G{i}": f"Optical sensor design {i}" for i in range(20)})
+    papers.write_text("paper_id\ttitle\n" + "".join(f"{p}\t{t}\n" for p,t in titles.items()))
+    for pid, title in titles.items():
+        text = "Optical sensor calibration drift. " * (30 if pid == "OTHER" else 1)
+        (chunks / f"{pid}.jsonl").write_text(json.dumps({"paper_id": pid, "chunk_id": pid + "_1", "text": text}) + "\n")
+    build_fts_index(chunks, papers, index)
+    eligible = {pid: {"title": title} for pid,title in titles.items()}
+    result = indexed_list_ids(PaperList("calibration drift in optical sensor", 2, "en"), index, chunks, papers,
+                              eligible=eligible, limit=2)
+    assert result[0] == "DIRECT"
+
+
+@pytest.mark.parametrize("query", ["temperature sensors", "temperature sensor"])
+def test_catalogue_search_matches_small_noun_inflections(query):
+    rows = ({"paper_id": "A", "title": "Temperature sensor observations"},
+            {"paper_id": "B", "title": "Temperature sensors compared"},
+            {"paper_id": "C", "title": "Temperature sensing"})
+    assert {p["paper_id"] for p in search_library_catalog(query, catalogue=rows)["items"]} == {"A", "B"}
+
+
+@pytest.mark.parametrize("term", ["ABCDE", "ABC123S", "PF3D7_001200", "10.1234/models"])
+def test_catalogue_search_preserves_identifiers(term):
+    rows = ({"paper_id": "A", "title": "Measurements", "doi": term},
+            {"paper_id": "B", "title": "Measurements", "doi": term[:-1]})
+    assert [p["paper_id"] for p in search_library_catalog(term, catalogue=rows)["items"]] == ["A"]
+
+
+def test_query_word_forms_do_not_rewrite_identifier_components_or_similar_words():
+    from originrag.retrieval.quick_list import query_word_forms
+    forms = query_word_forms("ABCDEF PF3D7_012000 10.1234/models analysis stress virus species sensors libraries")
+    for exact in ("abcdef", "pf3d7", "012000", "10", "1234", "models", "analysis", "stress", "virus", "species"):
+        assert forms[exact] == {exact}
+    assert forms["sensors"] == {"sensor", "sensors"}
+    assert forms["libraries"] == {"library", "libraries"}
 
 
 def test_library_catalog_paginates_and_bounds_page_size() -> None:
@@ -413,6 +492,26 @@ def test_library_catalog_paginates_and_bounds_page_size() -> None:
     assert first["has_more"] is True
     assert len(second["items"]) == 30
     assert second["has_more"] is False
+
+
+def test_ordinary_search_uses_a_compact_numbered_list_not_an_evidence_dashboard(tmp_path, monkeypatch):
+    traced = []
+    def trace(sources):
+        traced.append(sources)
+        return sources
+    monkeypatch.setattr(web_chat, "attach_automatic_paper_search_traces", trace)
+    result = {"pack": {"chunks": []}, "paper_search_results": [
+        {"paper_id": "A", "title": "Calibration study", "year": "2024", "doi": "10.1000/test"}]}
+    public = serialize_turn_result(result, tmp_path, "Find calibration papers", "sources")
+    assert public["compact_list"]
+    assert public["answer"] == "1 paper from your library:\n1. Calibration study (2024)"
+    assert len(public["sources"]) == 1 and public["task"] == "sources"
+    assert not traced
+    result["paper_search"] = {"requested_detail_fields": ["cohort"]}
+    detailed = serialize_turn_result(result, tmp_path, "Find papers and list their cohorts", "sources")
+    assert not detailed["compact_list"]
+    assert "table below" in detailed["answer"]
+    assert len(traced) == 1
 
 
 def test_library_catalog_stats_counts_categories_and_availability() -> None:

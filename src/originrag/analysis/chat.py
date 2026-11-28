@@ -240,8 +240,15 @@ def model_requests_bibliography(record):
     if record.get("status") != "ready" or record.get("deliverable") != "paper_list":
         return False
     normalized = str(record.get("normalized_question", "")).strip().casefold()
+    from originrag.retrieval.quick_list import requested_paper_count
+    count = requested_paper_count(normalized) or requested_paper_count(str(record.get("original_question") or ""))
+    if count and record.get("intent") == "corpus_inventory" and re.search(
+        r"\b(?:present|available|occur|in the corpus|in my library)\b", normalized):
+        return True
     if any(re.search(p, normalized) for p in SYNTHESIS_REQUEST_PATTERNS):
         return False
+    if count:
+        return True
     return bool(re.match(
         r"^(?:(?:which|what) (?:are (?:the |some )?)?|(?:please )?(?:list|find|identify|show|recommend) "
         r"(?:(?:me|some|the|relevant|primary|recent|\d+) )*)(?:research )?"
@@ -297,30 +304,26 @@ def is_followup_question(question: str) -> bool:
     """Detect short follow-ups that need previous-turn context for retrieval."""
     clean = normalize_chat_text(question)
     lowered = clean.lower()
-    if any(lowered.startswith(prefix) for prefix in FOLLOWUP_STARTS):
+    from originrag.analysis.chat_commands import starts_new_topic
+    if starts_new_topic(clean):
+        return False
+    contextual_starts = tuple(prefix for prefix in FOLLOWUP_STARTS if prefix not in {"why ", "warum ", "wie "})
+    if any(lowered.startswith(prefix) for prefix in contextual_starts):
         return True
     token_count = len(re.findall(r"\w+", lowered))
-    if token_count <= 12 and any(
-        term in lowered
-        for term in [
-            "that",
-            "this",
-            "it",
-            "those",
-            "they",
-            "them",
-            "diese",
-            "dieser",
-            "das",
-            "dazu",
-            "die",
-            "der",
-            "vorher",
-            "oben",
-        ]
-    ):
+    if token_count <= 24 and re.search(
+        r"\b(?:that|this|it|those|these|they|them|their|its|diese\w*|das|dazu|davon|darin|deren|vorher|oben)\b", lowered):
         return True
-    if token_count <= 6 and lowered.endswith("?"):
+    if re.fullmatch(r"(?:why(?: not)?|how so|what else|why exactly|warum(?: nicht| genau)?|wieso|"
+                    r"weiter|kürzer|shorter|in (?:german|english)|auf (?:deutsch|englisch)|pourquoi|por qué)\s*[?!.]*", lowered):
+        return True
+    if re.search(r"\bthe (?:first|second|third|\d+(?:st|nd|rd|th)) (?:one|two|paper|article|study|papers)\b", lowered):
+        return True
+    if re.fullmatch(r"(?:wie viele (?:neuere|weitere) (?:papers|artikel|studien) gibt es|"
+                    r"(?:are there|how many) (?:more|newer) (?:papers|articles|studies)(?: are there)?)\s*[?!.]*", lowered):
+        return True
+    if re.fullmatch(r"(?:what (?:are|were) (?:the )?(?:main )?(?:limitations|findings|results)|"
+                    r"welche (?:einschränkungen|ergebnisse)|was (?:waren|sind) die (?:ergebnisse|grenzen))\s*[?!.]*", lowered):
         return True
     return False
 

@@ -29,6 +29,8 @@ def design_page(workspace_server, monkeypatch):
     base, temporary = workspace_server
     monkeypatch.setattr(web_chat, 'library_catalog', lambda: PAPERS)
     shutil.copytree(Path(__file__).resolve().parents[1] / 'assets/web', temporary / 'assets/web')
+    shutil.copytree(Path(__file__).resolve().parents[1] / 'assets/vendor/markdown-it',
+                    temporary / 'assets/vendor/markdown-it')
     with pw.sync_playwright() as engine:
         browser = engine.chromium.launch()
         page = browser.new_page(viewport={'width': 1440, 'height': 1000})
@@ -149,6 +151,7 @@ def test_ecosystem_navigation_theme_focus_and_layout(design_page, theme, viewpor
                 assert row.bounding_box()['height'] < 180
         capture_design(page, name, theme, viewport)
         if name == 'chat':
+            assert page.evaluate('typeof window.markdownit') == 'function'
             answer = {
                 'answer': '## A useful starting point\n\nThese illustrative papers support transparent reporting and careful interpretation. '
                           'Multiple reports can describe the same underlying study.\n\n'

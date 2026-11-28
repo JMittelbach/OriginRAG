@@ -4576,6 +4576,7 @@ def test_empty_chat_library_does_not_call_planner(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("status,reason", [("needs_clarification", "planner_output_not_json"),
+                                          ("needs_clarification", "invalid_corrected_question"),
                                           ("unavailable", "connection refused")])
 def test_source_search_continues_without_model_rewrite(tmp_path, monkeypatch, status, reason):
     question = "Which calibration methods are used for thermal sensors?"
@@ -4614,6 +4615,63 @@ def test_malformed_planner_output_does_not_block_answer_retrieval(tmp_path, monk
     assert args.planner_backend == "ollama"
 
 
+@pytest.mark.parametrize("error", [
+    "invalid_query_plan", "normalization_lost_negation", "normalization_changed_numeric_comparison",
+    "normalization_changed_percentage_units", "normalization_lost_comparison",
+    "normalization_changed_identifiers_or_numbers", "search_queries_lost_identifiers_or_numbers",
+    "correction_changed_identifiers_or_numbers",
+])
+@pytest.mark.parametrize("task", ["answer", "sources"])
+def test_research_chat_discards_bad_rewrite_and_searches_original(tmp_path, monkeypatch, error, task):
+    question = "Did SENSOR17 calibration use at least 10 measurements without simulation?"
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tdoi\nP1\tSENSOR17 calibration\t10.1000/test\n")
+    (tmp_path / "P1.jsonl").write_text(json.dumps({"paper_id": "P1", "chunk_id": "P1_1",
+        "text": "SENSOR17 calibration used 12 measurements without simulation. " * 10}) + "\n")
+    args = make_args(question, str(tmp_path), str(papers), "none")
+    args.understand_question, args.require_searchable_fulltext = True, True
+    args.configured_answer_backend, args.planner_backend, args.evidence_selector = "qwen", "ollama", "research"
+    args.task = task
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **k: {
+        "status": "needs_clarification", "error": error,
+        "normalized_question": "Did WRONG999 use at most 5 measurements with simulation?",
+        "search_queries": ["WRONG999 simulations"], "intent": "corpus_inventory"})
+    captured = []
+    retrieve = ask_corpus.retrieve_chunks_for_queries
+
+    def observed(**kwargs):
+        captured.extend(query.query for query in kwargs["retrieval_queries"])
+        return retrieve(**kwargs)
+
+    monkeypatch.setattr(ask_corpus, "retrieve_chunks_for_queries", observed)
+    progress = []
+    result = ask_corpus.run_question(args, tmp_path / "run", progress.append)
+    assert result["resolved_task"] == task
+    assert result["retrieval_question"] == question
+    assert result["pack"]["question"] == result["pack"]["normalized_question"] == question
+    assert result["pack"]["question_understanding"]["fallback"] == "rule_based_original_query"
+    assert result["pack"]["question_understanding"]["error"] == error
+    assert any(row["paper_id"] == "P1" for row in result["results"])
+    assert captured and "WRONG999" not in " ".join(captured)
+    assert any("SENSOR17" in query for query in captured)
+    prompt = result["prompt_path"].read_text()
+    assert question in prompt and "WRONG999" not in prompt
+    assert "Searching with your original wording" in progress
+    assert args.planner_backend == "ollama"
+
+
+def test_research_chat_still_clarifies_an_unresolved_question(tmp_path, monkeypatch):
+    papers = tmp_path / "papers.tsv"
+    papers.write_text("paper_id\ttitle\tdoi\n")
+    args = make_args("What about it?", str(tmp_path), str(papers), "none")
+    args.understand_question, args.configured_answer_backend, args.evidence_selector = True, "qwen", "research"
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **k: {
+        "status": "needs_clarification", "error": "question_needs_clarification"})
+    monkeypatch.setattr(ask_corpus, "retrieve_chunks_for_queries", lambda *a, **k: pytest.fail("Unresolved topic searched"))
+    with pytest.raises(ValueError, match="specify the topic"):
+        ask_corpus.run_question(args, tmp_path / "run")
+
+
 @pytest.mark.parametrize("auto,normalized,expected", [
     (True, "What publications are available on temperature monitoring?", "sources"),
     (False, "What publications are available on temperature monitoring?", "answer"),
@@ -4633,6 +4691,29 @@ def test_validated_model_understanding_can_route_only_a_bibliography(tmp_path, m
     monkeypatch.setattr(ask_corpus, "explain_paper_search_matches", lambda *a, **kw: pytest.fail("Unnecessary model call"))
     result = ask_corpus.run_question(args, tmp_path / "run")
     assert result["resolved_task"] == expected
+
+
+def test_counted_corpus_bibliography_does_not_become_an_entity_inventory(tmp_path, monkeypatch):
+    question = "Welche Methoden zur Temperaturmessung stehen im Korpus? Nenne drei Paper."
+    papers, chunks = tmp_path / "papers.tsv", tmp_path / "chunks"
+    chunks.mkdir()
+    papers.write_text("paper_id\ttitle\tdoi\n" + "".join(
+        f"P{i}\tTemperature monitoring with sensor {i}\t10.1000/test{i}\n" for i in range(6)))
+    for i in range(6):
+        (chunks / f"P{i}.jsonl").write_text(json.dumps({"paper_id": f"P{i}", "chunk_id": f"P{i}_1",
+            "text": "Sensors were used for temperature monitoring in a laboratory. " * 10}) + "\n")
+    args = make_args(question, str(chunks), str(papers), "none")
+    args.auto_chat_routing, args.understand_question, args.configured_answer_backend = True, True, "qwen"
+    monkeypatch.setattr(ask_corpus, "understand_question", lambda *a, **kw: dict(
+        status="ready", normalized_question="Which methods for temperature monitoring are present in the corpus? List three papers.",
+        original_question=question, deliverable="paper_list", language="de", model="test",
+        search_queries=["temperature monitoring"], intent="corpus_inventory"))
+    monkeypatch.setattr(ask_corpus, "extract_inventory", lambda *a, **kw: pytest.fail("Papers requested, not entity names"))
+    monkeypatch.setattr(ask_corpus, "explain_paper_search_matches", lambda *a, **kw: pytest.fail("Unnecessary model call"))
+    result = ask_corpus.run_question(args, tmp_path / "run")
+    assert result["resolved_task"] == "sources"
+    assert len(result["paper_search_results"]) == 3
+    assert not result["pack"].get("corpus_inventory")
 
 
 def make_args(question: str, chunks_dir: str, papers: str, backend: str) -> SimpleNamespace:

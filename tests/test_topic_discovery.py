@@ -7,6 +7,11 @@ import pytest
 from originrag.discovery import topic_search as discovery
 
 
+@pytest.fixture(autouse=True)
+def no_network_delay(monkeypatch):
+    monkeypatch.setattr(discovery, '_CROSSREF_INTERVAL', 0)
+
+
 def fake_response(monkeypatch, items):
     requests = []
 
@@ -42,12 +47,13 @@ def test_any_topic_is_forwarded_without_domain_filters(monkeypatch, topic):
 
 def test_metadata_deduplication_and_links_are_safe(monkeypatch):
     fake_response(monkeypatch, [work(), work(), work(DOI="javascript:alert(1)"),
-                               work(DOI="10.1234/other", title=["<script>attack</script>"]),
+                               work(DOI="10.1234/other", title=["<script>attack</script>Safe <i>title</i>"]),
+                               work(DOI="10.1234/script-only", title=["<script>attack</script>"]),
                                work(DOI="10.1234/blank", title=[]), None])
     result = discovery.search_topic("anything", limit=12)
     assert len(result["items"]) == 2
     assert all(item["url"].startswith("https://doi.org/") for item in result["items"])
-    assert result["items"][1]["title"] == "<script>attack</script>"
+    assert result["items"][1]["title"] == "Safe title"
 
 
 @pytest.mark.parametrize("kwargs", [{"query": ""}, {"query": "x" * 241},
@@ -141,3 +147,37 @@ def test_invalid_journal_restrictions_never_broaden_search(monkeypatch, issns):
     with pytest.raises(ValueError):
         discovery.search_topic("history", issns=issns)
     assert not requests
+
+
+def test_abstracts_are_bounded_plain_text_and_paging_is_explicit(monkeypatch):
+    requests = fake_response(monkeypatch, [work(abstract='<jats:p>A <italic>graph</italic> &amp; its edges.</jats:p><script>bad()</script><jats:p>Next paragraph.</jats:p>')])
+    result = discovery.search_topic('graph algorithms', offset=20)
+    assert result['items'][0]['abstract'] == 'A graph & its edges. Next paragraph.'
+    params = parse_qs(urlparse(requests[0][0].full_url).query)
+    assert params['offset'] == ['20'] and 'abstract' in params['select'][0].split(',')
+    assert discovery.abstract_text(None) == ''
+    assert len(discovery.abstract_text('a' * 50000)) == 8001
+    with pytest.raises(ValueError):
+        discovery.search_topic('graphs', offset=201)
+    assert len(requests) == 1
+
+
+def test_chat_search_does_not_fill_requested_count_with_partial_topic_matches(monkeypatch):
+    requests = fake_response(monkeypatch, [
+        work(DOI='10.1234/unrelated', title=['Graph algorithms']),
+        work(DOI='10.1234/first', title=['Graph colouring with fast algorithms']),
+        work(DOI='10.1234/second', title=['Graph colouring using fast methods']),
+        work(DOI='10.1234/third', title=['Graph colouring using fast heuristics'])])
+    result = discovery.search_topic('fast graph colouring', limit=2, match_topic=True, offset=20)
+    assert [p['doi'] for p in result['items']] == ['10.1234/first', '10.1234/second']
+    assert result['next_offset'] == 23
+    assert parse_qs(urlparse(requests[0][0].full_url).query)['rows'] == ['20']
+    fake_response(monkeypatch, [work(title=['Unrelated graph theory'])])
+    result = discovery.search_topic('fast graph colouring', limit=2, match_topic=True)
+    assert result['items'] == [] and result['next_offset'] == 1
+
+
+def test_topic_screen_reads_abstract_not_journal_and_retains_identifier_boundaries():
+    assert discovery.topic_in_metadata('solar cells', 'A solar cell')
+    assert not discovery.topic_in_metadata('NOTCH1', 'NOTCH10')
+    assert discovery.topic_in_metadata('graphs without labels', 'Graph labelling')

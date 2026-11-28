@@ -1,11 +1,23 @@
 import pytest
 
-from originrag.analysis.chat_commands import reading_selection, ReadingSelection
+from originrag.analysis.chat_commands import acknowledgement, reading_selection, ReadingSelection
 from originrag.analysis.chat import resolve_chat_task
 from originrag.analysis.chat import model_requests_bibliography
 from originrag.summaries.reading_card import summary_request
 from originrag.library_presence import presence_language
 from originrag.retrieval.quick_list import more_list_request, paper_list_request
+
+
+@pytest.mark.parametrize("text,answer", [
+    ("Thanks!", "You're welcome!"), ("Okay, thank you very much 😊", "You're welcome!"),
+    ("Danke dir!", "Gern!"), ("Vielen Dank", "Gern!"),
+    ("Merci beaucoup", "Avec plaisir !"), ("Gracias", "¡De nada!"),
+    ("Thanks, now explain the methods", None), ("No thanks, I meant a different paper", None),
+    ("Danke, aber welche Quellen belegen das?", None), ("Thanks for nothing", None),
+    ("Yes", None), ("OK, do that", None),
+])
+def test_only_standalone_courtesies_skip_search(text, answer):
+    assert acknowledgement(text) == answer
 
 
 @pytest.mark.parametrize("question", [
@@ -70,12 +82,38 @@ def test_paper_identifier_is_not_the_deliverable():
     ("No, the 4th one", ReadingSelection(4, "en", True)),
     ("Résume le troisième article", ReadingSelection(3, "fr")),
     ("Resume el segundo artículo", ReadingSelection(2, "es")),
+    ("Summarize the second one briefly.", ReadingSelection(2, "en")),
+    ("Please summarize the first paper in two sentences.", ReadingSelection(1, "en")),
+    ("Fass das dritte Paper kurz zusammen.", ReadingSelection(3, "de")),
     ("Don't summarize the third paper", None),
     ("Summarize paper #2 and compare it with #4", None),
     ("Was the third paper replicated?", None),
 ])
 def test_reference_is_not_a_scientific_question(text, result):
     assert reading_selection(text) == result
+
+
+@pytest.mark.parametrize("question,count", [
+    ("Which methods occur here? Please list three papers.", 3),
+    ("Welche Methoden gibt es? Nenne drei Paper.", 3),
+    ("Show me 12 papers about sensors", 12),
+    ("Find 2024 papers about sensors", None),
+    ("Did the study enroll 120 people?", None),
+    ("Compare three papers about sensors", None),
+    ("List three papers and give two studies on another topic", None),
+])
+def test_explicit_paper_count_is_not_scientific_quantity(question, count):
+    from originrag.retrieval.quick_list import requested_paper_count
+    assert requested_paper_count(question) == count
+
+
+@pytest.mark.parametrize("question", [
+    "Not the newest paper", "Show me papers newer than this one", "What did the newest paper conclude?",
+    "Show me the newest paper about thermal calibration", "No, do not show the oldest paper",
+])
+def test_list_recency_does_not_consume_content_or_exclusions(question):
+    from originrag.analysis.chat_commands import list_recency
+    assert list_recency(question) is None
 
 
 @pytest.mark.parametrize("text", ["Dame dos artículos sobre sensores y dime quién los financió",

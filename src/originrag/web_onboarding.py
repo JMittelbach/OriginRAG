@@ -19,6 +19,15 @@ STYLE = """
     .discovery-item { border-top: 1px solid var(--line); padding: 14px 0; }
     .discovery-item a { color: var(--accent); line-height: 1.5; }
     .discovery-item p { font-size: 12px; margin: 5px 0; }
+    .chat-web-results { padding-left: 1.4em; margin: 12px 0 0; }
+    .chat-web-results li { padding: 12px 0; border-top: 1px solid var(--line); }
+    .chat-web-results .web-paper-meta { color: var(--muted); font-size: .85em; margin: 4px 0 8px; }
+    .chat-web-results .web-paper-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; }
+    .chat-web-results button { width: auto; min-height: 32px; padding: 5px 10px; font-size: .8em; }
+    .chat-web-results details { flex: 1; min-width: 160px; font-size: .85em; }
+    .chat-web-results summary { cursor: pointer; color: var(--soft); }
+    .chat-web-results .web-import-status { font-size: .8em; color: var(--muted); margin: 5px 0 0; }
+    .chat-web-results .web-import-status:empty { display: none; }
     .journal-options { max-height: 190px; overflow-y: auto; }
     .journal-options label { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
     .journal-options input { width: auto; flex: none; margin-top: 4px; }
@@ -88,6 +97,7 @@ SCRIPT = r"""
   let storageKey = null, step = 0, stats = null, uploadAvailable = false;
   let returnFocus = null, searchController = null, latestSearch = 0;
   const importJobs = new Map(), importButtons = new Map();
+  const pendingImports = new Set();
   const activeImports = new Set(["queued", "finding", "downloading", "indexing"]);
   let importPollBusy = false;
   const selectedJournals = new Map();
@@ -206,16 +216,51 @@ SCRIPT = r"""
   }
   el("discoveryUpload").addEventListener("click", () => { closeDiscovery(); openUpload(); });
   function updateImportButton(doi) {
-    const pair = importButtons.get(doi), job = importJobs.get(doi);
-    if (!pair || !job) return;
-    const {button, availability} = pair;
-    if (pair.ready) { button.disabled = true; button.textContent = "In library"; return; }
-    const active = activeImports.has(job.state);
-    button.disabled = active || job.state === "imported";
-    const stage = {queued: "Waiting…", finding: "Finding PDF…", downloading: "Downloading…", indexing: "Indexing…"};
-    button.textContent = active ? stage[job.state] : job.state === "imported" ? "In library" : "Retry import";
-    availability.textContent = importMessage(job);
+    const pairs = importButtons.get(doi), job = importJobs.get(doi);
+    if (!pairs) return;
+    for (const pair of pairs) {
+      if (pair.mounted && !pair.button.isConnected) { pairs.delete(pair); continue; }
+      pair.mounted = pair.button.isConnected;
+      const {button, availability} = pair;
+      if (pair.ready || job?.state === 'imported') { button.disabled = true; button.textContent = "In library"; availability.textContent = ''; continue; }
+      if (!uploadAvailable) { button.disabled = true; button.textContent = 'Import unavailable'; continue; }
+      if (pendingImports.has(doi)) { button.disabled = true; button.textContent = 'Requesting import…'; continue; }
+      if (!job) { button.disabled = false; button.textContent = 'Add to library'; continue; }
+      const active = activeImports.has(job.state);
+      button.disabled = active;
+      const stage = {queued: "Waiting…", finding: "Finding PDF…", downloading: "Downloading…", indexing: "Indexing…"};
+      button.textContent = active ? stage[job.state] : "Retry import";
+      availability.textContent = importMessage(job);
+    }
+    if (!pairs.size) importButtons.delete(doi);
   }
+  function registerImportButton(paper, button, availability) {
+    button.type = 'button';
+    button.title = 'Import a verified open-access PDF. Shared servers require sign-in.';
+    if (!importButtons.has(paper.doi)) importButtons.set(paper.doi, new Set());
+    importButtons.get(paper.doi).add({button, availability, ready: Boolean(paper.fulltext_ready)});
+    button.addEventListener('click', () => addPaper(paper, button, availability));
+    updateImportButton(paper.doi);
+  }
+  window.renderChatDiscovery = (container, papers) => {
+    const list = document.createElement('ol'); list.className = 'chat-web-results'; container.append(list);
+    for (const paper of papers) {
+      if (!/^10\.\d{4,9}\/[^\s<>"?#]+$/.test(paper.doi || '')) continue;
+      const row = document.createElement('li'), title = document.createElement('a');
+      title.textContent = paper.title; title.href = 'https://doi.org/' + encodeURI(paper.doi);
+      title.target = '_blank'; title.rel = 'noopener noreferrer';
+      const meta = document.createElement('p'); meta.className = 'web-paper-meta';
+      meta.textContent = [paper.author, paper.journal, paper.year, paper.type === 'posted-content' ? 'Preprint / posted content' : ''].filter(Boolean).join(' · ');
+      const actions = document.createElement('div'); actions.className = 'web-paper-actions';
+      const abstract = document.createElement('details'), summary = document.createElement('summary');
+      summary.textContent = 'Abstract'; abstract.append(summary);
+      const text = document.createElement('p'); text.textContent = paper.abstract || 'No abstract supplied. Open the publication to read more.'; abstract.append(text);
+      const add = document.createElement('button'), status = document.createElement('p'); status.className = 'web-import-status'; status.setAttribute('role', 'status');
+      actions.append(add, abstract); row.append(title, meta, actions, status); list.append(row);
+      registerImportButton(paper, add, status);
+    }
+    pollImports();
+  };
   async function pollImports() {
     if (!uploadAvailable || importPollBusy) return;
     importPollBusy = true;
@@ -241,18 +286,22 @@ SCRIPT = r"""
     } catch {} finally { importPollBusy = false; }
   }
   async function addPaper(paper, button, availability) {
-    button.disabled = true; button.textContent = "Requesting import…";
+    if (!uploadAvailable || button.disabled || pendingImports.has(paper.doi)) return;
+    pendingImports.add(paper.doi); updateImportButton(paper.doi);
     try {
       const response = await fetch("/api/paper-import", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({doi: paper.doi})});
       const job = await response.json();
       if (!response.ok) throw new Error(job.error || "Import unavailable");
-      importJobs.set(paper.doi, job); updateImportButton(paper.doi); pollImports();
+      importJobs.set(paper.doi, job); pollImports();
     } catch (error) {
       availability.textContent = `Import could not be started: ${error.message}`;
       button.disabled = false; button.textContent = "Add to library";
-    }
+    } finally { pendingImports.delete(paper.doi); updateImportButton(paper.doi); }
   }
-  window.setInterval(() => { if (discovery.open) pollImports(); }, 1500);
+  window.setInterval(() => {
+    for (const doi of importButtons.keys()) updateImportButton(doi);
+    if (discovery.open || [...importJobs.values()].some(job => activeImports.has(job.state))) pollImports();
+  }, 1500);
   el("discoveryExample").addEventListener("change", (event) => {
     if (event.target.value) el("discoveryQuery").value = event.target.value;
     el("discoveryQuery").focus();
@@ -267,7 +316,7 @@ SCRIPT = r"""
     const serial = ++latestSearch;
     searchController?.abort(); searchController = new AbortController();
     el("discoverySearch").disabled = true;
-    el("discoveryResults").replaceChildren(); importButtons.clear(); el("discoveryStatus").textContent = "Searching literature…";
+    el("discoveryResults").replaceChildren(); el("discoveryStatus").textContent = "Searching literature…";
     const params = new URLSearchParams({query: el("discoveryQuery").value.trim(), since: el("discoveryYear").value, order: el("discoveryOrder").value, kind: el("discoveryKind").value});
     for (const issn of new Set([...selectedJournals.values()].flatMap((journal) => journal.issns))) params.append("issn", issn);
     try {
@@ -291,10 +340,8 @@ SCRIPT = r"""
           const button = document.createElement("button"); button.type = "button";
           button.textContent = paper.fulltext_ready ? "In library" : "Add to library";
           button.disabled = Boolean(paper.fulltext_ready);
-          button.addEventListener("click", () => addPaper(paper, button, availability));
           row.append(button);
-          importButtons.set(paper.doi, {button, availability, ready: Boolean(paper.fulltext_ready)});
-          updateImportButton(paper.doi);
+          registerImportButton(paper, button, availability);
         } else {
           const button = document.createElement("button"); button.type = "button";
           button.textContent = "Import unavailable"; button.disabled = true;
@@ -313,6 +360,8 @@ SCRIPT = r"""
       if (responses.some((response) => !response.ok)) return;
       const [status, data, library] = await Promise.all(responses.map((response) => response.json()));
       uploadAvailable = Boolean(status.library_access?.enabled) && library.state !== "unavailable";
+      for (const doi of importButtons.keys()) updateImportButton(doi);
+      if (importButtons.size) pollImports();
       updateLibraryState(data);
       storageKey = `originrag.quick-tour.v1.${status.user?.user_id || "local"}`;
       let seen = false;

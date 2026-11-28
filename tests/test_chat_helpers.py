@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_question, is_followup_question, resolve_chat_task
 from originrag.retrieval.quick_list import paper_list_request
 
 
@@ -19,9 +20,6 @@ from originrag.retrieval.quick_list import paper_list_request
 def test_deliverable_not_topic_controls_routing(query, expected):
     assert resolve_chat_task(query) == expected
     assert bool(paper_list_request(query)) == (expected == "sources")
-
-from originrag.analysis.chat import ChatTurnContext, build_chat_retrieval_question, is_followup_question, resolve_chat_task
-
 
 def test_resolve_chat_task_auto_detects_hypothesis() -> None:
     task = resolve_chat_task(
@@ -258,3 +256,23 @@ def test_is_followup_question_handles_short_german_followups() -> None:
 
 def test_is_followup_question_handles_short_pronoun_questions() -> None:
     assert is_followup_question("Was heißt das?")
+
+
+@pytest.mark.parametrize("question", [
+    "What is statistical power?", "Explain digital filters.", "Are white dwarfs bright?",
+    "Wie funktionieren digitale Filter?", "Was ist die Derivation?", "Why do stars emit light?",
+    "New question: what does this sensor measure?", "Anderes Thema: wie heißt das Verfahren?",
+])
+def test_short_standalone_questions_do_not_inherit_an_unrelated_topic(question):
+    assert not is_followup_question(question)
+    assert build_chat_retrieval_question(question, ["Earlier question about ocean currents"]) == question
+
+
+@pytest.mark.parametrize("question", [
+    "Why?", "Why not?", "And why exactly?", "What were their main limitations?",
+    "Could you please explain what they measured and how that relates to the earlier result?",
+    "Compare the first two papers.", "Was bedeutet das?", "Warum nicht?", "Wurde das direkt gemessen?",
+    "What are the limitations?", "Pourquoi?",
+])
+def test_explicit_followups_keep_conversation_context(question):
+    assert is_followup_question(question)

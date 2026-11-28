@@ -11,11 +11,24 @@ import pytest
 
 from originrag.analysis.context_budget import estimate_prompt_tokens
 from originrag.paper_discussion import align_quoted_pages, bibliography, discussion_prompt, extracted_pages, reference_request
-from originrag.paper_discussion import mentioned_papers, refers_to_paper, wants_corpus
+from originrag.paper_discussion import mentioned_papers, refers_to_paper, unresolved_report_reference, wants_corpus
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import import_paper_inbox as inbox
 import web_chat as web
+
+
+def test_pdf_fallback_is_complete_or_empty_and_preserves_page_numbers():
+    from originrag.paper_discussion import pdf_text_pages
+    with fitz.open() as document:
+        document.new_page().insert_text((50, 60), "Observations from the first page.")
+        document.new_page()
+        document.new_page().insert_text((50, 60), "Important limitations on the third page.")
+        data = document.tobytes()
+    assert [p["page"] for p in pdf_text_pages(io.BytesIO(data), 1000)] == [1, 3]
+    assert pdf_text_pages(io.BytesIO(data), 20) == []
+    assert pdf_text_pages(io.BytesIO(data), 1000, max_bytes=100) == []
+    assert pdf_text_pages(io.BytesIO(b"not a PDF"), 1000) == []
 
 
 def article(title="Measuring variation across repeated observations"):
@@ -124,6 +137,19 @@ def test_natural_paper_references_resolve_only_unambiguous_identities():
     assert wants_corpus("Welche anderen Studien zeigen das auch?")
 
 
+@pytest.mark.parametrize("question,expected", [
+    ("Were there 2020 participants in this study?", False),
+    ("Did they recruit participants in 2020?", False),
+    ("How did this compare with Smith (2020)?", True),
+    ("Explain the paper by Smith", True),
+    ("What did the 2020 paper show?", True),
+    ("What about the paper published in 2020?", True),
+    ("What did they report in 10.1234/unknown?", True),
+])
+def test_counts_and_study_dates_are_not_new_paper_identifiers(question, expected):
+    assert unresolved_report_reference(question) == expected
+
+
 @pytest.mark.parametrize("question", [
     "Und die 12 Paare – sind die zusätzlich? Zeig mir die Stelle.",
     "How were the groups recruited?",
@@ -159,6 +185,42 @@ def test_only_unique_verbatim_quote_can_correct_an_adjacent_page():
     assert align_quoted_pages(answer, pages + [{"page": 5, "text": sentence}]) == answer
     paraphrase = answer.replace("full sample", "enrolled sample")
     assert align_quoted_pages(paraphrase, pages) == paraphrase
+
+
+def test_printed_page_correction_requires_consistent_original_page_headers():
+    from originrag.paper_discussion import align_printed_page_citations
+    pages = [{"page": p, "text": f"Journal volume 6\n{122+p}\nPerspective\nAuthors\n"
+              "Introduction\nFirst paragraph\nSecond paragraph\nThird paragraph\nConclusion"} for p in range(1, 5)]
+    answer = "Observation [PDF p. 123]. Another [PDF p. 126]. Already correct [PDF p. 2]. Unknown [PDF p. 999]."
+    expected = answer.replace("p. 123", "p. 1").replace("p. 126", "p. 4")
+    assert align_printed_page_citations(answer, pages) == expected
+    assert align_printed_page_citations(answer, pages[:2]) == answer
+    assert align_printed_page_citations(answer, [pages[0], pages[2], pages[3]]) == answer
+    assert align_printed_page_citations(answer, [{"page": 1, "text": "One paragraph ending in 123."}]) == answer
+    code = '`[PDF p. 123]`\n```text\n[PDF p. 126]\n```\n[PDF p. 123](https://example.org/)'
+    assert align_printed_page_citations(code, pages) == code
+
+
+def test_ambiguous_marginal_page_numbers_are_not_relabelled():
+    from originrag.paper_discussion import align_printed_page_citations
+    pages = [{"page": p, "text": f"{122+p}\n{124+p}\nJournal\nArticle\nIntroduction\n"
+              "First paragraph\nSecond paragraph\nThird paragraph\nConclusion"} for p in range(1, 7)]
+    answer = "Ambiguous [PDF p. 125]. Unambiguous [PDF p. 123]."
+    assert align_printed_page_citations(answer, pages) == answer.replace("p. 123", "p. 1")
+    fixed_year = [{"page": p, "text": "2026\nJournal\nArticle\nIntroduction\n"
+                   "First paragraph\nSecond paragraph\nThird paragraph\nConclusion"} for p in range(1, 7)]
+    assert align_printed_page_citations("Statement [PDF p. 2026].", fixed_year) == "Statement [PDF p. 2026]."
+
+
+def test_group_breakdown_is_not_crowded_out_by_repeated_comparisons():
+    breakdown = "We analyzed 84 samples (from 60 standard controls and 24 controls with previous exposure) of adequate quality."
+    pages = [{"page": i, "text": f"We performed matched comparisons between 20 cases and 20 controls at site {i}."}
+             for i in range(1, 9)]
+    pages.append({"page": 10, "text": breakdown})
+    notes = []
+    discussion_prompt("Explain the cohort structure.", "A survey", [], [], 8192, 600, pages=pages, source_notes=notes)
+    assert {"page": 10, "text": breakdown} in notes
+    assert len(notes) <= 6
 
 
 def test_clarifying_a_title_keeps_the_original_question(tmp_path):
@@ -234,7 +296,7 @@ def test_browser_drop_upload_read_reload_and_detach(tmp_path, monkeypatch, brows
     monkeypatch.setattr(web.ask_corpus, "run_question", corpus_reply)
     monkeypatch.setattr(web.ask_corpus, "effective_model_context", lambda *a, **kw: 8192)
     monkeypatch.setattr(web.ask_corpus, "generate_answer_with_backend", lambda *a, **kw:
-                        SimpleNamespace(llm_result=SimpleNamespace(answer="**Result:** *paired* subset.\n\n"
+                        SimpleNamespace(llm_result=SimpleNamespace(answer="**Result:** *paired* subset. [PDF p. 1]\n\n"
                             "* Literal: `*paired*`\n* [Paper](https://doi.org/10.1234/example)", error=None)))
     mgr = web.LibrarySyncManager(tmp_path / "bib/inbox", auto_worker=False, read_cache_refresh=lambda: None,
                                  refresh_callback=lambda: None)
@@ -294,6 +356,9 @@ def test_browser_drop_upload_read_reload_and_detach(tmp_path, monkeypatch, brows
             pw.expect(response.locator("strong")).to_have_text("Result:")
             pw.expect(response.locator("li code")).to_have_text("*paired*")
             pw.expect(response.locator("li a")).to_have_attribute("href", "https://doi.org/10.1234/example")
+            page_link = response.locator(".paper-page-citation")
+            pw.expect(page_link).to_have_attribute("target", "_blank")
+            assert page_link.get_attribute("href").endswith("&page=1")
             page.reload()
             pw.expect(page.locator("#chat .paper-discussion").last.locator("em")).to_have_text("paired")
             assert page.evaluate("""() => {
@@ -304,6 +369,23 @@ def test_browser_drop_upload_read_reload_and_detach(tmp_path, monkeypatch, brows
               return [box.querySelector('em').textContent, box.querySelector('a.inline-citation').textContent,
                       box.querySelector('code').textContent, box.querySelectorAll('a').length];
             }""") == ["var2csa", "Example et al.", "[[cite:E001]]", 1]
+            assert page.evaluate("""() => {
+              const box = document.createElement('div');
+              renderMarkdown(box, '[PDF p. 2] [PDF p. 99] `[PDF p. 1]` **[Seite 1]**', {
+                task: 'paper_discussion', paper_id: 'P1', source_pages: [1, 2]
+              });
+              return [box.querySelectorAll('a').length,
+                      box.querySelector('a').getAttribute('href'), box.querySelector('code').textContent,
+                      box.querySelector('strong a').textContent, box.textContent.includes('[PDF p. 99]')];
+            }""") == [2, "/reader?paper_id=P1&page=2", "[PDF p. 1]", "[Seite 1]", True]
+            assert page.evaluate("""() => {
+              const box = document.createElement('div');
+              renderMarkdown(box, '[PDF p. 1; PDF p. 2] [PDF p. 1, 99] `[PDF p. 1, 2]`', {
+                task: 'paper_discussion', paper_id: 'P1', source_pages: [1, 2]
+              });
+              return [box.querySelectorAll('a').length, box.querySelector('code').textContent,
+                      box.textContent.includes('[PDF p. 99]')];
+            }""") == [3, "[PDF p. 1, 2]", True]
             page.locator("#message").fill("Welche anderen Studien zeigen das auch?")
             page.locator("#send").click()
             pw.expect(page.locator("#chat")).to_contain_text("Searched across the library.", timeout=15000)

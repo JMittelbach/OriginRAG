@@ -442,6 +442,10 @@ async function start() {
     $('pageCount').textContent='/ '+pdf.numPages; $('pageNumber').max=pdf.numPages;
     try {applyNotes(await api('GET'));} catch {notesReady=false;}
     await fit();
+    const requestedPage = new URLSearchParams(location.search).get('page');
+    if (/^[1-9]\d{0,4}$/.test(requestedPage || '') && Number(requestedPage) <= pdf.numPages) {
+      await renderPage(Number(requestedPage), zoom, 0);
+    }
   } catch(error) {status(error.message || 'Could not open this PDF. Please use Original PDF.',true); if($('empty'))$('empty').textContent='Your original PDF is still available using the link above.';}
 }
 await start();

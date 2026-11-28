@@ -11,6 +11,74 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import web_chat  # noqa: E402
 
 
+def test_reading_progress_shows_elapsed_time_without_a_false_eta(browser_page):
+    page, _, _, _ = browser_page
+    page.evaluate("""() => addJobMessage({job_id: 'elapsed-test', state: 'running',
+      stage: 'Reading the selected paper', elapsed_seconds: 2, can_cancel: true})""")
+    elapsed = page.locator('[data-job-id="elapsed-test"] .working-elapsed')
+    assert elapsed.is_hidden()
+    page.evaluate("""() => updateJobMessage(document.querySelector('[data-job-id="elapsed-test"]'),
+      {job_id: 'elapsed-test', state: 'running', stage: 'Discussing your paper', elapsed_seconds: 73, can_cancel: true})""")
+    assert elapsed.is_visible() and elapsed.inner_text() == '1m 13s elapsed'
+    assert 'remaining' not in page.locator('[data-job-id="elapsed-test"]').inner_text()
+    page.evaluate("""() => updateJobMessage(document.querySelector('[data-job-id="elapsed-test"]'),
+      {job_id: 'elapsed-test', state: 'cancelled', elapsed_seconds: 74})""")
+    assert elapsed.is_hidden()
+
+
+def test_compact_paper_results_keep_chat_open_and_hide_technical_panels(browser_page):
+    page, _, _, _ = browser_page
+    page.evaluate("""() => {
+      const result = {task: 'sources', compact_list: true, answer: '2 papers from your library:', sources: [
+        {paper_id:'P1', title:'First study', year:'2025', library_status:{local_pdf:true}},
+        {paper_id:'P2', title:'Second study', doi:'10.1000/test'}]};
+      addMessage('assistant', result.answer, resultMeta(result), result);
+    }""")
+    items = page.locator('.assistant .bubble ol li')
+    assert items.count() == 2
+    first = items.first.locator('a')
+    assert first.get_attribute('href') == '/reader?paper_id=P1'
+    assert first.get_attribute('target') == '_blank'
+    assert 'noopener' in first.get_attribute('rel')
+    assert not page.locator('.assistant table, .assistant .result-summary').count()
+
+
+def test_compact_paper_results_explain_spelling_retry_as_plain_text(browser_page):
+    page, _, _, _ = browser_page
+    note = 'Catalogue match: “sptial” → “spatial”. <img src=x onerror=alert(1)>'
+    page.evaluate("""note => {
+      const result = {task: 'sources', quick_list: true, answer: '1 match:', search_note: note,
+        sources: [{paper_id: 'P1', title: 'Spatial transcriptomics'}]};
+      addMessage('assistant', result.answer, resultMeta(result), result);
+    }""", note)
+    assert page.locator('.assistant .bubble .muted').inner_text() == note
+    assert not page.locator('.assistant img, .assistant script').count()
+
+
+def test_failed_question_can_be_restored_without_submitting_or_overwriting_draft(browser_page):
+    page, state, _, _ = browser_page
+    page.locator('#guideSkip').click()
+    page.evaluate("""() => {
+      currentSessionDir = 'test-chat';
+      addJobMessage({job_id: 'retry-test', session_dir: 'test-chat', state: 'failed',
+        message: 'What did the second paper measure?', error: 'The model could not be reached.'});
+    }""")
+    edit = page.locator('.job-edit')
+    assert edit.is_visible()
+    assert page.locator('.working-progress').is_hidden()
+    page.locator('#message').fill('An unsent new question')
+    edit.click()
+    assert page.locator('#message').input_value() == 'An unsent new question'
+    assert 'Your draft is unchanged' in page.locator('#status').inner_text()
+    page.locator('#message').fill('')
+    edit.click()
+    assert page.locator('#message').input_value() == 'What did the second paper measure?'
+    assert not state.get('chat_requests')
+    page.evaluate("""() => updateJobMessage(document.querySelector('[data-job-id="retry-test"]'),
+      {job_id:'retry-test', session_dir:'test-chat', state:'cancelled', message:'Stopped question'})""")
+    assert edit.is_hidden()
+
+
 @pytest.fixture
 def browser_page(tmp_path, request):
     state = {"user_id": "alice", "authenticated": True, "local_imports": False, "total": 0, "searchable": 0, "local_pdf": 0, "error": False, "imports": []}

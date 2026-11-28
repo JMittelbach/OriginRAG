@@ -152,3 +152,40 @@ def test_recovery_ignores_result_sidecars_and_does_not_retain_app(tmp_path):
     assert recovered.job('alice', job_id)['state'] == 'cancelled'
     assert recovered.jobs[job_id].app is None
     assert len(recovered.jobs) == 1
+
+
+def test_elapsed_time_uses_execution_start_and_stops_on_completion(tmp_path, monkeypatch):
+    app = FakeApp(tmp_path, [])
+    monkeypatch.setattr(web.time, 'time', lambda: 100.0)
+    manager = web.TurnJobManager(auto_worker=False)
+    job_id = enqueue(manager, app)
+    monkeypatch.setattr(web.time, 'time', lambda: 111.9)
+    assert manager.job('alice', job_id)['elapsed_seconds'] == 11
+    job = manager.jobs[job_id]
+    job.state, job.started_at = 'running', 105.0
+    assert manager.job('alice', job_id)['elapsed_seconds'] == 6
+    job.state, job.completed_at = 'complete', 110.0
+    monkeypatch.setattr(web.time, 'time', lambda: 250.0)
+    assert manager.job('alice', job_id)['elapsed_seconds'] == 5
+    assert manager.job('bob', job_id) is None
+    job.completed_at = 101.0
+    assert manager.job('alice', job_id)['elapsed_seconds'] == 0
+
+
+@pytest.mark.parametrize('value', [float('nan'), float('inf'), '-inf'])
+def test_invalid_persisted_timestamps_cannot_break_job_polling(tmp_path, value):
+    app = FakeApp(tmp_path, [])
+    manager = web.TurnJobManager(auto_worker=False)
+    job_id = enqueue(manager, app)
+    path = app.session_dir / 'turn_jobs' / f'{job_id}.json'
+    payload = json.loads(path.read_text())
+    payload['started_at'] = value
+    path.write_text(json.dumps(payload))
+    recovered = web.TurnJobManager(auto_worker=False)
+    recovered.recover_persisted('alice', app)
+    assert recovered.owner_jobs('alice') == []
+
+
+def test_paper_discussion_has_distinct_reading_and_answer_progress():
+    assert web.progress_percent('Reading the selected paper') < web.progress_percent('Discussing your paper')
+    assert web.progress_percent('Understanding the question and preparing search terms') > 6

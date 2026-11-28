@@ -567,12 +567,22 @@ def run_question(
         reason = str(understanding.get("error") or "")
         malformed = reason.startswith(("planner_output_not_json", "planner_output_invalid_json:", "invalid_unclear_flag",
                                        "invalid_normalized_question", "invalid_search_queries", "invalid_search_query",
+                                       "invalid_corrected_question",
                                        "invalid_intent", "invalid_language", "ollama_returned_empty_response",
                                        "ollama_incomplete_response"))
-        if understanding["status"] != "ready" and (malformed or
+        rejected_rewrite = (direct_reading or task == "sources") and reason in {
+            "invalid_query_plan", "normalization_lost_negation", "normalization_changed_numeric_comparison",
+            "normalization_changed_percentage_units", "normalization_lost_comparison",
+            "normalization_changed_identifiers_or_numbers", "search_queries_lost_identifiers_or_numbers",
+            "correction_changed_identifiers_or_numbers",
+        }
+        if understanding["status"] != "ready" and (malformed or rejected_rewrite or
                 ((task == "sources" or direct_reading) and understanding["status"] == "unavailable")):
             understanding["fallback"] = "rule_based_original_query"
             args.planner_backend = "rule_based"
+            if rejected_rewrite:
+                answer_question = retrieval_question = args.question = user_question
+                args.retrieval_question = user_question
             progress("Searching with your original wording")
         write_json(output_dir / "question_understanding.json", understanding)
         if understanding["status"] == "ready":
@@ -581,7 +591,7 @@ def run_question(
             args.question = answer_question
             args.retrieval_question = retrieval_question
             inventory_mode = (exclusive_report_doi is None and understanding["intent"] == "corpus_inventory"
-                              and task in {"answer", "sources"})
+                              and task in {"answer", "sources"} and not model_requests_bibliography(understanding))
             if (task == "answer" and getattr(args, "auto_chat_routing", False)
                     and exclusive_report_doi is None and not inventory_mode
                     and model_requests_bibliography(understanding)):
@@ -1090,6 +1100,13 @@ def run_question(
             for paper_id, context in paper_search_origin_lineage_context.items()
             if paper_id in displayed_family_ids
         }
+        from originrag.retrieval.quick_list import requested_paper_count
+        list_count = requested_paper_count(user_question) or requested_paper_count(answer_question)
+        if list_count:
+            paper_search_results = paper_search_results[:list_count]
+            displayed_ids = {p["paper_id"] for p in paper_search_results}
+            evidence_results = [row for row in evidence_results if row.get("paper_id") in displayed_ids]
+            paper_search_lineage_context = {pid: rows for pid, rows in paper_search_lineage_context.items() if pid in displayed_ids}
         paper_search_results = reindex_paper_search_results(paper_search_results)
         if (
             paper_search_results

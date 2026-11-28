@@ -58,11 +58,23 @@ def test_qwen_answer_backend_uses_requested_generation_parameters(monkeypatch) -
     assert calls[0][1]["timeout"] == 37
     assert calls[0][1]["num_predict"] == 2200
     assert calls[0][1]["num_ctx"] == 65536
+    assert "format" not in calls[0][1]
     assert result.llm_result.usage == {
         "prompt_eval_count": 123,
         "eval_count": 45,
         "load_duration": 67,
     }
+
+
+def test_structured_answer_format_is_opt_in_and_reaches_runner(monkeypatch):
+    calls = []
+    def fake_call(prompt, **kwargs):
+        calls.append(kwargs)
+        return OllamaResult(text='{"passage_id":"Q1"}', model='test', base_url='http://unused', call_performed=True)
+    monkeypatch.setattr('originrag.analysis.answer_backends.call_ollama_generate', fake_call)
+    schema = {"type": "object", "properties": {"passage_id": {"enum": [None, "Q1"]}}}
+    generate_answer_with_backend("Select one source", backend="qwen", response_format=schema)
+    assert calls[0]["format"] == schema
 
 
 def test_qwen_answer_backend_passes_configured_context_window(monkeypatch) -> None:

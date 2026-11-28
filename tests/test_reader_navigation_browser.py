@@ -9,6 +9,16 @@ from test_reader_product_browser import open_reader, reader_page as reader_page
 from test_web_reader import reader_server as reader_server
 
 
+@pytest.mark.parametrize('page_query,expected', [('2', '2'), ('1', '1'), ('0', '1'),
+                                               ('99999', '1'), ('2.5', '1'), ('nope', '1')])
+def test_reader_page_link_opens_only_valid_pdf_pages(reader_page, page_query, expected):
+    page, expect, base, _ = reader_page
+    page.goto(base + '/reader?paper_id=P1&page=' + page_query)
+    page.wait_for_selector('#fit:not([disabled])', timeout=20000)
+    expect(page.locator('#pageNumber')).to_have_value(expected)
+    expect(page.locator('#title')).to_have_text('Synthetic reader paper')
+
+
 @pytest.mark.parametrize(
     'reader_server,profile',
     [({'profile': profile}, profile) for profile in ('full', 'rag', 'write')],
